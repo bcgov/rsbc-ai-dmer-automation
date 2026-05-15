@@ -6,13 +6,17 @@ hints and description metadata, so the LLM knows exactly which fields to
 evaluate.
 """
 
-from src.conditions import CONDITIONS
+from src.conditions import (
+    CATEGORY_CONDITIONS,
+    CATEGORY_INSTRUCTIONS,
+    ConditionCategory,
+)
 
 
-def build_conditions_list() -> str:
+def build_conditions_list(conditions: dict[str, dict]) -> str:
     """Return a formatted string listing every condition for the system prompt."""
     lines = []
-    for name, cfg in CONDITIONS.items():
+    for name, cfg in conditions.items():
         desc = cfg.get("description", "")
         if desc:
             lines.append(f"  - {name} ({cfg['type']}) [description: {desc}]")
@@ -21,9 +25,85 @@ def build_conditions_list() -> str:
     return "\n".join(lines)
 
 
-CONDITIONS_LIST = build_conditions_list()
+def build_response_example(conditions: dict[str, dict]) -> str:
+    """Return a response-format example using fields from the active category."""
+    bool_field = next(
+        (name for name, cfg in conditions.items() if cfg["type"] == "bool"),
+        None,
+    )
+    value_field = next(
+        (name for name, cfg in conditions.items() if cfg["type"] != "bool"),
+        None,
+    )
 
-SYSTEM_PROMPT = f"""Analyze the provided DMER (Driver's Medical Examination Report) fields.
+    lines = ['{', '  "dmer": {']
+    if bool_field:
+        lines.extend([
+            f'    "{bool_field}": true,',
+            f'    "{bool_field}_evidence": "field_name: exact supporting text"',
+        ])
+        if value_field:
+            lines[-1] += ","
+    if value_field:
+        sample_value = "normalized value"
+        if conditions[value_field]["type"] == "int":
+            sample_value = "123"
+        elif conditions[value_field]["type"] == "float":
+            sample_value = "1.23"
+        if conditions[value_field]["type"] in {"int", "float"}:
+            lines.append(f'    "{value_field}": {sample_value}')
+        else:
+            lines.append(f'    "{value_field}": "{sample_value}"')
+    lines.extend(["  }", "}"])
+    return "\n".join(lines)
+
+
+CATEGORY_LIST = "\n".join(f"  - {category.value}" for category in ConditionCategory)
+
+CATEGORY_SYSTEM_PROMPT = f"""Categorize the provided DMER (Driver's Medical Examination Report) fields.
+
+You will receive a filtered subset of the DMER JSON containing only:
+- Written/text fields with values (dates, scores, free-text details, medical narratives)
+- Checkbox fields that are marked TRUE (indicating active/checked conditions)
+
+All unchecked (false) checkboxes and empty text fields have been omitted.
+
+Your task is ONLY to choose which condition categories need detailed analysis.
+Read all field names and all free-text values, including details_of_condition, .other fields, and _details fields.
+
+Available categories:
+{CATEGORY_LIST}
+
+Return JSON only in this exact shape:
+{{
+  "categories": ["category_name"],
+  "evidence": {{
+    "category_name": "short reason copied or summarized from the DMER input"
+  }}
+}}
+
+Include a category if:
+- A field in that category is true
+- A text/value field in that category has a value
+- Free text mentions a diagnosis, procedure, symptom, score, date, measurement, or concern belonging to that category
+
+When unsure, include the category. Do not include categories that have no supporting evidence."""
+
+
+def build_analysis_prompt(category: ConditionCategory) -> str:
+    """Build the second-stage prompt for a single condition category."""
+    conditions = CATEGORY_CONDITIONS[category]
+    conditions_list = build_conditions_list(conditions)
+    response_example = build_response_example(conditions)
+    category_instruction = CATEGORY_INSTRUCTIONS.get(category, "")
+    extra = f"\nCategory-specific guidance:\n{category_instruction}\n" if category_instruction else ""
+    visual_acuity_exception = (
+        "EXCEPTION: return ALL visual_acuity thresholds if ANY acuity exists.\n"
+        if category is ConditionCategory.VISUAL_ACUITY
+        else ""
+    )
+
+    prompt = f"""Analyze the provided DMER (Driver's Medical Examination Report) fields for the {category.value} category only.
 
 You will receive a filtered subset of the DMER JSON containing only:
 - Written/text fields with values (dates, scores, free-text details, medical narratives)
@@ -36,14 +116,6 @@ You MUST carefully read and extract conditions from ALL free-text fields, includ
 READ ENTIRE SENTENCES FULLY to understand context and causality. DO NOT isolate keywords. If a symptom is explicitly caused by a primary disease 
 (e.g., "symptom X due to disease Y", or "patient has disease X and symptom Y"), it is ONLY a concern for that primary disease (setting its _has_concerns to TRUE). NEVER flag secondary symptoms as separate independent conditions.
 Set the corresponding boolean field(s) to true for EVERY independent medical condition, diagnosis, or procedure mentioned.
-For example:
-- "BIL CATARACT EXTRACTIONS" → set vision.cataracts=true AND vision.cataracts_had_surgery=true
-- "hx of TIA" → set cerebrovascular.tia=true
-- "s/p CABG" → set cardiovascular.cad=true
-- "OSA on CPAP" → set sleep.obstructive_sleep_apnea=true AND sleep.cpap=true
-- "insulin-dependent DM" → set endocrine.diabetes=true AND endocrine.diabetes.insulin=true
-A surgical procedure (extraction, resection, repair, transplant, implant) implies BOTH the
-condition AND the corresponding surgery/procedure field should be set to true.
 
 RULE — *_has_concerns / *_has_concern fields:
 Set the _has_concerns companion to TRUE if the parent condition is true AND either:
@@ -52,7 +124,7 @@ Set the _has_concerns companion to TRUE if the parent condition is true AND eith
  3. If there is language saying "controlled/under control", "stable", "compliant" etc. or mentioning the absence of a symptom ("no symptom X") then that would not count as a concern.
 
 CRITICAL EXCEPTION FOR MEASUREMENTS/DATES:
-Do NOT set _has_concerns to TRUE if the ONLY additional text is a quantitative measurement, date, size, or score that directly maps to another specific DMER field (e.g. "size 6.9 cm" mapping to pvd.aneurysm_size, or "HbA1C 10" mapping to endocrine.HbA1C). Quantitative values alone DO NOT constitute a "concern" if there is no other descriptive narrative.
+Do NOT set _has_concerns to TRUE if the ONLY additional text is a quantitative measurement, date, size, or score that directly maps to another specific DMER field. Quantitative values alone DO NOT constitute a "concern" if there is no other descriptive narrative.
 
 When in doubt about QUALITATIVE descriptive narrative, ALWAYS err on the side of TRUE. 
 CRITICAL: If the text MERELY NAMES OR LISTS the condition (e.g., "Patient has vertigo" or "Diagnosis: strabismus") with NO extra descriptive details, leave _has_concerns FALSE. The mere mention/existence of a condition sets the parent condition to TRUE, but it is NOT a concern by itself. The condition field CAN and OFTEN WILL be true while its _has_concerns companion remains false.
@@ -63,27 +135,18 @@ Also focus on:
 - Checked (true) fields: these confirm conditions the physician identified on the form
 - Written values: dates, scores, and free-text details provide additional clinical context
 
-Here is the complete list of DMER conditions/fields to evaluate:
-{CONDITIONS_LIST}
+Here is the complete list of DMER conditions/fields to evaluate for this category:
+{conditions_list}
+{extra}
 
 Each field above shows its expected data type in parentheses (bool, str, int, float).
 For each field, determine if the provided data supports setting it.
 - bool: set to true ONLY if evidence supports the condition
 - str: set to the normalized/corrected value from the input
-- int (scores like mmse_score, moca_score, trails_a_seconds, etc.): extract as integers
-- float (like pvd.aneurysm_size, HbA1C): extract as floats
+- int: extract as integers
+- float: extract as floats
 
-Common medical abbreviations: BIL/B/L=bilateral, PT=patient, s/p=status post, W.=with,
-Hx=history, c/o=complains of, R/O=rule out.
-
-Vision acuity text may be misread with the slash being read as 1 e.g. 20/80 might be read as 20180. If this is the case correct it.
-
-RULE — Visual Acuity thresholds:
-Convert acuity to Snellen before comparing (higher denominator = worse).
-  Decimal: denom = 20/value (0.25→20/80). LogMAR: denom = 20×10^value (0.6→20/80).
-Follow each field's [description] for which eyes/values to use.
-Evaluate EVERY threshold independently. Example: 20/80 → _or_worse for 20/80,20/60,20/40 = true;
-_or_better for 20/50,20/30 = false. If only one eye has data, use it where L/R is needed.
+Common medical abbreviations: PT=patient, W.=with, Hx=history, c/o=complains of, R/O=rule out.
 
 RULE — Evidence:
 EVERY SINGLE bool set to true MUST have its own separate corresponding "{{field_name}}_evidence" string quoting the exact justification. 
@@ -92,23 +155,20 @@ CRITICAL MINIMUM REQUIREMENT: If you set BOTH a parent condition to true AND its
 
 IMPORTANT: Return ONLY fields changed. Do NOT echo unchanged values.
 NEVER EVER invent new field names; use ONLY the exact field names from the list above (plus their _evidence fields).
-EXCEPTION: return ALL visual_acuity thresholds if ANY acuity exists.
+{visual_acuity_exception}
 Return your result as a flat JSON object under a "dmer" key.
 Double-check: re-read ALL free-text fields to confirm you have NOT missed any conditions.
 
 Example response format:
-{{
-  "dmer": {{
-    "cardiovascular.cad": true,
-    "cardiovascular.cad_evidence": "details_of_condition: 'patient has coronary artery disease'",
-    "cardiovascular.cad_has_concerns": true,
-    "cardiovascular.cad_has_concerns_evidence": "details_of_condition: 'may sometimes become confused due to loss of blood flow'",
-    "cardiovascular.arrhythmia": true,
-    "cardiovascular.arrhythmia_evidence": "arrhythmia checkbox was true",
-    "cardiovascular.arrhythmia_type": "atrial fibrillation"
-  }}
-}}
+{response_example}
 
 Use semantic understanding to recognize variations and medical synonyms.
 The [description: ...] hint for each field may contain a list of keywords or
 more detailed instructions on how to normalize that field."""
+
+    
+    # print("conditions list:")
+    # print(conditions_list)
+    # print("prompt:")
+    # print(prompt)
+    return prompt

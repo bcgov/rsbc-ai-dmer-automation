@@ -6,6 +6,8 @@ together with type / keyword metadata and the list of fields to
 extract from raw DMER JSON before sending to the LLM.
 """
 
+from enum import Enum
+
 # ---------------------------------------------------------------------------
 # CONDITIONS — single source of truth for every DMER condition.
 #
@@ -68,12 +70,6 @@ CONDITIONS: dict[str, dict] = {
     "visual_field.normal":              {"type": "bool", "description": ""},
     "visual_field.abnormal":            {"type": "bool", "description": ""},
     "visual_field.abnormal_has_concerns": {"type": "bool", "description": ""},
-
-    # --- Opinion ---
-    "opinion.yes":                {"type": "bool", "description": ""},
-    "opinion.no":                 {"type": "bool", "description": ""},
-    "opinion.maybe":              {"type": "bool", "description": ""},
-    "opinion.maybe_followup_years": {"type": "int", "description": ""},
 
     # --- Details ---
     "details_of_condition": {"type": "str", "description": ""},
@@ -276,7 +272,7 @@ CONDITIONS: dict[str, dict] = {
     "musculoskeletal.polymyalgia":                    {"type": "bool", "description": ""},
     "musculoskeletal.foot_drop":                      {"type": "bool", "description": ""},
     "musculoskeletal.foot_drop_has_concerns":         {"type": "bool", "description": ""},
-    "musculoskeletal.paraplegia":                     {"type": "bool", "description": ""},
+    "musculoskeletal.paraplegia":                     {"type": "bool", "description": "do not include unspecified plegia"},
     "musculoskeletal.paraplegia_has_concerns":        {"type": "bool", "description": ""},
     "musculoskeletal.quadriplegia":                   {"type": "bool", "description": ""},
     "musculoskeletal.quadriplegia_has_concerns":      {"type": "bool", "description": ""},
@@ -403,12 +399,12 @@ CONDITIONS: dict[str, dict] = {
     "visual_acuity.bad_eye_worse_than_20/100":        {"type": "bool", "description": "worse eye (higher denom of L/R, or sole eye); corrected first, else uncorrected"},
 
     # --- Priority ---
-    "priority.should_not_drive":              {"type": "bool", "description": ""},
-    "priority.should_not_drive_has_reason":   {"type": "bool", "description": ""},
+    "priority.should_not_drive":              {"type": "bool", "description": "look for any words like should not drive, can not drive, can't drive now"},
+    "priority.should_not_drive_has_reason":   {"type": "bool", "description": "look for reason for should not drive"},
     "priority.applying_for_class":            {"type": "bool", "description": ""},
-    "priority.applying_for_class_has_class":  {"type": "bool", "description": ""},
-    "priority.unfit_for_current_class":       {"type": "bool", "description": ""},
-    "priority.has_concerns":                  {"type": "bool", "description": ""},
+    "priority.applying_for_class_has_class":  {"type": "bool", "description": "check to see if current_license_class contains the class driver is applying for"},
+    "priority.unfit_for_current_class":       {"type": "bool", "description": "fit for downgrade"},
+    "priority.has_concerns":                  {"type": "bool", "description": "look for any concerns about patient's ability to drive"},
 
     # --- Respiratory ---
     "respiratory.asthma":                        {"type": "bool", "description": "asthma"},
@@ -424,6 +420,206 @@ CONDITIONS: dict[str, dict] = {
 
 }
 
+
+class ConditionCategory(str, Enum):
+    """Structured categories used by the first LLM call."""
+
+    TOP_LEVEL = "top_level"
+    VISION = "vision"
+    COGNITION = "cognition"
+    VISUAL_ACUITY = "visual_acuity"
+    VISUAL_FIELD = "visual_field"
+    RECOMMENDATIONS = "recommendations"
+    CEREBROVASCULAR = "cerebrovascular"
+    CHRONIC_RENAL = "chronic_renal"
+    CARDIOVASCULAR = "cardiovascular"
+    ENDOCRINE = "endocrine"
+    GENERAL = "general"
+    HEARING = "hearing"
+    CNS = "cns"
+    MUSCULOSKELETAL = "musculoskeletal"
+    PVD = "pvd"
+    PSYCHIATRIC = "psychiatric"
+    PSYCHOTROPIC_DRUGS = "psychotropic_drugs"
+    SLEEP = "sleep"
+    TRAUMATIC_BRAIN_INJURY = "traumatic_brain_injury"
+    VESTIBULAR = "vestibular"
+    PRIORITY = "priority"
+    RESPIRATORY = "respiratory"
+
+
+CATEGORY_PREFIXES: dict[ConditionCategory, tuple[str, ...]] = {
+    ConditionCategory.TOP_LEVEL: (
+        "current_licence_class",
+        "blood_pressure",
+        "restrictions",
+        "medical_examination_date",
+        "details_of_condition",
+    ),
+    ConditionCategory.VISION: ("vision.",),
+    ConditionCategory.COGNITION: (
+        "cns.cognitiveimpairment",
+        "cns.dementia",
+        "cns.alzheimers",
+        "cns.mmse_score",
+        "cns.moca_score",
+        "cns.simard_score",
+        "cns.gds_level_score",
+        "cns.trails_",
+        "cns.significant_head_injury_date",
+    ),
+    ConditionCategory.VISUAL_ACUITY: ("visual_acuity.",),
+    ConditionCategory.VISUAL_FIELD: ("visual_field.",),
+    ConditionCategory.RECOMMENDATIONS: ("recommendations.",),
+    ConditionCategory.CEREBROVASCULAR: ("cerebrovascular.",),
+    ConditionCategory.CHRONIC_RENAL: ("chronicrenal.",),
+    ConditionCategory.CARDIOVASCULAR: ("cardiovascular.",),
+    ConditionCategory.ENDOCRINE: ("endocrine.",),
+    ConditionCategory.GENERAL: ("general.",),
+    ConditionCategory.HEARING: ("hearing.",),
+    ConditionCategory.CNS: ("cns.",),
+    ConditionCategory.MUSCULOSKELETAL: ("musculoskeletal.",),
+    ConditionCategory.PVD: ("pvd.",),
+    ConditionCategory.PSYCHIATRIC: ("psychiatric.",),
+    ConditionCategory.PSYCHOTROPIC_DRUGS: ("psychotropic_drugs.",),
+    ConditionCategory.SLEEP: ("sleep.",),
+    ConditionCategory.TRAUMATIC_BRAIN_INJURY: ("traumatic_brain_injury",),
+    ConditionCategory.VESTIBULAR: ("vestibular.",),
+    ConditionCategory.PRIORITY: ("priority.",),
+    ConditionCategory.RESPIRATORY: ("respiratory.",),
+}
+
+
+CATEGORY_CONDITIONS: dict[ConditionCategory, dict[str, dict]] = {
+    category: {
+        name: cfg
+        for name, cfg in CONDITIONS.items()
+        if any(name == prefix or name.startswith(prefix) for prefix in prefixes)
+    }
+    for category, prefixes in CATEGORY_PREFIXES.items()
+}
+
+for field_name in CATEGORY_CONDITIONS[ConditionCategory.COGNITION]:
+    CATEGORY_CONDITIONS[ConditionCategory.CNS].pop(field_name, None)
+
+
+CATEGORY_INSTRUCTIONS: dict[ConditionCategory, str] = {
+    ConditionCategory.VISION: (
+        "Treat procedures like cataract extraction as evidence for both the condition "
+        "and the procedure/surgery field. For example, 'BIL CATARACT EXTRACTIONS' "
+        "means vision.cataracts=true and vision.cataracts_had_surgery=true. BIL/B/L "
+        "means bilateral. Do not mark has_concerns true when the text only names the "
+        "condition."
+    ),
+    ConditionCategory.VISUAL_ACUITY: (
+        "Normalize Snellen acuity. Vision acuity text may be misread with the slash "
+        "being read as 1, e.g. 20/80 might be read as 20180. If this is the case, "
+        "correct it. Convert acuity to Snellen before comparing; higher denominator "
+        "means worse. Decimal: denom = 20/value, e.g. 0.25 means 20/80. LogMAR: "
+        "denom = 20 x 10^value, e.g. 0.6 means 20/80. Follow each field's description "
+        "for which eyes/values to use. Evaluate every threshold independently. "
+        "Example: 20/80 means _or_worse for 20/80, 20/60, and 20/40 are true; "
+        "_or_better for 20/50 and 20/30 are false. If only one eye has data, use it "
+        "where L/R is needed. Return all visual_acuity threshold fields when any "
+        "acuity value is present."
+    ),
+    ConditionCategory.VISUAL_FIELD: (
+        "Use visual field checkbox evidence directly. If the form says the visual "
+        "field is abnormal, evaluate abnormal_has_concerns separately from abnormal."
+    ),
+    ConditionCategory.RECOMMENDATIONS: (
+        "Do not make clinical or administrative judgements in this category. Only set "
+        "recommendations.road_test_to_assess to true when written text specifically "
+        "recommends, requests, orders, or clearly suggests a road test. Do not infer a "
+        "road test from medical conditions, vision thresholds, concerns, licence class, "
+        "or general fitness risk alone. Copy written recommendation/rationale/restriction "
+        "text into the matching string fields when present."
+    ),
+    ConditionCategory.PRIORITY: (
+        "Only fill priority fields when the text explicitly contains priority language "
+        "about driving status, driving safety, ability to drive, being unfit for the "
+        "current class, being told not to drive, or applying for a licence class. Do "
+        "not infer priority fields solely from diagnoses, symptoms, measurements, or "
+        "other matched medical conditions."
+    ),
+    ConditionCategory.COGNITION: (
+        "Focus on cognitive impairment, dementia, Alzheimer's disease, cognitive "
+        "test scores, functional concerns, and suspected section 7.15 impairment."
+    ),
+    ConditionCategory.CARDIOVASCULAR: (
+        "Recognize common abbreviations such as CAD, CABG, PCI, MI, CHF, Afib, ICD, "
+        "MVP, HTN, LOC, and s/p cardiac procedures. For example, 's/p CABG' means "
+        "cardiovascular.cad=true. A valve repair or replacement procedure implies "
+        "cardiovascular.surgical_valve_repair=true."
+    ),
+    ConditionCategory.ENDOCRINE: (
+        "Recognize diabetes variants including DM, IDDM, NIDDM, insulin-dependent, "
+        "secretagogues, HbA1C, hypoglycemia, and compliance language. For example, "
+        "'insulin-dependent DM' means endocrine.diabetes=true and "
+        "endocrine.diabetes.insulin=true. HbA1C values map to endocrine.HbA1C and "
+        "do not alone make endocrine.HbA1C_has_concerns true without qualitative "
+        "concern text."
+    ),
+    ConditionCategory.PVD: (
+        "For aneurysm fields, map size/site to their fields; for example, 'size "
+        "6.9 cm' maps to pvd.aneurysm_size. A size alone is not a concern unless "
+        "qualitative risk language such as rupture is present. A repair, clip, "
+        "treatment, s/p procedure, or similar procedure implies the matching "
+        "repaired/procedure field when one exists."
+    ),
+    ConditionCategory.PSYCHIATRIC: (
+        "Separate diagnoses from stability, treatment compliance, impaired judgement, "
+        "and psychosis concerns. Severe depression maps to other_psych_diagnosis."
+    ),
+    ConditionCategory.SLEEP: (
+        "Recognize OSA/sleep apnea, CPAP use and compliance, AHI, Epworth, daytime "
+        "sleepiness, insomnia, and narcolepsy control status. For example, 'OSA on "
+        "CPAP' means sleep.obstructive_sleep_apnea=true and sleep.cpap=true."
+    ),
+    ConditionCategory.VESTIBULAR: (
+        "Map vertigo, Meniere's disease, vestibular neuronitis, psychogenic vertigo, "
+        "and hyperventilation syndrome to recurrent_vertigo."
+    ),
+    ConditionCategory.CNS: (
+        "For neurological disease, distinguish stable/non-progressive deficits from "
+        "progressive deficits and extract seizure dates/causes when present. Treat "
+        "s/p resection as evidence for the matching tumor/procedure fields when present."
+    ),
+    ConditionCategory.CEREBROVASCULAR: (
+        "Recognize CVA, stroke, TIA, cerebral aneurysm, subdural hematoma, dates, "
+        "repair status, and residual neurological deficits. For example, 'hx of TIA' "
+        "means cerebrovascular.tia=true. A repaired or s/p cerebral aneurysm procedure "
+        "implies the aneurysm condition and repaired field."
+    ),
+    ConditionCategory.CHRONIC_RENAL: (
+        "Recognize dialysis, kidney stones, renal failure, chronic renal failure, "
+        "nephrectomy, renal transplant, and kidney transplant. A transplant or "
+        "nephrectomy procedure implies both the relevant renal condition/procedure "
+        "field and any matching concern field only when concern text is present."
+    ),
+    ConditionCategory.HEARING: (
+        "Recognize hearing loss, deafness, tinnitus, cochlear implants, hearing aids, "
+        "whisper test results, high-frequency loss, and left/right decibel values. A "
+        "cochlear implant procedure implies hearing.cochlear_implants=true."
+    ),
+    ConditionCategory.MUSCULOSKELETAL: (
+        "Extract amputation side/level, vehicle modifications, weakness, range of "
+        "motion loss, spinal injury, arthritis variants, and plegia conditions. "
+        "BIL/B/L means bilateral. s/p amputation or injury repair should be mapped to "
+        "the matching condition/procedure fields when present."
+    ),
+    ConditionCategory.RESPIRATORY: (
+        "Recognize asthma, COPD, emphysema, oxygen/O2 use, tracheostomy, pulmonary "
+        "embolism, resolution, and respiratory concern language."
+    ),
+}
+
+
+ALWAYS_ANALYZE_CATEGORIES = (
+    ConditionCategory.TOP_LEVEL,
+    ConditionCategory.PRIORITY,
+)
+
 # ---------------------------------------------------------------------------
 # Fields to extract from the DMER JSON before sending to the LLM.
 # These are the free-text / value fields that carry useful context.
@@ -433,10 +629,11 @@ EXTRACT_FIELDS = [
     "vision.acuity_loss_cause",
     "vision.field_defect_cause",
     "vision.monocular_date",
-    "vision.meet_criteria_for_licence_class_yes"
+    "visual_field.meet_criteria_for_licence_class_yes",
+    "vision.meet_criteria_for_licence_class_yes",
     "vision.other",
-    "hearing.drop_attack_date",
-    "hearing.vertigo_date",
+    "vestibular.drop_attack_date",
+    "vestibular.vertigo_date",
     "hearing.other",
     "musculoskeletal.limb_amputation_date",
     "musculoskeletal.limb_amputation_cause",
@@ -477,6 +674,7 @@ EXTRACT_FIELDS = [
     "psychotropic_drugs.narcotics_details",
     "psychotropic_drugs.other",
     "sleep.ahi",
+    "sleep.ahi_score",
     "sleep.epworth_score",
     "sleep.other",
     "endocrine.HbA1C",
@@ -493,6 +691,8 @@ EXTRACT_FIELDS = [
     "visual_acuity.uncorrected_both",
     "opinion.maybe_followup_years",
     "details_of_condition",
+    "current_license_class",
+    "applying_for_class_number",
     "recommendations.specialist_consult_type",
     "recommendations.road_test_to_assess_details",
     "recommendations.rationale_for_road_test",
