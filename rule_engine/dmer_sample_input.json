@@ -112,7 +112,7 @@
     "cerebrovascular.cva": false,
     "cerebrovascular.tia": false,
     "cerebrovascular.cva_tia_residual_neuro_deficit": false,
-    "cerebrovascular.cva_tia_date": null,
+    "cerebrovascular.cva_tia_date": "",
     "cerebrovascular.cva_tia_has_concern": false,
     "cerebrovascular.subdural_hematoma": false,
     "chronicrenal.dialysis": false,

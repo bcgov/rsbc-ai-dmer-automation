@@ -35,87 +35,87 @@
           {
             "id": "17823da5-70d3-458b-9460-81c5e1f25d8f",
             "key": "cerebral_aneurysm_within_3_months_post_surgery",
-            "value": "dmer['cerebrovascular.cva_tia_date'] != null and dmer.medical_examination_date != null and (dmer.medical_examination_date - dmer['cerebrovascular.cerebral_aneurysm_date']) <= 90\n"
+            "value": "dmer['cerebrovascular.cva_tia_date'] != \"\" and dmer.medical_examination_date != \"\" and (dmer.medical_examination_date - dmer['cerebrovascular.cerebral_aneurysm_date']) <= 90\n"
           },
           {
             "id": "5b468fc8-67b2-40af-a432-c792e93be9be",
             "key": "cerebral_aneurysm_within_6_months_post_surgery",
-            "value": "dmer['cerebrovascular.cva_tia_date'] != null and dmer.medical_examination_date != null and (dmer.medical_examination_date - dmer['cerebrovascular.cerebral_aneurysm_date']) <= 180"
+            "value": "dmer['cerebrovascular.cva_tia_date'] != \"\" and dmer.medical_examination_date != \"\" and (dmer.medical_examination_date - dmer['cerebrovascular.cerebral_aneurysm_date']) <= 180"
           },
           {
             "id": "410d209b-eded-4911-8921-159c30ee41f5",
             "key": "cva_tia_over_1_year",
-            "value": "dmer['cerebrovascular.cva_tia_date'] != null and dmer.medical_examination_date != null and (dmer.medical_examination_date - dmer['cerebrovascular.cva_tia_date']).days > 365"
+            "value": "dmer['cerebrovascular.cva_tia_date'] != \"\" and dmer.medical_examination_date != \"\" and (dmer.medical_examination_date - dmer['cerebrovascular.cva_tia_date']).days > 365"
           },
           {
             "id": "8f95d90f-9a9b-4136-8660-aa8cdf59a9fb",
             "key": "cva_tia_within_1_year",
-            "value": "dmer['cerebrovascular.cva_tia_date'] != null and dmer.medical_examination_date != null and  (dmer.medical_examination_date - dmer['cerebrovascular.cva_tia_date']).days <= 365"
+            "value": "dmer['cerebrovascular.cva_tia_date'] != \"\" and dmer.medical_examination_date != \"\" and  (dmer.medical_examination_date - dmer['cerebrovascular.cva_tia_date']).days <= 365"
           },
           {
             "id": "3f4f0c35-7ce7-497b-bd89-00d391cded4f",
             "key": "cad_date_within_1_month",
-            "value": " dmer['cardiovascular.cad_date'] != null and d(dmer['cardiovascular.cad_date']).isAfter(d().sub(1, \"m\"))"
+            "value": " dmer['cardiovascular.cad_date'] != \"\" and d(dmer['cardiovascular.cad_date']).isAfter(d().sub(1, \"m\"))"
           },
           {
             "id": "1691f152-a472-441b-90f9-0c2c6831141e",
             "key": "cad_date_within_3_month",
-            "value": "  dmer['cardiovascular.cad_date'] != null and d(dmer['cardiovascular.cad_date']).isAfter(d().sub(3, \"m\"))"
+            "value": "  dmer['cardiovascular.cad_date'] != \"\" and d(dmer['cardiovascular.cad_date']).isAfter(d().sub(3, \"m\"))"
           },
           {
             "id": "dd9d78f4-d6a1-4d2c-88db-295b9aac14b1",
             "key": "cardiac_transplant_date_before_6_weeks",
-            "value": " dmer['cardiovascular.cardiac_transplant_date'] != null and  d(dmer['cardiovascular.cardiac_transplant_date']).isBefore(d().sub(6, \"w\"))"
+            "value": " dmer['cardiovascular.cardiac_transplant_date'] != \"\" and  d(dmer['cardiovascular.cardiac_transplant_date']).isBefore(d().sub(6, \"w\"))"
           },
           {
             "id": "deb85b03-1618-4028-8b85-a9444cb6b783",
             "key": "cardiac_transplant_date_within_6_weeks",
-            "value": " dmer['cardiovascular.cardiac_transplant_date'] != null and  d(dmer['cardiovascular.cardiac_transplant_date']).isAfter(d().sub(6, \"w\"))"
+            "value": " dmer['cardiovascular.cardiac_transplant_date'] != \"\" and  d(dmer['cardiovascular.cardiac_transplant_date']).isAfter(d().sub(6, \"w\"))"
           },
           {
             "id": "5c235aa7-31e5-41df-aebc-05903a6a54c1",
             "key": "cardiac_transplant_before_6_months",
-            "value": " dmer['cardiovascular.cardiac_transplant_date'] != null and d(dmer['cardiovascular.cardiac_transplant_date']).isBefore(d().sub(6, \"m\"))"
+            "value": " dmer['cardiovascular.cardiac_transplant_date'] != \"\" and d(dmer['cardiovascular.cardiac_transplant_date']).isBefore(d().sub(6, \"m\"))"
           },
           {
             "id": "9450c865-0745-4440-a541-bf8f06930c1e",
             "key": "pacemaker_date_before_1_month",
-            "value": " dmer['cardiovascular.pacemaker_date'] != null and d(dmer['cardiovascular.pacemaker_date']).isBefore(d().sub(1, \"m\"))"
+            "value": " dmer['cardiovascular.pacemaker_date'] != \"\" and d(dmer['cardiovascular.pacemaker_date']).isBefore(d().sub(1, \"m\"))"
           },
           {
             "id": "b5ca794c-c8a8-40d9-8e4a-a594860c5d21",
             "key": "pacemaker_date_after_1_month",
-            "value": "dmer['cardiovascular.pacemaker_date'] != null and d(dmer['cardiovascular.pacemaker_date']).isAfter(d().sub(1, \"m\"))"
+            "value": "dmer['cardiovascular.pacemaker_date'] != \"\" and d(dmer['cardiovascular.pacemaker_date']).isAfter(d().sub(1, \"m\"))"
           },
           {
             "id": "6c0c4466-2352-4a1d-a368-cb7fbe89b48c",
             "key": "hypoglycemic_unawareness_date_within_6_months",
-            "value": "dmer['endocrine.hypoglycemic_unawareness_date'] != null and d(dmer['endocrine.hypoglycemic_unawareness_date']).isAfter(d().sub(6, \"m\"))"
+            "value": "dmer['endocrine.hypoglycemic_unawareness_date'] != \"\" and d(dmer['endocrine.hypoglycemic_unawareness_date']).isAfter(d().sub(6, \"m\"))"
           },
           {
             "id": "357e583d-50a7-475c-a50e-5c2ca6ced7b7",
             "key": "hypoglycemic_unawareness_date_before_6_months",
-            "value": "dmer['endocrine.hypoglycemic_unawareness_date'] != null and d(dmer['endocrine.hypoglycemic_unawareness_date']).isBefore(d().sub(6, \"m\"))"
+            "value": "dmer['endocrine.hypoglycemic_unawareness_date'] != \"\" and d(dmer['endocrine.hypoglycemic_unawareness_date']).isBefore(d().sub(6, \"m\"))"
           },
           {
             "id": "8ddf0f31-659f-4c78-98b9-efad9c4845b0",
             "key": "limb_amputation_date_within_2_years",
-            "value": "dmer['musculoskeletal.limb_amputation_date'] != null and d(dmer['musculoskeletal.limb_amputation_date']).isAfter(d().sub(2, \"y\"))"
+            "value": "dmer['musculoskeletal.limb_amputation_date'] != \"\" and d(dmer['musculoskeletal.limb_amputation_date']).isAfter(d().sub(2, \"y\"))"
           },
           {
             "id": "d4ad70ba-a083-4c59-b01f-4566d977a110",
             "key": "limb_amputation_date_before_2_years",
-            "value": "dmer['musculoskeletal.limb_amputation_date'] != null and d(dmer['musculoskeletal.limb_amputation_date']).isBefore(d().sub(2, \"y\"))"
+            "value": "dmer['musculoskeletal.limb_amputation_date'] != \"\" and d(dmer['musculoskeletal.limb_amputation_date']).isBefore(d().sub(2, \"y\"))"
           },
           {
             "id": "b5517896-76b4-4bf4-8927-29db0425d041",
             "key": "has_limb_amputation_restrictions",
-            "value": "dmer.restrictions != null and (25 in dmer.restrictions or 26 in dmer.restrictions or 28 in dmer.restrictions)"
+            "value": "len(dmer.restrictions) > 0 and (25 in dmer.restrictions or 26 in dmer.restrictions or 28 in dmer.restrictions)"
           },
           {
             "id": "4f038915-6644-45ad-8734-0acfbb0c8244",
             "key": "does_not_have_limb_amputation_restrictions",
-            "value": "dmer.restrictions != null and (25 not in dmer.restrictions and 26 not in dmer.restrictions and 28 not in dmer.restrictions)"
+            "value": "len(dmer.restrictions) > 0 and (25 not in dmer.restrictions and 26 not in dmer.restrictions and 28 not in dmer.restrictions)"
           },
           {
             "id": "c7cb435c-f203-4f96-95ac-dbd245871451",
