@@ -71,6 +71,12 @@ CONDITIONS: dict[str, dict] = {
     "visual_field.abnormal":            {"type": "bool", "description": ""},
     "visual_field.abnormal_has_concerns": {"type": "bool", "description": ""},
 
+    # --- Opinion ---
+    "opinion.yes":                {"type": "bool", "description": ""},
+    "opinion.no":                 {"type": "bool", "description": ""},
+    "opinion.maybe":              {"type": "bool", "description": ""},
+    "opinion.maybe_followup_years": {"type": "int", "description": "if no followup years given, set to null"},
+
     # --- Details ---
     "details_of_condition": {"type": "str", "description": ""},
 

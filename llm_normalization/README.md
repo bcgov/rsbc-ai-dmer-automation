@@ -1,0 +1,1 @@
+Usage: python main.py <input_dmer_filepath.json>
