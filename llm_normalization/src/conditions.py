@@ -244,7 +244,7 @@ CONDITIONS: dict[str, dict] = {
     "cns.als_has_concerns":                 {"type": "bool", "description": ""},
     "cns.progressive_deficit":              {"type": "bool", "description": ""},
     "cns.progressive_deficit_has_concerns": {"type": "bool", "description": ""},
-    "cns.non_progressive_stable":           {"type": "bool", "description": "cerebral palsy, If free text mentions generic 'plegia' without a specific type"},
+    "cns.non_progressive_stable":           {"type": "bool", "description": "cerebral palsy. IMPORTANT: if free text mentions 'plegia' without specifying a type (i.e. NOT paraplegia, quadriplegia, tetraplegia, or hemiplegia), set this to true — do NOT map it to musculoskeletal"},
     "cns.non_progressive_stable_has_concerns": {"type": "bool", "description": ""},
     "cns.peripheral_neuropathy":            {"type": "bool", "description": ""},
     "cns.peripheral_neuropathy_has_concerns": {"type": "bool", "description": ""},
@@ -483,7 +483,15 @@ CATEGORY_PREFIXES: dict[ConditionCategory, tuple[str, ...]] = {
     ConditionCategory.ENDOCRINE: ("endocrine.",),
     ConditionCategory.GENERAL: ("general.",),
     ConditionCategory.HEARING: ("hearing.",),
-    ConditionCategory.CNS: ("cns.",),
+    # ConditionCategory.CNS: ("cns.",),
+    ConditionCategory.CNS: (
+        "For neurological disease, distinguish stable/non-progressive deficits from "
+        "progressive deficits and extract seizure dates/causes when present. Treat "
+        "s/p resection as evidence for the matching tumor/procedure fields when present. "
+        "CRITICAL: generic or unspecified 'plegia' (i.e. the word appears without "
+        "a qualifier such as para-, quad-, tetra-, or hemi-) maps to "
+        "cns.non_progressive_stable, NOT to any musculoskeletal field."
+    ),
     ConditionCategory.MUSCULOSKELETAL: ("musculoskeletal.",),
     ConditionCategory.PVD: ("pvd.",),
     ConditionCategory.PSYCHIATRIC: ("psychiatric.",),
