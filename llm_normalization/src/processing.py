@@ -6,6 +6,7 @@ field data through the Azure OpenAI model.
 """
 
 import json
+import re
 from copy import deepcopy
 
 from dateutil import parser as dateparser
@@ -144,6 +145,8 @@ def categorize_conditions(slim_json: dict) -> list[ConditionCategory]:
     raw = completion.choices[0].message.content
     result = json.loads(raw)
     categories = _parse_categories(result.get("categories", []))
+    seen = set(categories)
+    _force_categories_from_keywords(slim_json, categories, seen)
     evidence = result.get("evidence", {})
 
     print("\n--- LLM selected categories ---")
@@ -294,6 +297,143 @@ def _has_priority_details_signal(slim_json: dict) -> bool:
                 return True
 
     return False
+
+
+# ---------------------------------------------------------------------------
+# Deterministic conflict-resolution
+# ---------------------------------------------------------------------------
+
+def resolve_conflicts(dmer_result: dict) -> dict:
+    """Apply deterministic field-conflict rules that must not be left to the LLM.
+
+    Called after ``apply_updates`` so every input and LLM-derived field is
+    visible in the same dict.
+
+    Rules
+    -----
+    - ``visual_field.abnormal = True`` → ``vision.field_and_acuity_meet_standard``
+      is forced to ``False`` regardless of any free-text statement.  An abnormal
+      visual field is a hard disqualifier; the LLM must not override this.
+    """
+    dmer = dmer_result.get("dmer", dmer_result)
+
+    if dmer.get("visual_field.abnormal") is True:
+        if dmer.get("vision.field_and_acuity_meet_standard") is not False:
+            dmer["vision.field_and_acuity_meet_standard"] = False
+            dmer["vision.field_and_acuity_meet_standard_evidence"] = (
+                "visual_field.abnormal: true — abnormal visual field overrides "
+                "any statement that field and acuity meet standard"
+            )
+
+    # Loss of consciousness in the context of carotid stenosis maps to
+    # pvd.carotid_stenosis_loss_consciousness, not to cardiovascular.syncope/loc.
+    # Enforce in both directions: set the pvd field if any LOC signal exists
+    # (from either pvd or cardiovascular), then clear the cardiovascular fields.
+    if dmer.get("pvd.carotid_stenosis") is True:
+        loc_signaled = (
+            dmer.get("pvd.carotid_stenosis_loss_consciousness") is True
+            or dmer.get("cardiovascular.syncope") is True
+            or dmer.get("cardiovascular.loc") is True
+        )
+        if loc_signaled:
+            dmer["pvd.carotid_stenosis_loss_consciousness"] = True
+            for field in ("cardiovascular.syncope", "cardiovascular.loc"):
+                if dmer.get(field) is True:
+                    dmer[field] = False
+                    dmer[f"{field}_evidence"] = (
+                        "pvd.carotid_stenosis: true — loss of consciousness "
+                        "attributed to carotid stenosis maps to "
+                        "pvd.carotid_stenosis_loss_consciousness"
+                    )
+
+    if "dmer" in dmer_result:
+        dmer_result["dmer"] = dmer
+    return dmer_result
+
+
+# ---------------------------------------------------------------------------
+# Deterministic keyword-based category forcing
+# ---------------------------------------------------------------------------
+# Each rule is a tuple of:
+#   (match_re, exclude_re | None, forced_category, log_label)
+#
+# The rule fires when:
+#   - match_re matches details_of_condition, AND
+#   - exclude_re is None OR exclude_re does NOT match details_of_condition, AND
+#   - forced_category is not already in the selected set.
+#
+# This table is the single place to add new deterministic routing rules.
+# The LLM categoriser sometimes maps terms to a superficially similar category
+# (e.g. "aortic" → cardiovascular, "IQ" → cognition) when the schema places
+# them elsewhere.  These rules correct that before the second-stage analysis.
+# ---------------------------------------------------------------------------
+_KEYWORD_CATEGORY_RULES: list[tuple[re.Pattern, re.Pattern | None, ConditionCategory, str]] = [
+    # Generic "plegia" (no specific type) → CNS; specific types → musculoskeletal
+    (
+        re.compile(r"\bplegia\b", re.IGNORECASE),
+        re.compile(r"\b(paraplegia|quadriplegia|tetraplegia|hemiplegia)\b", re.IGNORECASE),
+        ConditionCategory.CNS,
+        "generic 'plegia' (unspecified type)",
+    ),
+    # Aortic dissection → PVD (LLM confuses with cardiovascular aortic conditions)
+    (
+        re.compile(r"\baortic\s+dissection\b", re.IGNORECASE),
+        None,
+        ConditionCategory.PVD,
+        "aortic dissection",
+    ),
+    # Carotid stenosis → PVD (LLM confuses "stenosis" with cardiovascular stenosis)
+    (
+        re.compile(r"\bcarotid\b", re.IGNORECASE),
+        None,
+        ConditionCategory.PVD,
+        "carotid stenosis / carotid condition",
+    ),
+    # Low IQ / intellectual disability / mental handicap → PSYCHIATRIC
+    # (LLM routes to cognition; schema places it in psychiatric.mental_handicap)
+    (
+        re.compile(
+            r"\b(low\s+iq|iq\s+concern|intellectual\s+disabilit|mental\s+handicap)\b",
+            re.IGNORECASE,
+        ),
+        None,
+        ConditionCategory.PSYCHIATRIC,
+        "low IQ / intellectual disability / mental handicap",
+    ),
+    # Bare "IQ" mention in free text → PSYCHIATRIC (covers "patient has low iq")
+    (
+        re.compile(r"\biq\b", re.IGNORECASE),
+        None,
+        ConditionCategory.PSYCHIATRIC,
+        "IQ mention",
+    ),
+]
+
+
+def _force_categories_from_keywords(
+    slim_json: dict,
+    categories: list[ConditionCategory],
+    seen: set[ConditionCategory],
+) -> None:
+    """Deterministically add categories the LLM may misclassify.
+
+    Iterates :data:`_KEYWORD_CATEGORY_RULES` and appends any category whose
+    keyword is present (and whose exclusion pattern, if any, is absent) from
+    ``details_of_condition``.  Modifies *categories* and *seen* in-place.
+    """
+    dmer = slim_json.get("dmer", slim_json)
+    details = str(dmer.get("details_of_condition", ""))
+
+    for match_re, exclude_re, category, label in _KEYWORD_CATEGORY_RULES:
+        if category in seen:
+            continue
+        if not match_re.search(details):
+            continue
+        if exclude_re is not None and exclude_re.search(details):
+            continue
+        print(f"  [keyword force] {category.value}: {label} found in details_of_condition")
+        categories.append(category)
+        seen.add(category)
 
 
 def analyze_conditions(dmer_json: dict) -> dict:

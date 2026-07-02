@@ -31,7 +31,7 @@ CONDITIONS: dict[str, dict] = {
     "vision.monocular":                     {"type": "bool", "description": "lack of depth perception"},
     "vision.monocular_has_concerns":        {"type": "bool", "description": ""},
     "vision.monocular_date":                {"type": "str",  "description": ""},
-    "vision.field_and_acuity_meet_standard": {"type": "bool", "description": "check if vision.meet_criteria_for_licence_class_yes is true then set to true, if visual_field.abnormal is true then set to false, also check details_of_condition for any text that implies field and acuity does or does not meet standard. Make sure to add an evidence field for this field if true."},
+    "vision.field_and_acuity_meet_standard": {"type": "bool", "description": "Apply rules in strict priority order — RULE 1 (highest, non-negotiable): if visual_field.abnormal is true, set this field to FALSE regardless of any text. RULE 2: if vision.meet_criteria_for_licence_class_yes is true AND visual_field.abnormal is not true, set to TRUE. RULE 3: check details_of_condition for explicit statements that field and acuity meet or do not meet standard. Always include an _evidence field."},
     "vision.color_blindness":               {"type": "bool", "description": ""},
     "vision.retinopathy":                   {"type": "bool", "description": ""},
     "vision.retinal_detachment":            {"type": "bool", "description": ""},
@@ -244,7 +244,7 @@ CONDITIONS: dict[str, dict] = {
     "cns.als_has_concerns":                 {"type": "bool", "description": ""},
     "cns.progressive_deficit":              {"type": "bool", "description": ""},
     "cns.progressive_deficit_has_concerns": {"type": "bool", "description": ""},
-    "cns.non_progressive_stable":           {"type": "bool", "description": "cerebral palsy. IMPORTANT: if free text mentions 'plegia' without specifying a type (i.e. NOT paraplegia, quadriplegia, tetraplegia, or hemiplegia), set this to true — do NOT map it to musculoskeletal"},
+    "cns.non_progressive_stable":           {"type": "bool", "description": "cerebral palsy, unspecified plegia"},
     "cns.non_progressive_stable_has_concerns": {"type": "bool", "description": ""},
     "cns.peripheral_neuropathy":            {"type": "bool", "description": ""},
     "cns.peripheral_neuropathy_has_concerns": {"type": "bool", "description": ""},
@@ -278,7 +278,7 @@ CONDITIONS: dict[str, dict] = {
     "musculoskeletal.polymyalgia":                    {"type": "bool", "description": ""},
     "musculoskeletal.foot_drop":                      {"type": "bool", "description": ""},
     "musculoskeletal.foot_drop_has_concerns":         {"type": "bool", "description": ""},
-    "musculoskeletal.paraplegia":                     {"type": "bool", "description": "do not include unspecified plegia"},
+    "musculoskeletal.paraplegia":                     {"type": "bool", "description": "paraplegia"},
     "musculoskeletal.paraplegia_has_concerns":        {"type": "bool", "description": ""},
     "musculoskeletal.quadriplegia":                   {"type": "bool", "description": ""},
     "musculoskeletal.quadriplegia_has_concerns":      {"type": "bool", "description": ""},
@@ -302,16 +302,16 @@ CONDITIONS: dict[str, dict] = {
     "musculoskeletal.other":                          {"type": "str",  "description": ""},
 
     # --- PVD ---
-    "pvd.abdominal_aortic_aneurysm":             {"type": "bool",  "description": "AAA, also check pvd.aneurysm site for abdominal aorta if pvd.aneurysm is true"},
+    "pvd.abdominal_aortic_aneurysm":             {"type": "bool",  "description": "abdominal aortic aneurysm, AAA"},
     "pvd.abdominal_aortic_aneurysm_repaired":    {"type": "bool",  "description": "clipped, treated"},
-    "pvd.abdominal_aortic_aneurysm_has_concerns": {"type": "bool", "description": "e.g. imminent rupture. IGNORE SIZE. having size noted in a written field is not a concern"},
+    "pvd.abdominal_aortic_aneurysm_has_concerns": {"type": "bool", "description": "imminent rupture risk"},
     "pvd.aneurysm":                               {"type": "bool",  "description": ""},
     "pvd.aneurysm_site":                          {"type": "str",   "description": ""},
     "pvd.aneurysm_size":                          {"type": "float", "description": "check details_of_condition in case size is written there"},
-    "pvd.aortic_dissection":                      {"type": "bool",  "description": ""},
+    "pvd.aortic_dissection":                      {"type": "bool",  "description": "aortic dissection"},
     "pvd.aortic_dissection_has_concerns":         {"type": "bool",  "description": ""},
-    "pvd.carotid_stenosis":                       {"type": "bool",  "description": ""},
-    "pvd.carotid_stenosis_loss_consciousness":    {"type": "bool",  "description": ""},
+    "pvd.carotid_stenosis":                       {"type": "bool",  "description": "carotid stenosis"},
+    "pvd.carotid_stenosis_loss_consciousness":    {"type": "bool",  "description": "loss of consciousness, syncope, LOC associated with carotid stenosis"},
     "pvd.claudication":                           {"type": "bool",  "description": ""},
     "pvd.deep_vein_thrombosis":                   {"type": "bool",  "description": "DVT"},
     "pvd.peripheral_arterial_disease":            {"type": "bool",  "description": "PAD"},
@@ -327,7 +327,7 @@ CONDITIONS: dict[str, dict] = {
     "psychiatric.mild_depression":                   {"type": "bool", "description": "depression, depressive"},
     "psychiatric.autism":                            {"type": "bool", "description": "ASD"},
     "psychiatric.autism_has_concerns":               {"type": "bool", "description": ""},
-    "psychiatric.mental_handicap":                   {"type": "bool", "description": "look for iq concerns"},
+    "psychiatric.mental_handicap":                   {"type": "bool", "description": "low IQ, IQ concerns, intellectual disability, mental handicap"},
     "psychiatric.mental_handicap_has_concerns":      {"type": "bool", "description": ""},
     "psychiatric.psychosis":                         {"type": "bool", "description": "psychotic"},
     "psychiatric.psychosis_date":                    {"type": "str",  "description": ""},
@@ -483,15 +483,7 @@ CATEGORY_PREFIXES: dict[ConditionCategory, tuple[str, ...]] = {
     ConditionCategory.ENDOCRINE: ("endocrine.",),
     ConditionCategory.GENERAL: ("general.",),
     ConditionCategory.HEARING: ("hearing.",),
-    # ConditionCategory.CNS: ("cns.",),
-    ConditionCategory.CNS: (
-        "For neurological disease, distinguish stable/non-progressive deficits from "
-        "progressive deficits and extract seizure dates/causes when present. Treat "
-        "s/p resection as evidence for the matching tumor/procedure fields when present. "
-        "CRITICAL: generic or unspecified 'plegia' (i.e. the word appears without "
-        "a qualifier such as para-, quad-, tetra-, or hemi-) maps to "
-        "cns.non_progressive_stable, NOT to any musculoskeletal field."
-    ),
+    ConditionCategory.CNS: ("cns.",),
     ConditionCategory.MUSCULOSKELETAL: ("musculoskeletal.",),
     ConditionCategory.PVD: ("pvd.",),
     ConditionCategory.PSYCHIATRIC: ("psychiatric.",),
@@ -564,7 +556,11 @@ CATEGORY_INSTRUCTIONS: dict[ConditionCategory, str] = {
         "Recognize common abbreviations such as CAD, CABG, PCI, MI, CHF, Afib, ICD, "
         "MVP, HTN, LOC, and s/p cardiac procedures. For example, 's/p CABG' means "
         "cardiovascular.cad=true. A valve repair or replacement procedure implies "
-        "cardiovascular.surgical_valve_repair=true."
+        "cardiovascular.surgical_valve_repair=true. "
+        "Loss of consciousness or syncope caused by carotid stenosis maps to "
+        "pvd.carotid_stenosis_loss_consciousness — set cardiovascular.loc or "
+        "cardiovascular.syncope only when the LOC has a cardiac origin (arrhythmia, "
+        "valve disease, etc.)."
     ),
     ConditionCategory.ENDOCRINE: (
         "Recognize diabetes variants including DM, IDDM, NIDDM, insulin-dependent, "
@@ -579,11 +575,15 @@ CATEGORY_INSTRUCTIONS: dict[ConditionCategory, str] = {
         "6.9 cm' maps to pvd.aneurysm_size. A size alone is not a concern unless "
         "qualitative risk language such as rupture is present. A repair, clip, "
         "treatment, s/p procedure, or similar procedure implies the matching "
-        "repaired/procedure field when one exists."
+        "repaired/procedure field when one exists. "
+        "Aortic dissection maps to pvd.aortic_dissection; "
+        "carotid stenosis maps to pvd.carotid_stenosis."
     ),
     ConditionCategory.PSYCHIATRIC: (
         "Separate diagnoses from stability, treatment compliance, impaired judgement, "
-        "and psychosis concerns. Severe depression maps to other_psych_diagnosis."
+        "and psychosis concerns. Severe depression maps to other_psych_diagnosis. "
+        "Low IQ, intellectual disability, and mental handicap map to "
+        "psychiatric.mental_handicap."
     ),
     ConditionCategory.SLEEP: (
         "Recognize OSA/sleep apnea, CPAP use and compliance, AHI, Epworth, daytime "
@@ -597,7 +597,9 @@ CATEGORY_INSTRUCTIONS: dict[ConditionCategory, str] = {
     ConditionCategory.CNS: (
         "For neurological disease, distinguish stable/non-progressive deficits from "
         "progressive deficits and extract seizure dates/causes when present. Treat "
-        "s/p resection as evidence for the matching tumor/procedure fields when present."
+        "s/p resection as evidence for the matching tumor/procedure fields when present. "
+        "Unspecified 'plegia' (without a qualifier such as para, quad, tetra, or hemi) "
+        "maps to cns.non_progressive_stable."
     ),
     ConditionCategory.CEREBROVASCULAR: (
         "Recognize CVA, stroke, TIA, cerebral aneurysm, subdural hematoma, dates, "
@@ -618,9 +620,10 @@ CATEGORY_INSTRUCTIONS: dict[ConditionCategory, str] = {
     ),
     ConditionCategory.MUSCULOSKELETAL: (
         "Extract amputation side/level, vehicle modifications, weakness, range of "
-        "motion loss, spinal injury, arthritis variants, and plegia conditions. "
+        "motion loss, spinal injury, and arthritis variants. "
         "BIL/B/L means bilateral. s/p amputation or injury repair should be mapped to "
-        "the matching condition/procedure fields when present."
+        "the matching condition/procedure fields when present. "
+        "Set paraplegia, quadriplegia, or tetraplegia only when those exact words appear."
     ),
     ConditionCategory.RESPIRATORY: (
         "Recognize asthma, COPD, emphysema, oxygen/O2 use, tracheostomy, pulmonary "

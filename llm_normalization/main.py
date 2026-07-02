@@ -15,6 +15,7 @@ from src.processing import (
     ensure_all_fields,
     flag_concerns,
     normalize_dates,
+    resolve_conflicts,
 )
 
 
@@ -33,6 +34,11 @@ def main() -> None:
     print(json.dumps(updates, indent=2))
 
     updated_dmer = apply_updates(dmer_data, updates)
+
+    # Apply deterministic conflict-resolution rules (e.g. visual_field.abnormal overrides
+    # field_and_acuity_meet_standard) now that both input and LLM fields are merged.
+    updated_dmer = resolve_conflicts(updated_dmer)
+
 
     # Backfill any missing fields with defaults so the output has every field
     updated_dmer = ensure_all_fields(updated_dmer)
