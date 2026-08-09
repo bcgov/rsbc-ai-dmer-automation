@@ -1,0 +1,2 @@
+# Runtime dependencies for this Container App (dmer-common, etc.)
+# Intentionally left minimal in this skeleton.

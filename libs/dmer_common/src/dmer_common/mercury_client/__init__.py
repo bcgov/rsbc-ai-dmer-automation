@@ -1,0 +1,1 @@
+"""Anti-corruption layer for the Mercury (Dynamics) system: typed client for batch/backlog retrieval, webhook payload parsing, and case update calls, isolating Mercury's data shapes from internal domain models."""

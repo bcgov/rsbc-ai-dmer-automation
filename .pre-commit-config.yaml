@@ -1,0 +1,69 @@
+repos:
+- repo: https://github.com/pre-commit/pre-commit-hooks
+  rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c  # pragma: allowlist secret; frozen: v6.0.0
+  hooks:
+  - id: check-case-conflict
+  - id: check-added-large-files
+    args: [--maxkb=3072]
+    exclude: \.docx$
+  - id: check-merge-conflict
+  - id: check-executables-have-shebangs
+    files: \.sh$
+  - id: check-json
+  - id: check-yaml
+  - id: check-toml
+  - id: check-ast
+  - id: detect-private-key
+  - id: end-of-file-fixer
+  - id: trailing-whitespace
+  - id: mixed-line-ending
+    args: [--fix=lf]
+- repo: https://github.com/Yelp/detect-secrets
+  rev: 68e8b45440415753fff70a312ece8da92ba85b4a  # pragma: allowlist secret; frozen: v1.5.0
+  hooks:
+  - id: detect-secrets
+    args: [--baseline, .secrets.baseline]
+    exclude: |
+      (?x)^(
+          .*\.docx$
+      )
+- repo: https://github.com/compilerla/conventional-pre-commit
+  rev: 3db014c16a9d31997ab8c07a4d61fcce936c8f0d  # pragma: allowlist secret; frozen: v4.4.0
+  hooks:
+  - id: conventional-pre-commit
+    stages: [commit-msg]
+    args:
+    - feat
+    - fix
+    - docs
+    - style
+    - refactor
+    - perf
+    - test
+    - build
+    - ci
+    - chore
+    - revert
+- repo: local
+  hooks:
+  - id: black
+    name: format Python (black)
+    entry: black
+    language: system
+    types: [python]
+  - id: ruff
+    name: lint Python (ruff, autofix)
+    entry: ruff check --fix
+    language: system
+    types: [python]
+  - id: bicep-lint
+    name: lint Bicep
+    entry: .bin/bicep-lint.sh
+    language: script
+    files: \.bicep$
+    pass_filenames: true
+
+exclude: |
+  (?x)^(
+    docs/architecture/.*\.docx$
+  )$

@@ -1,0 +1,9 @@
+# Dev/CI tooling only — NOT installed by any service at runtime.
+# Install with: pip install -r requirements-dev.txt --break-system-packages
+#
+# Pinned to match the versions pre-commit's `language: system` hooks expect
+# (black, ruff) so local runs and CI runs format/lint identically.
+pre-commit==4.6.1
+detect-secrets==1.5.0
+black==26.5.1
+ruff==0.16.2
