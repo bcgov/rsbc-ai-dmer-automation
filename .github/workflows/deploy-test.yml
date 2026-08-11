@@ -1,0 +1,20 @@
+
+# deploy-test.yml
+#
+# Purpose: Manually-approved promotion of a build artifact from dev to test
+#
+# NOTE: This is a structural placeholder. Implementation (steps, actions,
+# matrix strategy per service) is intentionally deferred until the
+# repository skeleton is approved. See docs/deployment/deployment-guide.md
+# for the intended trigger/approval flow.
+
+name: Deploy Test
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  placeholder:
+    runs-on: ubuntu-latest
+    steps:
+      - run: 'echo "TODO: implement Manually-approved promotion of a build artifact from dev to test"'

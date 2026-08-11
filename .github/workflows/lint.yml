@@ -1,0 +1,51 @@
+
+# lint.yml
+#
+# Purpose: Run the same checks developers run locally via pre-commit — black,
+# ruff, detect-secrets, and the general file hygiene hooks (see
+# .pre-commit-config.yaml) — against every push and pull request, so CI can
+# never pass on something a local commit would have blocked.
+#
+# bicep-lint is intentionally skipped here: infrastructure/bicep/*.bicep gets
+# deeper validation (az bicep build + what-if) in bicep-validate.yml, which
+# already sets up the az CLI — no need to install it twice.
+#
+# Per-service mypy is not wired up yet: it needs each service's real
+# dependencies installed first, which doesn't exist until business logic
+# lands. Add a matrix step here (`pip install -r services/<svc>/requirements.txt
+# && mypy --strict src/`) once a service has actual code to type-check.
+
+name: Lint
+
+on:
+  push:
+    branches: [main]
+  pull_request: {}
+  workflow_dispatch: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  pre-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dev/CI tooling
+        run: pip install -r requirements-dev.txt
+
+      - name: Run pre-commit (all files, except bicep-lint — see bicep-validate.yml)
+        env:
+          SKIP: bicep-lint
+        run: pre-commit run --all-files --show-diff-on-failure

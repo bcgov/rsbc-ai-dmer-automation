@@ -1,0 +1,2 @@
+# Runtime dependencies for this Function App (azure-functions, dmer-common, etc.)
+# Intentionally left minimal in this skeleton.

@@ -1,0 +1,20 @@
+
+# security-scan.yml
+#
+# Purpose: Dependency (pip-audit), container (Trivy), and secret (gitleaks) scanning
+#
+# NOTE: This is a structural placeholder. Implementation (steps, actions,
+# matrix strategy per service) is intentionally deferred until the
+# repository skeleton is approved. See docs/deployment/deployment-guide.md
+# for the intended trigger/approval flow.
+
+name: Security Scan
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  placeholder:
+    runs-on: ubuntu-latest
+    steps:
+      - run: 'echo "TODO: implement Dependency (pip-audit), container (Trivy), and secret (gitleaks) scanning"'

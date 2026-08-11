@@ -1,0 +1,10 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "FUNCTIONS_WORKER_RUNTIME": "python",
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "APP_CONFIGURATION_ENDPOINT": "",
+    "SERVICE_BUS_NAMESPACE_FQDN": "",
+    "POSTGRES_HOST": ""
+  }
+}

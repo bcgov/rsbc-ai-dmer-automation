@@ -1,0 +1,1 @@
+"""Shared Pydantic message/data-transfer objects (queue envelopes, document metadata, normalization results, rule decisions) — the single source of truth for schemas referenced in docs/contracts/queues/."""
