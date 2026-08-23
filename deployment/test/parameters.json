@@ -4,7 +4,28 @@
   "parameters": {
     "environment": { "value": "test" },
     "location": { "value": "canadacentral" },
-    "vnetId": { "value": "" },
-    "tags": { "value": { "project": "dmer-automation", "environment": "test" } }
+    "instance": { "value": "001" },
+    "resourceGroupName": { "value": "rg-rsbc-dmer-test" },
+    "vnetResourceGroupName": {
+      "value": "__VNET_RESOURCE_GROUP_NAME__"
+    },
+    "vnetName": {
+      "value": "__VNET_NAME__"
+    },
+    "privateEndpointSubnetAddressPrefix": {
+      "value": "__VERIFY_AGAINST_VNET_ADDRESS_SPACE__"
+    },
+    "createNetworkSecurityGroup": { "value": true },
+    "existingNetworkSecurityGroupId": { "value": "" },
+    "privateDnsZoneIdCognitiveServices": { "value": "" },
+    "privateDnsZoneIdBlob": { "value": "" },
+    "documentIntelligenceSku": { "value": "S0" },
+    "storageSkuName": { "value": "Standard_LRS" },
+    "blobContainerNames": { "value": ["raw"] },
+    "allowSharedKeyAccess": { "value": false },
+    "disableLocalAuthDocumentIntelligence": { "value": false },
+    "costCenter": { "value": "RSBC" },
+    "owner": { "value": "RSBC-DMER" },
+    "dataClassification": { "value": "protected-b" }
   }
 }

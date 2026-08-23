@@ -19,6 +19,7 @@ obj/
 # Bicep / ARM
 *.bicep.json
 .bicep/
+infrastructure/bicep/*.json
 
 # Env / secrets
 .env
