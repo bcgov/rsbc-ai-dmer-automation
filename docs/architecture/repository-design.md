@@ -161,11 +161,15 @@ prod without duplication.
 
 ```
 infrastructure/bicep/
-├── main.bicep
+├── main.bicep              # resource-group-scoped workload template
+├── subscription.bicep      # subscription-scoped entry point: creates the resource group
+│                            # and private-endpoint subnet, then invokes main.bicep
 ├── README.md
 └── modules/
     ├── networking/
-    │   └── private-endpoint.bicep
+    │   ├── private-endpoint.bicep
+    │   ├── subnet.bicep                    # private-endpoint subnet inside the existing VNet
+    │   └── network-security-group.bicep    # baseline NSG for that subnet
     ├── identity/
     │   └── managed-identity.bicep
     ├── storage/
@@ -195,7 +199,8 @@ infrastructure/bicep/
     │   └── function-app.bicep
     └── shared/
         ├── naming.bicep
-        └── tags.bicep
+        ├── tags.bicep
+        └── resource-group.bicep    # subscription-scoped; used by subscription.bicep only
 ```
 
 ## 7. Deployment Folder Structure
@@ -213,9 +218,14 @@ deployment/
     └── README.md
 ```
 
-Each `parameters.json` supplies `environment`, `location`, `vnetId` (the platform-provided VNet,
-referenced not created), and standard tags to `infrastructure/bicep/main.bicep`. SKUs, scaling
-limits, and any other environment-specific value belong here, never hardcoded in a module.
+Each `parameters.json` supplies `environment`, `location`, and standard tags, plus the values
+`infrastructure/bicep/subscription.bicep` needs to create the resource group and
+private-endpoint subnet: `resourceGroupName`, `vnetResourceGroupName`, `vnetName` (the
+platform-provided VNet — referenced, not created), and `privateEndpointSubnetAddressPrefix`.
+SKUs, scaling limits, and any other environment-specific value belong here, never hardcoded in
+a module. See `docs/deployment/deployment-guide.md` for the full parameter list and how to
+verify platform-owned values (VNet name, Private DNS zones, RBAC) before filling in the
+placeholders these files ship with.
 
 ## 8. GitHub Actions Folder Structure
 
@@ -284,6 +294,9 @@ docs/
 | Module                                      | Responsibility                                                                                                                                                                                                                                                              |
 | ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `networking/private-endpoint.bicep`         | Reusable private endpoint + private DNS zone group, parameterized by target resource ID and group ID — used by every PaaS module below.                                                                                                                                     |
+| `networking/subnet.bicep`                   | Creates the private-endpoint subnet inside the *existing* platform VNet. Deployed scoped to the VNet's own resource group (platform-owned), not the application resource group — see `subscription.bicep`.                                                                |
+| `networking/network-security-group.bicep`   | Baseline NSG for that subnet. Optional — an existing platform-managed NSG can be supplied instead via `subscription.bicep`'s `existingNetworkSecurityGroupId` parameter.                                                                                                    |
+| `shared/resource-group.bicep`               | Creates the application resource group (e.g. `rg-rsbc-dmer-dev`). Subscription-scoped; only used by `subscription.bicep`, never by `main.bicep`.                                                                                                                            |
 | `identity/managed-identity.bicep`           | User-assigned Managed Identity per service, with an optional RBAC role-assignment block (least privilege only).                                                                                                                                                             |
 | `storage/storage-account.bicep`             | StorageV2 account: private endpoint, TLS 1.2 minimum, public network access disabled, lifecycle management policy hook.                                                                                                                                                     |
 | `storage/blob-containers.bicep`             | Creates the seven containers: `raw`, `ocr`, `normalized`, `rules`, `audit`, `failed`, `archive` (§ Storage layout).                                                                                                                                                         |
@@ -335,8 +348,9 @@ Managed Identities (one per service)
       (normalizer-service additionally reads a Key Vault secret for the external
        AI Hub OpenAI endpoint + API key — no RBAC role assignment, no local resource)
 
-Existing VNet (platform-provided, referenced only)
- └─ Subnets (platform-provided or created here if not already present)
+Existing VNet (platform-provided, referenced only — never created by this repository)
+ └─ Subnet: private-endpoint subnet (created by subscription.bicep, scoped to the VNet's own
+    resource group) + NSG (created alongside it, or an existing platform-managed one)
       └─ Private Endpoints →
            Storage Account (blob)
            Service Bus Namespace
@@ -388,7 +402,8 @@ Monitor
  └─ Alerts + Action Group ← metrics/logs from every resource above via Diagnostic Settings
 ```
 
-**Deployment order implied by the diagram:** Log Analytics → Managed Identities → Key Vault /
+**Deployment order implied by the diagram:** Resource Group → private-endpoint Subnet/NSG (both
+via `subscription.bicep`, subscription-scoped) → Log Analytics → Managed Identities → Key Vault /
 App Configuration → Storage → Service Bus → PostgreSQL → Document Intelligence →
 Private Endpoints → Container Apps Environment → Container Apps → Function Apps → Diagnostic
 Settings/Alerts. `main.bicep` should express this via natural resource dependencies (implicit in
@@ -410,7 +425,9 @@ Pattern (Cloud Adoption Framework-aligned):
 
 | Resource                   | Abbreviation | Example                                                |
 | -------------------------- | ------------ | ------------------------------------------------------ |
-| Resource Group *(manual)*  | `rg`         | `rg-rsbc-dmer-prod`                                    |
+| Resource Group              | `rg`         | `rg-rsbc-dmer-prod` *(created by `subscription.bicep`, subscription-scoped)* |
+| Subnet                      | `snet`       | `snet-rsbc-dmer-pe-prod-001`                           |
+| Network Security Group      | `nsg`        | `nsg-rsbc-dmer-pe-prod-001`                             |
 | Storage Account            | `st`         | `stdmerprodcac001` *(no dashes, ≤24 chars, lowercase)* |
 | Service Bus Namespace      | `sb`         | `sb-rsbc-dmer-shared-prod-001`                         |
 | PostgreSQL Flexible Server | `psql`       | `psql-rsbc-dmer-shared-prod-001`                       |

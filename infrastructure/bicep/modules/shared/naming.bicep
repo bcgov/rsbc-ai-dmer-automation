@@ -1,20 +1,27 @@
 // naming.bicep
 //
-// Purpose: Naming convention helper functions (resource name generation from type/service/env/region/instance)
+// Purpose: Naming convention helper functions (resource name generation from
+// type/service/env/region/instance). See docs/standards/naming-conventions.md
+// and docs/architecture/repository-design.md §12 for the pattern definitions.
 //
-// Structural placeholder only — resource declarations are intentionally deferred.
-// See docs/architecture/repository-design.md for this module's full responsibility,
-// parameters, and dependency list.
+// This module exports pure functions only — it declares no resources and is
+// consumed by other modules/main.bicep via a compile-time `import`, e.g.:
+//
+//   import { resourceName, storageAccountName, regionAbbreviation } from '../shared/naming.bicep'
 
-@description('Target environment: dev | test | prod')
-param environment string
+@description('Standard dashed pattern: <abbreviation>-rsbc-dmer-<service>-<environment>-<instance>')
+@export()
+func resourceName(abbreviation string, service string, environment string, instance string) string =>
+  '${abbreviation}-rsbc-dmer-${service}-${environment}-${instance}'
 
-@description('Azure region (Canada Central by default)')
-param location string = resourceGroup().location
+@description('Maps an Azure region display name to the short abbreviation used in resource names.')
+@export()
+func regionAbbreviation(location string) string =>
+  location == 'canadacentral'
+    ? 'cac'
+    : (location == 'canadaeast' ? 'cae' : location)
 
-@description('Standard resource tags')
-param tags object = {}
-
-
-
-// TODO: resource declarations
+@description('Storage account name: no dashes, lowercase, <=24 chars — st + dmer + environment + region + instance.')
+@export()
+func storageAccountName(environment string, location string, instance string) string =>
+  toLower('stdmer${environment}${regionAbbreviation(location)}${instance}')
