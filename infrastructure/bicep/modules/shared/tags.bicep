@@ -1,20 +1,24 @@
 // tags.bicep
 //
-// Purpose: Standard tag set helper (environment, service, cost-center, owner, data-classification)
+// Purpose: Standard tag set helper (environment, service, cost-center, owner,
+// data-classification). Exported as a pure function, consumed via a
+// compile-time `import`, e.g.:
 //
-// Structural placeholder only — resource declarations are intentionally deferred.
-// See docs/architecture/repository-design.md for this module's full responsibility,
-// parameters, and dependency list.
+//   import { buildTags } from '../shared/tags.bicep'
 
-@description('Target environment: dev | test | prod')
-param environment string
-
-@description('Azure region (Canada Central by default)')
-param location string = resourceGroup().location
-
-@description('Standard resource tags')
-param tags object = {}
-
-
-
-// TODO: resource declarations
+@description('Builds the standard tag set applied to every resource in this repository.')
+@export()
+func buildTags(
+  environment string,
+  service string,
+  costCenter string,
+  owner string,
+  dataClassification string
+) object => {
+  project: 'dmer-automation'
+  environment: environment
+  service: service
+  costCenter: costCenter
+  owner: owner
+  dataClassification: dataClassification
+}
