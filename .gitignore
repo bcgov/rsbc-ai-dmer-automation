@@ -34,3 +34,6 @@ infrastructure/bicep/*.json
 # Build artifacts
 dist/
 build/
+
+# Local build/deploy artifacts
+*.zip

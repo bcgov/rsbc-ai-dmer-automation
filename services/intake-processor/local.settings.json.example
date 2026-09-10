@@ -5,6 +5,11 @@
     "AzureWebJobsStorage": "UseDevelopmentStorage=true",
     "APP_CONFIGURATION_ENDPOINT": "",
     "SERVICE_BUS_NAMESPACE_FQDN": "",
-    "POSTGRES_HOST": ""
+    "POSTGRES_HOST": "",
+    "POSTGRES_PORT": "5432",
+    "POSTGRES_DATABASE": "dmer",
+    "POSTGRES_USER": "",
+    "POSTGRES_PASSWORD": "",
+    "POSTGRES_SSLMODE": "require"
   }
 }

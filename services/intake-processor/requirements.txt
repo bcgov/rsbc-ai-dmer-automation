@@ -1,2 +1,4 @@
-# Runtime dependencies for this Function App (azure-functions, dmer-common, etc.)
-# Intentionally left minimal in this skeleton.
+# Runtime dependencies for this Function App
+azure-functions
+psycopg2-binary
+azure-identity
