@@ -1,4 +1,3 @@
-
 # Python
 __pycache__/
 *.py[cod]
@@ -35,7 +34,7 @@ infrastructure/bicep/*.json
 dist/
 build/
 
-# Temporary POC staging (di-processor) — being ported into services/di-processor + libs/dmer_common
+# Temporary POC staging (di-processor) - being ported into services/di-processor + libs/dmer_common
 services/diocr-poc/
 
 .kiro
