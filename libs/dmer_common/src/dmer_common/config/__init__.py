@@ -47,11 +47,27 @@ class OpenAISettings:
     api_version: str
 
 
-# Environment variable names (populated from App Configuration / Key Vault refs).
-OPENAI_ENDPOINT_KEY = "AZURE_OPENAI_ENDPOINT"
-OPENAI_API_KEY_KEY = "AZURE_OPENAI_API_KEY"
-OPENAI_DEPLOYMENT_KEY = "AZURE_OPENAI_DEPLOYMENT"
-OPENAI_API_VERSION_KEY = "AZURE_OPENAI_API_VERSION"
+# Names of the environment variables to read the OpenAI settings from. These are
+# themselves overridable (so the wiring can change without a code change); the
+# defaults are the conventional variable names populated from App Configuration /
+# Key Vault references.
+OPENAI_ENDPOINT_KEY: str = os.environ.get(
+    "OPENAI_ENDPOINT_ENV", "AZURE_OPENAI_ENDPOINT"
+)
+OPENAI_API_KEY_KEY: str = os.environ.get(  # pragma: allowlist secret
+    "OPENAI_API_KEY_ENV", "AZURE_OPENAI_API_KEY"
+)
+OPENAI_DEPLOYMENT_KEY: str = os.environ.get(
+    "OPENAI_DEPLOYMENT_ENV", "AZURE_OPENAI_DEPLOYMENT"
+)
+OPENAI_API_VERSION_KEY: str = os.environ.get(
+    "OPENAI_API_VERSION_ENV", "AZURE_OPENAI_API_VERSION"
+)
+
+# Fallback OpenAI API version if the version env var is unset (also overridable).
+DEFAULT_OPENAI_API_VERSION: str = os.environ.get(
+    "OPENAI_API_VERSION_DEFAULT", "2024-10-21"
+)
 
 
 def openai_settings() -> OpenAISettings:
@@ -65,5 +81,5 @@ def openai_settings() -> OpenAISettings:
         endpoint=require(OPENAI_ENDPOINT_KEY),
         api_key=require(OPENAI_API_KEY_KEY),
         deployment=require(OPENAI_DEPLOYMENT_KEY),
-        api_version=get(OPENAI_API_VERSION_KEY, "2024-10-21") or "2024-10-21",
+        api_version=get(OPENAI_API_VERSION_KEY) or DEFAULT_OPENAI_API_VERSION,
     )

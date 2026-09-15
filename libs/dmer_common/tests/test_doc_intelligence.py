@@ -7,7 +7,6 @@ failure, and circuit-breaker rejection.
 from __future__ import annotations
 
 import pytest
-
 from dmer_common.doc_intelligence import DIResult, DocumentIntelligenceClient
 from dmer_common.retry import CircuitBreaker, CircuitOpenError
 

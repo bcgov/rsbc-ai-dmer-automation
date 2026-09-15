@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from dmer_common.storage import (
     combined_path,
     containers,

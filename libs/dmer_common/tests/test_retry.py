@@ -7,7 +7,6 @@ and breaker open/half-open/close transitions.
 from __future__ import annotations
 
 import pytest
-
 from dmer_common.retry import (
     CircuitBreaker,
     CircuitOpenError,

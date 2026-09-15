@@ -37,14 +37,13 @@ def test_status_lifecycle_persists_and_reads_back():
 
 
 async def _status_lifecycle():
-    from sqlalchemy.ext.asyncio import create_async_engine
-
     from dmer_common.db import DocumentStatus
     from dmer_common.db.documents import (
         DocumentRepository,
         InvalidStatusTransition,
         metadata,
     )
+    from sqlalchemy.ext.asyncio import create_async_engine
 
     assert DSN is not None
     engine = create_async_engine(DSN)

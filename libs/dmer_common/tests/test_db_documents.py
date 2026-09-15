@@ -10,7 +10,6 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-
 from dmer_common.db import DocumentStatus, is_valid_transition, next_statuses
 from dmer_common.db.documents import (
     DocumentRepository,

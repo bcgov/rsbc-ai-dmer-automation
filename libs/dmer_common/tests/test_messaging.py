@@ -11,7 +11,6 @@ import json
 from datetime import UTC, datetime
 
 import pytest
-
 from dmer_common.dto import ExtractedDmerMessage
 from dmer_common.messaging import (
     InMemoryIdempotencyStore,

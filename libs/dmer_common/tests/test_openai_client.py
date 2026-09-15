@@ -11,12 +11,11 @@ import json
 import logging
 
 import pytest
-
 from dmer_common.config import OpenAISettings
 from dmer_common.openai_client import OpenAIClient
 from dmer_common.openai_client import client as client_module
 
-SECRET_KEY = "super-secret-key-value"
+SECRET_KEY = "super-secret-key-value"  # pragma: allowlist secret
 
 SETTINGS = OpenAISettings(
     endpoint="https://external.openai.example.com",

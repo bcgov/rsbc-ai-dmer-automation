@@ -43,7 +43,6 @@ def _extracted(message_id: str):
 
 def test_publish_then_consume_round_trip():
     from azure.servicebus import ServiceBusClient
-
     from dmer_common.messaging import (
         InMemoryIdempotencyStore,
         ServiceBusConsumer,

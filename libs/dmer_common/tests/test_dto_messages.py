@@ -9,13 +9,12 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import pytest
-from pydantic import ValidationError
-
 from dmer_common.dto import (
     EXTRACTED_DMER_SCHEMA_VERSION,
     ExtractedDmerMessage,
     RawDmerMessage,
 )
+from pydantic import ValidationError
 
 RAW_WIRE = {
     "messageId": "11111111-1111-1111-1111-111111111111",
