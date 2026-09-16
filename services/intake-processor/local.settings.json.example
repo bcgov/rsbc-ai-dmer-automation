@@ -10,6 +10,12 @@
     "POSTGRES_DATABASE": "dmer",
     "POSTGRES_USER": "",
     "POSTGRES_PASSWORD": "",
-    "POSTGRES_SSLMODE": "require"
+    "POSTGRES_SSLMODE": "require",
+    "DMER_RAW_CONTAINER": "raw",
+    "DMER_POLL_SCHEDULE": "0 */5 * * * *",
+    "MERCURY_API_BASE_URL": "",
+    "MERCURY_API_KEY": "",
+    "MERCURY_QUEUE": "BOTH",
+    "MERCURY_PAGE_SIZE": "50"
   }
 }

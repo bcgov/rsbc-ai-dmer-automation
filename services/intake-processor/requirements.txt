@@ -2,3 +2,4 @@
 azure-functions
 psycopg2-binary
 azure-identity
+azure-storage-blob

@@ -18,3 +18,15 @@ CREATE TABLE IF NOT EXISTS dmer_processing (
     created_at              TIMESTAMP WITHOUT TIME ZONE,
     updated_at              TIMESTAMP WITHOUT TIME ZONE
 );
+
+-- Mercury backlog pagination cursor: only the "latest" (highest id) row is
+-- ever acted on. `status` ('not_started' -> 'processing' -> 'finished') is
+-- an audit trail of what happened to each link, not the concurrency
+-- enforcement mechanism -- that's a Postgres advisory lock held for the
+-- whole poll invocation (see function_app.py's _acquire_poll_lock /
+-- _get_current_link / _finish_link / _mark_link_not_started).
+CREATE TABLE IF NOT EXISTS mercury_links (
+    id      BIGSERIAL PRIMARY KEY,
+    link    TEXT NOT NULL,
+    status  VARCHAR(20) NOT NULL DEFAULT 'not_started'
+);
