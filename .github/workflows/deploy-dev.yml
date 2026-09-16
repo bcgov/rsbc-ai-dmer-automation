@@ -1,20 +1,108 @@
 
 # deploy-dev.yml
 #
-# Purpose: Deploy affected services + infra to dev on merge to main
+# Purpose: Deploy intake-processor's infra + code to DEV on merge to main.
 #
-# NOTE: This is a structural placeholder. Implementation (steps, actions,
-# matrix strategy per service) is intentionally deferred until the
-# repository skeleton is approved. See docs/deployment/deployment-guide.md
-# for the intended trigger/approval flow.
+# Requires the same repository configuration as bicep-validate.yml (see its
+# header) — this workflow does nothing (every job's condition is false)
+# until vars.AZURE_CLIENT_ID/AZURE_TENANT_ID/AZURE_SUBSCRIPTION_ID and
+# secrets.INTAKE_PROCESSOR_STORAGE_CONNECTION_STRING/MERCURY_API_KEY exist.
+#
+# Order matters: infra (the Function App resource, its app settings, its
+# hosting plan) deploys before the code, so new app settings or config a
+# code change depends on are already in place when that code starts
+# running.
+#
+# Currently wired for intake-processor only — see build.yml's header for
+# the same incremental-buildout convention.
 
 name: Deploy Dev
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'services/intake-processor/**'
+      - 'infrastructure/bicep/intake-processor.bicep'
+      - 'infrastructure/bicep/modules/compute/function-app.bicep'
+      - 'infrastructure/bicep/modules/monitor/application-insights.bicep'
+      - 'deployment/dev/intake-processor.parameters.json'
+      - '.github/workflows/deploy-dev.yml'
   workflow_dispatch: {}
 
+concurrency:
+  # Not cancel-in-progress: a deploy that's already touching live DEV
+  # resources should finish rather than being cut off mid-way.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  id-token: write
+  contents: read
+
 jobs:
-  placeholder:
+  build:
+    if: vars.AZURE_CLIENT_ID != ''
+    uses: ./.github/workflows/build.yml
+
+  deploy-infra:
     runs-on: ubuntu-latest
+    if: vars.AZURE_CLIENT_ID != ''
+    environment: dev
     steps:
-      - run: 'echo "TODO: implement Deploy affected services + infra to dev on merge to main"'
+      - uses: actions/checkout@v4
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: what-if (fails the job on an unexpected diff — review the plan in the logs first if this ever fails)
+        working-directory: infrastructure/bicep
+        run: |
+          az deployment group what-if \
+            --resource-group rsbc-dmer-ai-optimization-rg \
+            --template-file intake-processor.bicep \
+            --parameters @../../deployment/dev/intake-processor.parameters.json \
+            --parameters storageAccountConnectionString="${{ secrets.INTAKE_PROCESSOR_STORAGE_CONNECTION_STRING }}" \
+            --parameters mercuryApiKey="${{ secrets.MERCURY_API_KEY }}"
+
+      - name: Deploy
+        working-directory: infrastructure/bicep
+        run: |
+          az deployment group create \
+            --resource-group rsbc-dmer-ai-optimization-rg \
+            --template-file intake-processor.bicep \
+            --parameters @../../deployment/dev/intake-processor.parameters.json \
+            --parameters storageAccountConnectionString="${{ secrets.INTAKE_PROCESSOR_STORAGE_CONNECTION_STRING }}" \
+            --parameters mercuryApiKey="${{ secrets.MERCURY_API_KEY }}"
+
+  deploy-code:
+    runs-on: ubuntu-latest
+    needs: [build, deploy-infra]
+    if: vars.AZURE_CLIENT_ID != ''
+    environment: dev
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: intake-processor-package
+          path: intake-processor-package
+
+      - name: Unzip the package (functions-action deploys a folder, not a zip, for remote/Oryx builds)
+        run: |
+          mkdir -p intake-processor
+          unzip -q intake-processor-package/intake-processor.zip -d intake-processor
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - uses: Azure/functions-action@v1
+        with:
+          app-name: func-rsbc-dmer-intake-processor-dev
+          package: intake-processor
+          scm-do-build-during-deployment: true
+          enable-oryx-build: true

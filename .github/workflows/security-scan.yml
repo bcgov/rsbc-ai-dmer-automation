@@ -1,20 +1,55 @@
 
 # security-scan.yml
 #
-# Purpose: Dependency (pip-audit), container (Trivy), and secret (gitleaks) scanning
+# Purpose: Dependency vulnerability scanning (pip-audit) for each service's
+# requirements.txt.
 #
-# NOTE: This is a structural placeholder. Implementation (steps, actions,
-# matrix strategy per service) is intentionally deferred until the
-# repository skeleton is approved. See docs/deployment/deployment-guide.md
-# for the intended trigger/approval flow.
+# Container scanning (Trivy) and secret scanning (gitleaks) are deferred:
+# detect-secrets already covers secret scanning pre-commit and in CI (see
+# lint.yml), and no service in this repo builds a container image yet —
+# add a Trivy step here once one does. Currently wired for intake-processor
+# only — see build.yml's header for the same incremental-buildout
+# convention.
 
 name: Security Scan
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'services/intake-processor/requirements.txt'
+      - '.github/workflows/security-scan.yml'
+  pull_request:
+    paths:
+      - 'services/intake-processor/requirements.txt'
+      - '.github/workflows/security-scan.yml'
   workflow_dispatch: {}
+  workflow_call: {}
+  schedule:
+    # Weekly, so a newly-disclosed CVE against an already-merged dependency
+    # still gets caught even with no code change to trigger the path filters
+    # above.
+    - cron: '0 6 * * 1'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
-  placeholder:
+  pip-audit:
     runs-on: ubuntu-latest
     steps:
-      - run: 'echo "TODO: implement Dependency (pip-audit), container (Trivy), and secret (gitleaks) scanning"'
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install pip-audit
+        run: pip install pip-audit==2.7.3
+
+      - name: Audit intake-processor's dependencies
+        run: pip-audit -r services/intake-processor/requirements.txt

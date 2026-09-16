@@ -1,0 +1,34 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "environment": { "value": "dev" },
+    "location": { "value": "canadacentral" },
+    "functionAppName": { "value": "func-rsbc-dmer-intake-processor-dev" },
+    "hostingPlanName": { "value": "ASP-rsbcdmeraioptimizationrg-945e" },
+    "virtualNetworkSubnetId": {
+      "value": "/subscriptions/e34c5ef8-e2f1-4a67-a94f-29cb158155c2/resourceGroups/f11861-dev-networking/providers/Microsoft.Network/virtualNetworks/f11861-dev-vwan-spoke/subnets/snet-rsbc-dmer-intake-processor-dev"
+    },
+    "storageAccountName": { "value": "rsbcstorage" },
+    "deploymentPackageContainerName": {
+      "value": "app-package-func-rsbc-dmer-intake-processor-d-28875ca"
+    },
+    "logAnalyticsWorkspaceId": {
+      "value": "/subscriptions/e34c5ef8-e2f1-4a67-a94f-29cb158155c2/resourceGroups/DefaultResourceGroup-CCAN/providers/Microsoft.OperationalInsights/workspaces/DefaultWorkspace-e34c5ef8-e2f1-4a67-a94f-29cb158155c2-CCAN"
+    },
+    "pythonVersion": { "value": "3.12" },
+    "dmerRawContainer": { "value": "incoming-dmer-queue" },
+    "dmerPollSchedule": { "value": "0 */2 * * * *" },
+    "postgresHost": { "value": "rsbc-ai-database-dev.postgres.database.azure.com" },
+    "postgresPort": { "value": "5432" },
+    "postgresDatabase": { "value": "dmer" },
+    "mercuryApiBaseUrl": {
+      "value": "https://func-mock-mercury-api-dev.azurewebsites.net/api/mercury/documents"
+    },
+    "mercuryQueue": { "value": "BOTH" },
+    "mercuryPageSize": { "value": "50" },
+    "costCenter": { "value": "RSBC" },
+    "owner": { "value": "RSBC-DMER" },
+    "dataClassification": { "value": "protected-b" }
+  }
+}
