@@ -8,6 +8,8 @@ and ../integration/README.md for the tests that do).
 
 from __future__ import annotations
 
+import json
+
 import function_app as fa
 import pytest
 
@@ -45,8 +47,12 @@ def test_process_mercury_records_uses_null_driver_license_when_no_driver(monkeyp
     monkeypatch.setattr(
         fa,
         "_download_to_blob",
-        lambda url, dmer_id, container: f"{container}/{dmer_id}.pdf",
+        lambda url, dmer_id, container: (
+            f"{container}/{dmer_id}.pdf",
+            f"https://example.blob.core.windows.net/{container}/{dmer_id}.pdf",
+        ),
     )
+    monkeypatch.setattr(fa, "_publish_raw_dmer_message", lambda *a, **k: None)
     recorded = {}
     monkeypatch.setattr(
         fa,
@@ -97,3 +103,100 @@ def test_process_mercury_records_records_failure_when_document_url_missing(monke
     # still lists it, so the next poll will retry rather than skip it.
     assert new_count == 1
     assert "A1" in failed
+
+
+def test_publish_raw_dmer_message_sends_expected_envelope(monkeypatch):
+    """Verifies the raw-dmer-queue envelope (docs/contracts/queues/raw-dmer-queue.md)
+    and that dmer_id is used as the Service Bus message_id (the duplicate-
+    detection key), without needing a real Service Bus connection.
+    """
+    monkeypatch.setenv("SERVICE_BUS_NAMESPACE_FQDN", "sb-test.servicebus.windows.net")
+    sent = {}
+
+    class FakeSender:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def send_messages(self, message):
+            sent["message"] = message
+
+    class FakeClient:
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def get_queue_sender(self, queue_name):
+            sent["queue_name"] = queue_name
+            return FakeSender()
+
+    class FakeMessage:
+        def __init__(self, body, message_id):
+            self.body = body
+            self.message_id = message_id
+
+    monkeypatch.setattr(fa, "ServiceBusClient", FakeClient)
+    monkeypatch.setattr(fa, "ServiceBusMessage", FakeMessage)
+    monkeypatch.setattr(fa, "DefaultAzureCredential", lambda: object())
+
+    fa._publish_raw_dmer_message("DMER-1", "1234567", "https://x/DMER-1.pdf")
+
+    assert sent["queue_name"] == fa._RAW_DMER_QUEUE_NAME
+    assert sent["message"].message_id == "DMER-1"
+    body = json.loads(sent["message"].body)
+    assert body["messageId"] == "DMER-1"
+    assert body["correlationId"] == "DMER-1"
+    assert body["documentId"] == "DMER-1"
+    assert body["documentUri"] == "https://x/DMER-1.pdf"
+    assert body["mercuryCaseId"] is None
+    assert body["sourceSystem"] == "mercury-batch"
+    assert body["payload"]["driverLicense"] == "1234567"
+
+
+def test_publish_raw_dmer_message_driver_license_null_in_payload(monkeypatch):
+    monkeypatch.setenv("SERVICE_BUS_NAMESPACE_FQDN", "sb-test.servicebus.windows.net")
+    sent = {}
+
+    class FakeSender:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def send_messages(self, message):
+            sent["message"] = message
+
+    class FakeClient:
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def get_queue_sender(self, queue_name):
+            return FakeSender()
+
+    class FakeMessage:
+        def __init__(self, body, message_id):
+            self.body = body
+            self.message_id = message_id
+
+    monkeypatch.setattr(fa, "ServiceBusClient", FakeClient)
+    monkeypatch.setattr(fa, "ServiceBusMessage", FakeMessage)
+    monkeypatch.setattr(fa, "DefaultAzureCredential", lambda: object())
+
+    fa._publish_raw_dmer_message("DMER-2", None, "https://x/DMER-2.pdf")
+
+    body = json.loads(sent["message"].body)
+    assert body["payload"]["driverLicense"] is None

@@ -33,6 +33,8 @@ from datetime import datetime, timezone
 
 import azure.functions as func
 import psycopg2
+from azure.identity import DefaultAzureCredential
+from azure.servicebus import ServiceBusClient, ServiceBusMessage
 from azure.storage.blob import BlobServiceClient
 
 app = func.FunctionApp()
@@ -49,6 +51,13 @@ _AAD_POSTGRES_SCOPE = "https://ossrdbms-aad.database.windows.net/.default"
 # invocation on one dedicated connection, and released automatically by
 # Postgres the moment that connection closes, crash or no crash.
 _MERCURY_POLL_LOCK_KEY = 727_100_001
+
+# Service Bus queue this publishes new-DMER notifications to -- see
+# docs/contracts/queues/raw-dmer-queue.md for the full contract (envelope
+# schema, retry/dedup settings). Name and envelope shape are fixed by that
+# contract, not environment-configurable, so this is a constant rather than
+# an app setting.
+_RAW_DMER_QUEUE_NAME = "raw-dmer-queue"
 
 
 def _mercury_api_get(url: str) -> dict:
@@ -98,12 +107,20 @@ def _get_base_mercury_url() -> str:
     return url
 
 
-def _download_to_blob(document_url: str, dmer_id: str, container_name: str) -> str:
+def _download_to_blob(
+    document_url: str, dmer_id: str, container_name: str
+) -> tuple[str, str]:
     """Downloads a DMER PDF from Mercury's pre-signed `document_url` and
     uploads it into our own storage, named by `dmer_id` (the Mercury
     `document_guid` -- globally unique, so this can't collide the way a
-    human-entered filename could). Returns the path we stored it at, as
-    "<container>/<dmer_id>.pdf".
+    human-entered filename could).
+
+    Returns (blob_path, blob_url): `blob_path` as "<container>/<dmer_id>.pdf"
+    for the `dmer_processing.blob_path` column, and `blob_url` -- the blob's
+    full HTTPS URL -- for raw-dmer-queue's `documentUri` (see
+    docs/contracts/queues/raw-dmer-queue.md). di-processor fetches from our
+    own storage there, not Mercury's pre-signed URL, which may have expired
+    by the time a backlogged item actually gets processed.
     """
     logger.info("Downloading dmer_id=%s from Mercury document_url", dmer_id)
     with urllib.request.urlopen(document_url, timeout=60) as response:
@@ -114,12 +131,60 @@ def _download_to_blob(document_url: str, dmer_id: str, container_name: str) -> s
         os.environ["AzureWebJobsStorage"]
     )
     blob_name = f"{dmer_id}.pdf"
-    blob_service.get_container_client(container_name).upload_blob(
-        blob_name, content, overwrite=True
+    blob_client = blob_service.get_container_client(container_name).get_blob_client(
+        blob_name
     )
+    blob_client.upload_blob(content, overwrite=True)
     blob_path = f"{container_name}/{blob_name}"
+    blob_url = blob_client.url
     logger.info("Uploaded dmer_id=%s to blob_path=%s", dmer_id, blob_path)
-    return blob_path
+    return blob_path, blob_url
+
+
+def _publish_raw_dmer_message(
+    dmer_id: str, driver_license: str | None, document_uri: str
+) -> None:
+    """Publishes the "a new DMER is ready" message to raw-dmer-queue for
+    di-processor, per the envelope in docs/contracts/queues/raw-dmer-queue.md.
+
+    `dmer_id` doubles as both the Service Bus message's native `message_id`
+    (so the queue's own `requiresDuplicateDetection` setting -- a 10-minute
+    window -- can catch an accidental resend) and the envelope's `messageId`
+    field, the longer-lived, application-level idempotency key the contract
+    calls for: "di-processor must no-op on a duplicate messageId it has
+    already completed." Both point at the same value deliberately -- a
+    DMER's own globally-unique id is a more useful idempotency key here than
+    a fresh random one would be.
+
+    `mercuryCaseId` is left null: we don't currently extract a separate
+    Mercury case id from the record (see _process_mercury_records) -- only
+    document_guid/document_url/driver, per the fields actually in scope.
+    """
+    body = {
+        "messageId": dmer_id,
+        "correlationId": dmer_id,
+        "schemaVersion": "1.0",
+        "sourceSystem": "mercury-batch",
+        "documentId": dmer_id,
+        "mercuryCaseId": None,
+        "documentUri": document_uri,
+        "receivedAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "payload": {
+            "driverLicense": driver_license,
+        },
+    }
+
+    fully_qualified_namespace = os.environ["SERVICE_BUS_NAMESPACE_FQDN"]
+    with ServiceBusClient(
+        fully_qualified_namespace, DefaultAzureCredential()
+    ) as client, client.get_queue_sender(_RAW_DMER_QUEUE_NAME) as sender:
+        sender.send_messages(ServiceBusMessage(json.dumps(body), message_id=dmer_id))
+    logger.info(
+        "Published %s message for dmer_id=%s (documentUri=%s)",
+        _RAW_DMER_QUEUE_NAME,
+        dmer_id,
+        document_uri,
+    )
 
 
 def _get_postgres_connection() -> psycopg2.extensions.connection:
@@ -141,9 +206,6 @@ def _get_postgres_connection() -> psycopg2.extensions.connection:
     sslmode = os.environ.get("POSTGRES_SSLMODE", "require")
 
     if not password:
-        # Lazy import: azure-identity is only needed on the Managed Identity path.
-        from azure.identity import DefaultAzureCredential
-
         password = DefaultAzureCredential().get_token(_AAD_POSTGRES_SCOPE).token
 
     return psycopg2.connect(
@@ -536,7 +598,9 @@ def _process_mercury_records(records: list[dict], container_name: str) -> int:
             continue
 
         try:
-            blob_path = _download_to_blob(document_url, dmer_id, container_name)
+            blob_path, blob_url = _download_to_blob(
+                document_url, dmer_id, container_name
+            )
         except Exception as exc:
             logger.exception("Failed to download dmer_id=%s from Mercury", dmer_id)
             try:
@@ -546,6 +610,24 @@ def _process_mercury_records(records: list[dict], container_name: str) -> int:
                     "Failed to record dmer_id=%s as failed; will retry next poll",
                     dmer_id,
                 )
+            continue
+
+        # Publish before recording the DB row (not after): this way, a
+        # dmer_processing row only ever exists for a DMER di-processor has
+        # actually been notified about. A publish failure here is treated
+        # as retryable, not a permanent "failed" -- nothing is recorded, so
+        # the next poll sees this dmer_id as still-unknown and retries the
+        # whole thing (download included) from scratch. That's a deliberate
+        # trade -- possible redundant downloads on a flaky Service Bus
+        # connection -- over the alternative (a "started" row with no
+        # message ever sent, silently stuck until someone notices).
+        try:
+            _publish_raw_dmer_message(dmer_id, driver_license, blob_url)
+        except Exception:
+            logger.exception(
+                "Failed to publish raw-dmer-queue message for dmer_id=%s; will retry next poll",
+                dmer_id,
+            )
             continue
 
         try:

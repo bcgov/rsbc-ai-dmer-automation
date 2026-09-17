@@ -31,15 +31,15 @@ def _pages(base_url: str) -> tuple[dict, dict]:
     page_1 = {
         "value": [
             {
-                "document_guid": "MOCK-DMER-0001",
-                "document_url": f"{base_url}/api/files/MOCK-DMER-0001.pdf",
+                "document_guid": "MOCK-DMER-1001",
+                "document_url": f"{base_url}/api/files/MOCK-DMER-1001.pdf",
                 "driver": {"licence_number": "1234567"},
                 "documents": [],
                 "case": {},
             },
             {
-                "document_guid": "MOCK-DMER-0002",
-                "document_url": f"{base_url}/api/files/MOCK-DMER-0002.pdf",
+                "document_guid": "MOCK-DMER-1002",
+                "document_url": f"{base_url}/api/files/MOCK-DMER-1002.pdf",
                 "driver": None,
                 "documents": [],
                 "case": {},
@@ -50,8 +50,8 @@ def _pages(base_url: str) -> tuple[dict, dict]:
     page_2 = {
         "value": [
             {
-                "document_guid": "MOCK-DMER-0003",
-                "document_url": f"{base_url}/api/files/MOCK-DMER-0003.pdf",
+                "document_guid": "MOCK-DMER-1003",
+                "document_url": f"{base_url}/api/files/MOCK-DMER-1003.pdf",
                 "driver": {"licence_number": "7654321"},
                 "documents": [],
                 "case": {},
