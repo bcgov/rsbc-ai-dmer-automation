@@ -94,10 +94,27 @@ param owner string = 'RSBC-DMER'
 @description('Data classification tag value — DMER content is personal/medical information (FOIPPA).')
 param dataClassification string = 'protected-b'
 
+@description('Service Bus namespace SKU. Premium — the only tier this landing zone\'s policy allows to actually be reachable (Basic/Standard have no private endpoint option and public access is denied by policy) — see modules/servicebus/namespace.bicep\'s header.')
+@allowed([
+  'Basic'
+  'Standard'
+  'Premium'
+])
+param serviceBusSkuName string = 'Premium'
+
+@description('Optional resource ID of the platform/hub-managed Private DNS Zone for privatelink.servicebus.windows.net. Leave empty — confirmed empty for every other private endpoint in this landing zone (see docs/deployment/deployment-guide.md, "Private DNS: confirmed behavior"); the platform\'s DINE policy registers the DNS A-record automatically regardless of resource type.')
+param privateDnsZoneIdServiceBus string = ''
+
+@description('Principal ID of intake-processor\'s Function App managed identity, granted Send access on raw-dmer-queue. Deployed by a separate template (infrastructure/bicep/intake-processor.bicep) in a different resource group, so this can\'t be resolved as a module output here — pass the already-known principal ID directly. Leave empty to skip this grant (e.g. before that Function App exists yet).')
+param intakeProcessorPrincipalId string = ''
+
 var sharedTags = buildTags(environment, 'shared', costCenter, owner, dataClassification)
 var documentIntelligenceAccountName = resourceName('di', 'shared', environment, instance)
 var storageAccountNameValue = storageAccountName(environment, location, instance)
 var diProcessorIdentityName = resourceName('id', 'di-processor', environment, instance)
+var serviceBusNamespaceName = resourceName('sb', 'shared', environment, instance)
+var rawDmerQueueName = 'raw-dmer-queue'
+var extractedDmerQueueName = 'extracted-dmer-queue'
 
 // ---------------------------------------------------------------------------
 // 1. Managed Identity
@@ -210,6 +227,117 @@ resource diProcessorStorageBlobDataReader 'Microsoft.Authorization/roleAssignmen
 }
 
 // ---------------------------------------------------------------------------
+// 5. Service Bus
+//
+// One namespace, two queues (docs/contracts/queues/raw-dmer-queue.md,
+// extracted-dmer-queue.md) — no topics yet: PaddleOCR isn't a Service Bus
+// consumer (it's a separately-deployed Container App, `paddleocr-gpu-app`
+// in this same resource group, called directly over HTTP by di-processor
+// rather than via pub/sub), and there's no "combine" stage either. See
+// docs/architecture/repository-design.md §11's dependency diagram.
+// ---------------------------------------------------------------------------
+module serviceBusNamespace 'modules/servicebus/namespace.bicep' = {
+  name: '${deployment().name}-sb-namespace'
+  params: {
+    name: serviceBusNamespaceName
+    location: location
+    tags: sharedTags
+    skuName: serviceBusSkuName
+  }
+}
+
+module serviceBusPrivateEndpoint 'modules/networking/private-endpoint.bicep' = {
+  name: '${deployment().name}-sb-pe'
+  params: {
+    name: resourceName('pe-sb', 'shared', environment, instance)
+    location: location
+    tags: sharedTags
+    subnetId: privateEndpointSubnetId
+    targetResourceId: serviceBusNamespace.outputs.id
+    groupIds: [
+      'namespace'
+    ]
+    privateDnsZoneResourceId: privateDnsZoneIdServiceBus
+  }
+}
+
+module rawDmerQueue 'modules/servicebus/queue.bicep' = {
+  name: '${deployment().name}-sb-raw-dmer-queue'
+  params: {
+    namespaceName: serviceBusNamespace.outputs.name
+    name: rawDmerQueueName
+    maxDeliveryCount: 5
+    lockDuration: 'PT5M'
+    duplicateDetectionWindow: 'PT10M'
+  }
+}
+
+module extractedDmerQueue 'modules/servicebus/queue.bicep' = {
+  name: '${deployment().name}-sb-extracted-dmer-queue'
+  params: {
+    namespaceName: serviceBusNamespace.outputs.name
+    name: extractedDmerQueueName
+    maxDeliveryCount: 5
+    lockDuration: 'PT5M'
+    // No duplicate-detection window in extracted-dmer-queue.md's contract —
+    // left disabled rather than assuming a value the contract doesn't specify.
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 6. Service Bus RBAC role assignments
+// ---------------------------------------------------------------------------
+var serviceBusDataSenderRoleId = '69a216fc-b8fb-44d8-bc22-1f3c2cd27a39'
+var serviceBusDataReceiverRoleId = '4f6d3b9b-027b-4f4c-9142-0e5a2a2247e0'
+
+resource rawDmerQueueExisting 'Microsoft.ServiceBus/namespaces/queues@2024-01-01' existing = {
+  name: '${serviceBusNamespaceName}/${rawDmerQueueName}'
+  dependsOn: [
+    rawDmerQueue
+  ]
+}
+
+resource extractedDmerQueueExisting 'Microsoft.ServiceBus/namespaces/queues@2024-01-01' existing = {
+  name: '${serviceBusNamespaceName}/${extractedDmerQueueName}'
+  dependsOn: [
+    extractedDmerQueue
+  ]
+}
+
+@description('Lets id-rsbc-dmer-di-processor consume raw-dmer-queue (intake-processor\'s output).')
+resource diProcessorRawDmerReceiver 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(rawDmerQueueExisting.id, diProcessorIdentityName, serviceBusDataReceiverRoleId)
+  scope: rawDmerQueueExisting
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', serviceBusDataReceiverRoleId)
+    principalId: diProcessorIdentity.outputs.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+@description('Lets id-rsbc-dmer-di-processor publish its result to extracted-dmer-queue.')
+resource diProcessorExtractedDmerSender 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(extractedDmerQueueExisting.id, diProcessorIdentityName, serviceBusDataSenderRoleId)
+  scope: extractedDmerQueueExisting
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', serviceBusDataSenderRoleId)
+    principalId: diProcessorIdentity.outputs.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+@description('Lets intake-processor\'s Function App publish to raw-dmer-queue. Skipped (no-op) when intakeProcessorPrincipalId is left empty.')
+resource intakeProcessorRawDmerSender 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(intakeProcessorPrincipalId)) {
+  name: guid(rawDmerQueueExisting.id, 'intake-processor', serviceBusDataSenderRoleId)
+  scope: rawDmerQueueExisting
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', serviceBusDataSenderRoleId)
+    principalId: intakeProcessorPrincipalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Outputs
 // ---------------------------------------------------------------------------
 output documentIntelligenceName string = documentIntelligence.outputs.name
@@ -217,3 +345,7 @@ output documentIntelligenceEndpoint string = documentIntelligence.outputs.endpoi
 output storageAccountDeployedName string = storage.outputs.name
 output storageBlobEndpoint string = storage.outputs.blobEndpoint
 output diProcessorManagedIdentityClientId string = diProcessorIdentity.outputs.clientId
+output serviceBusNamespaceName string = serviceBusNamespace.outputs.name
+output serviceBusEndpoint string = serviceBusNamespace.outputs.serviceBusEndpoint
+output rawDmerQueueName string = rawDmerQueue.outputs.name
+output extractedDmerQueueName string = extractedDmerQueue.outputs.name
