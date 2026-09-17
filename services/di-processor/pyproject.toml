@@ -3,6 +3,29 @@ name = "di-processor"
 version = "0.1.0"
 description = "See docs/services/di-processor.md"
 requires-python = ">=3.12"
+dependencies = [
+    "pydantic>=2.6,<3",
+    "dmer-common",
+    "pymupdf>=1.24,<2",
+    "pillow>=10,<12",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.23",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"di_processor.extraction.resources" = ["*.json", "*.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+asyncio_mode = "auto"
