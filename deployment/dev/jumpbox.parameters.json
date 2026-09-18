@@ -1,0 +1,23 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "environment": { "value": "dev" },
+    "location": { "value": "canadacentral" },
+    "vmName": { "value": "rsbc-ai-jumpbox" },
+    "bastionName": { "value": "rsbc-dmer-ai-bastion" },
+    "vmSize": { "value": "Standard_DC2s_v3" },
+    "vmSubnetId": {
+      "value": "/subscriptions/e34c5ef8-e2f1-4a67-a94f-29cb158155c2/resourceGroups/f11861-dev-networking/providers/Microsoft.Network/virtualNetworks/f11861-dev-vwan-spoke/subnets/snet-rsbc-dmer-ai-optimization-private-endpoints"
+    },
+    "vnetResourceGroupName": { "value": "f11861-dev-networking" },
+    "vnetName": { "value": "f11861-dev-vwan-spoke" },
+    "bastionSubnetAddressPrefix": { "value": "REPLACE-ME: verify a free /26+ against `az network vnet subnet list` on f11861-dev-vwan-spoke first" },
+    "adminUsername": { "value": "rsbc-dmer" },
+    "serviceBusNamespaceName": { "value": "sb-rsbc-dmer-shared-dev-001" },
+    "serviceBusResourceGroupName": { "value": "rg-rsbc-dmer-dev" },
+    "costCenter": { "value": "RSBC" },
+    "owner": { "value": "RSBC-DMER" },
+    "dataClassification": { "value": "protected-b" }
+  }
+}
