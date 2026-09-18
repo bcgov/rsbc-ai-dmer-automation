@@ -118,6 +118,10 @@ param mercuryQueue string = 'BOTH'
 @description('Mercury API page size.')
 param mercuryPageSize string = '50'
 
+@description('Fully-qualified Service Bus namespace hostname (e.g. sb-rsbc-dmer-shared-dev-001.servicebus.windows.net) that _publish_raw_dmer_message authenticates against via DefaultAzureCredential. This Function App\'s managed identity needs Azure Service Bus Data Sender on raw-dmer-queue specifically — granted by main.bicep\'s intakeProcessorRawDmerSender (see deployment/dev/parameters.json\'s intakeProcessorPrincipalId), not by this template.')
+@minLength(1)
+param serviceBusNamespaceFqdn string
+
 @description('Cost center tag value.')
 param costCenter string = 'RSBC'
 
@@ -163,6 +167,7 @@ var appSettings = {
   MERCURY_API_KEY: mercuryApiKey
   MERCURY_QUEUE: mercuryQueue
   MERCURY_PAGE_SIZE: mercuryPageSize
+  SERVICE_BUS_NAMESPACE_FQDN: serviceBusNamespaceFqdn
 }
 
 module functionApp 'modules/compute/function-app.bicep' = {

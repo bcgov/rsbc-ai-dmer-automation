@@ -82,6 +82,9 @@ param allowSharedKeyAccess bool = true
 @description('Whether to disable Document Intelligence API-key auth in favour of Azure AD/RBAC only.')
 param disableLocalAuthDocumentIntelligence bool = false
 
+@description('Principal ID of intake-processor\'s Function App managed identity — grants it Azure Service Bus Data Sender on raw-dmer-queue (see main.bicep\'s intakeProcessorRawDmerSender). Left empty by default since intake-processor.bicep is deployed separately and its identity may not exist yet on a fresh environment\'s first deployment.')
+param intakeProcessorPrincipalId string = ''
+
 @description('Cost center tag value.')
 param costCenter string = 'RSBC'
 
@@ -153,6 +156,7 @@ module workload 'main.bicep' = {
     blobContainerNames: blobContainerNames
     allowSharedKeyAccess: allowSharedKeyAccess
     disableLocalAuthDocumentIntelligence: disableLocalAuthDocumentIntelligence
+    intakeProcessorPrincipalId: intakeProcessorPrincipalId
     costCenter: costCenter
     owner: owner
     dataClassification: dataClassification

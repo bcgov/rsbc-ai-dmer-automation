@@ -27,6 +27,9 @@
     },
     "mercuryQueue": { "value": "BOTH" },
     "mercuryPageSize": { "value": "50" },
+    "serviceBusNamespaceFqdn": {
+      "value": "sb-rsbc-dmer-shared-dev-001.servicebus.windows.net"
+    },
     "costCenter": { "value": "RSBC" },
     "owner": { "value": "RSBC-DMER" },
     "dataClassification": { "value": "protected-b" }

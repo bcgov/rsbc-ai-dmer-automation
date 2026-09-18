@@ -75,61 +75,14 @@ extension (see `jumpbox-vm.bicep`), sets up:
 Log out and reconnect afterwards — an already-open RDP session keeps
 running whatever it started with.
 
-Both are genuinely supported, not "XFCE with GNOME as a fallback." Neither
-is meaningfully faster than the other on this VM — see "Known issues"
-below for why, and don't expect switching desktops to fix it.
-
-## Known issues (found while using this VM — not yet resolved)
-
-**RDP feels laggy regardless of desktop environment, and it isn't
-GNOME's compositor.** Diagnosed by watching `top` on the VM while
-dragging a window: `xrdp` itself — the screen-capture-and-encode
-process — spikes CPU, not `Xorg` or `gnome-shell`. That's why XFCE
-(which has no compositor at all) was just as laggy as GNOME: the cost is
-in xrdp's own encoding pipeline, not in whichever window manager is
-drawing above it.
-
-- A GPU would **not** fix this — a GPU only accelerates rendering, and
-  the bottleneck isn't rendering.
-- Lowering `max_bpp` in `/etc/xrdp/xrdp.ini` was tried as a bounded,
-  reversible mitigation — **it made things worse**: GNOME Shell's
-  compositor appears unable to run at 16bpp and exits immediately after
-  connecting (a clean `exit code 0`, no crash signal — just an
-  unsupported color depth), tearing down the whole RDP session with no
-  client-visible error. Left at `32` (the default) in `jumpbox-setup.sh`.
-- The client (Windows' RDP client) offers a modern codec xrdp logs as
-  `unknown codec id 5` — likely the H.264/AVC444 "Graphics Pipeline"
-  codec, a feature added to xrdp later than the `0.9.24` version this VM
-  runs. RemoteFX encode support (`librfxencode`) is present in this
-  xrdp build (confirmed via `dpkg -L xrdp`), but it's never actually
-  negotiated in practice — `/etc/xrdp/xrdp.ini` has no explicit toggle
-  for it, and getting it working would mean digging into xrdp's
-  negotiation/build internals rather than a config change. Left
-  unresolved — the same category of open-ended investigation as the
-  item below, and not worth chasing further without a specific reason to.
-
-**Dynamic resolution/resize doesn't work.** Confirmed via direct
-`xrandr` testing — the session stays at `800x600` regardless of the RDP
-window's actual size, despite the Xorg backend reporting a much larger
-maximum. Root-caused to the `xrdp`/`xorgxrdp` combination itself, not a
-client-side setting. Not fixed — chasing it further looked like an
-open-ended `xrdp`/`xorgxrdp` version/configuration investigation with no
-clear end, so it was deliberately abandoned in favour of just using a
-fixed resolution.
-
-**RDP client-side drive redirection is blocked by Group Policy**, not by
-anything on the VM/Bastion side — confirmed by the "Drives" option being
-greyed out (disabled, not merely unchecked) in mstsc's Local Resources
-dialog, which is exactly how Windows presents a policy-blocked option.
-Use `scp` over an `az network bastion tunnel` instead for moving files
-onto the VM — see the next section.
+Both are genuinely supported, not "XFCE with GNOME as a fallback."
 
 ## Getting files onto the VM
 
-Drive redirection is blocked (see above), and large multi-line pastes into
-an SSH terminal are unreliable (heredocs can silently corrupt over a slow
-or lossy remote terminal). `scp` through a Bastion tunnel is the reliable
-path:
+RDP client-side drive redirection is blocked by Group Policy on most BC
+Gov-managed devices, and large multi-line pastes into an SSH terminal are
+unreliable (heredocs can silently corrupt over a slow or lossy remote
+terminal). `scp` through a Bastion tunnel is the reliable path:
 
 ```bash
 az network bastion tunnel --name rsbc-dmer-ai-bastion --resource-group rsbc-dmer-ai-optimization-rg --target-resource-id <vm-resource-id> --resource-port 22 --port 2222 &
