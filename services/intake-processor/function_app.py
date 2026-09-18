@@ -142,36 +142,44 @@ def _download_to_blob(
 
 
 def _publish_raw_dmer_message(
-    dmer_id: str, driver_license: str | None, document_uri: str
+    dmer_id: str, document_uri: str, mercury_record: dict
 ) -> None:
     """Publishes the "a new DMER is ready" message to raw-dmer-queue for
     di-processor, per the envelope in docs/contracts/queues/raw-dmer-queue.md.
 
-    `dmer_id` doubles as both the Service Bus message's native `message_id`
-    (so the queue's own `requiresDuplicateDetection` setting -- a 10-minute
-    window -- can catch an accidental resend) and the envelope's `messageId`
-    field, the longer-lived, application-level idempotency key the contract
-    calls for: "di-processor must no-op on a duplicate messageId it has
-    already completed." Both point at the same value deliberately -- a
-    DMER's own globally-unique id is a more useful idempotency key here than
-    a fresh random one would be.
+    The envelope carries exactly two kinds of things, and nothing is
+    duplicated between them:
 
-    `mercuryCaseId` is left null: we don't currently extract a separate
-    Mercury case id from the record (see _process_mercury_records) -- only
-    document_guid/document_url/driver, per the fields actually in scope.
+    - Fields intake-processor itself owns/generates: `schemaVersion`,
+      `sourceSystem`, `documentUri` (our own blob URL, not Mercury's
+      expiring pre-signed one), `receivedAt`.
+    - `mercuryRecord`: Mercury's own record for this DMER, embedded
+      verbatim, byte-for-byte as received -- no picking out individual
+      fields (document_name, driver, case, etc.) into our own reshaped
+      structure. Mercury's response shape isn't ours to define, and it can
+      change; if this function had field-specific logic, every such change
+      would mean touching it. di-processor is expected to read
+      mercuryRecord's fields directly rather than expecting us to have
+      pre-extracted anything for it.
+
+    There's deliberately no `messageId`/`correlationId`/`documentId` field
+    in the body -- `dmer_id` (Mercury's own document_guid) is set as the
+    Service Bus message's native `message_id` property instead (so the
+    queue's own `requiresDuplicateDetection` setting -- a 10-minute window
+    -- can catch an accidental resend, and it also doubles as the
+    longer-lived, application-level idempotency key the contract calls
+    for). A consumer reads it via `message.message_id` directly from the
+    Service Bus SDK; echoing the same value into the body as well would
+    just be a second copy of the same string. Likewise, Mercury's own case
+    id is already sitting at `mercuryRecord["case"]["case_id"]` (when
+    present) -- no separate `mercuryCaseId` envelope field is needed.
     """
     body = {
-        "messageId": dmer_id,
-        "correlationId": dmer_id,
         "schemaVersion": "1.0",
         "sourceSystem": "mercury-batch",
-        "documentId": dmer_id,
-        "mercuryCaseId": None,
         "documentUri": document_uri,
         "receivedAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-        "payload": {
-            "driverLicense": driver_license,
-        },
+        "mercuryRecord": mercury_record,
     }
 
     fully_qualified_namespace = os.environ["SERVICE_BUS_NAMESPACE_FQDN"]
@@ -622,7 +630,7 @@ def _process_mercury_records(records: list[dict], container_name: str) -> int:
         # connection -- over the alternative (a "started" row with no
         # message ever sent, silently stuck until someone notices).
         try:
-            _publish_raw_dmer_message(dmer_id, driver_license, blob_url)
+            _publish_raw_dmer_message(dmer_id, blob_url, record)
         except Exception:
             logger.exception(
                 "Failed to publish raw-dmer-queue message for dmer_id=%s; will retry next poll",

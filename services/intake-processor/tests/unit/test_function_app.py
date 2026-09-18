@@ -106,9 +106,12 @@ def test_process_mercury_records_records_failure_when_document_url_missing(monke
 
 
 def test_publish_raw_dmer_message_sends_expected_envelope(monkeypatch):
-    """Verifies the raw-dmer-queue envelope (docs/contracts/queues/raw-dmer-queue.md)
-    and that dmer_id is used as the Service Bus message_id (the duplicate-
-    detection key), without needing a real Service Bus connection.
+    """Verifies the raw-dmer-queue envelope (docs/contracts/queues/raw-dmer-queue.md):
+    intake-processor's own fields plus Mercury's record embedded verbatim
+    (no re-extracted/duplicated identifiers), and that dmer_id is used as
+    the Service Bus message_id (the duplicate-detection key) rather than
+    also being echoed into the body -- all without needing a real Service
+    Bus connection.
     """
     monkeypatch.setenv("SERVICE_BUS_NAMESPACE_FQDN", "sb-test.servicebus.windows.net")
     sent = {}
@@ -146,21 +149,42 @@ def test_publish_raw_dmer_message_sends_expected_envelope(monkeypatch):
     monkeypatch.setattr(fa, "ServiceBusMessage", FakeMessage)
     monkeypatch.setattr(fa, "DefaultAzureCredential", lambda: object())
 
-    fa._publish_raw_dmer_message("DMER-1", "1234567", "https://x/DMER-1.pdf")
+    mercury_record = {
+        "dps_queue": "General",
+        "document_guid": "DMER-1",
+        "document_url": "https://mercury.example.com/presigned/DMER-1.pdf",
+        "driver": {"licence_number": "1234567"},
+        "case": {"case_id": "C1234"},
+    }
+
+    fa._publish_raw_dmer_message("DMER-1", "https://x/DMER-1.pdf", mercury_record)
 
     assert sent["queue_name"] == fa._RAW_DMER_QUEUE_NAME
     assert sent["message"].message_id == "DMER-1"
     body = json.loads(sent["message"].body)
-    assert body["messageId"] == "DMER-1"
-    assert body["correlationId"] == "DMER-1"
-    assert body["documentId"] == "DMER-1"
-    assert body["documentUri"] == "https://x/DMER-1.pdf"
-    assert body["mercuryCaseId"] is None
+    assert body["schemaVersion"] == "1.0"
     assert body["sourceSystem"] == "mercury-batch"
-    assert body["payload"]["driverLicense"] == "1234567"
+    assert body["documentUri"] == "https://x/DMER-1.pdf"
+    assert "receivedAt" in body
+    # No re-extracted identifiers -- dmer_id lives only as the Service
+    # Bus message_id property, and Mercury's own case id (when present)
+    # lives only inside mercuryRecord -- neither is echoed into the body
+    # under a separate name.
+    assert "messageId" not in body
+    assert "correlationId" not in body
+    assert "documentId" not in body
+    assert "mercuryCaseId" not in body
+    assert "payload" not in body
+    # Mercury's record is embedded exactly as received.
+    assert body["mercuryRecord"] == mercury_record
 
 
-def test_publish_raw_dmer_message_driver_license_null_in_payload(monkeypatch):
+def test_publish_raw_dmer_message_embeds_mercury_record_verbatim(monkeypatch):
+    """No field-specific reshaping happens in this function -- whatever
+    Mercury sent (including a null driver, or fields this function has
+    never heard of) passes through completely unmodified. Guards against
+    ever re-introducing structure-specific logic here.
+    """
     monkeypatch.setenv("SERVICE_BUS_NAMESPACE_FQDN", "sb-test.servicebus.windows.net")
     sent = {}
 
@@ -196,7 +220,14 @@ def test_publish_raw_dmer_message_driver_license_null_in_payload(monkeypatch):
     monkeypatch.setattr(fa, "ServiceBusMessage", FakeMessage)
     monkeypatch.setattr(fa, "DefaultAzureCredential", lambda: object())
 
-    fa._publish_raw_dmer_message("DMER-2", None, "https://x/DMER-2.pdf")
+    mercury_record = {
+        "document_guid": "DMER-2",
+        "driver": None,
+        "a_future_field_this_function_has_never_heard_of": {"nested": True},
+    }
+
+    fa._publish_raw_dmer_message("DMER-2", "https://x/DMER-2.pdf", mercury_record)
 
     body = json.loads(sent["message"].body)
-    assert body["payload"]["driverLicense"] is None
+    assert body["mercuryRecord"] == mercury_record
+    assert body["mercuryRecord"]["driver"] is None

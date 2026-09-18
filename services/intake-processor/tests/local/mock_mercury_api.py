@@ -11,13 +11,19 @@ Then point local.settings.json at it and restart `func start`:
     "MERCURY_API_BASE_URL": "http://localhost:8899/mercury/documents",
     "MERCURY_API_KEY": "local-dev-key"  # pragma: allowlist secret -- example value, not a real key
 
-Shape of what it serves matches Mercury's real response: a `value` array of
-DMER records, each with `document_guid` (-> dmer_id), a top-level
-`document_url`, and an optional `driver` object with `licence_number` --
-plus `documents`/`case` fields intake-processor currently ignores, included
-here just to look like the real payload. Each record's `document_url` points
-back at this same server, which serves a tiny dummy PDF there so
-`_download_to_blob` has something real to fetch.
+Shape of what it serves matches Mercury's real response: each record carries
+the full set of fields Mercury actually returns (dps_queue, document_name,
+document_type, document_status, document_priority, received_date,
+document_type_business_area, queue, dmer_status, a driver object with
+first/last name + licence_number + a documents[] history, and a case
+object) -- intake-processor embeds all of it verbatim in the raw-dmer-queue
+message (see _publish_raw_dmer_message), so none of it should be dropped
+here just because intake-processor's own extraction logic only reads
+document_guid/document_url/driver.licence_number today. `document_url` is
+kept at the top level (not only nested inside driver.documents[]) since
+that's what intake-processor currently reads to know what to download --
+each one points back at this same server, which serves a tiny dummy PDF
+there so `_download_to_blob` has something real to fetch.
 
 Two pages are served: page 1 (2 records, one with a driver and one without)
 has a `nextLink` to page 2 (1 record, with a driver); page 2 has no
@@ -43,18 +49,64 @@ _DUMMY_PDF = b"%PDF-1.4\n% Mock DMER PDF for local testing\n%%EOF\n"
 _PAGE_1 = {
     "value": [
         {
-            "document_guid": "MOCK-DMER-0001",
-            "document_url": f"{BASE}/files/MOCK-DMER-0001.pdf",
-            "driver": {"licence_number": "1234567"},
-            "documents": [],
-            "case": {},
+            "dps_queue": "General",
+            "document_guid": "bd4c19d6-4e12-45ae-a82b-dfac1fb91bd1",
+            "document_name": "DMER-0001 - MOCKONE.pdf",
+            "document_type": "DMER",
+            "document_status": "Uploaded",
+            "document_priority": "Regular",
+            "received_date": "2024-10-03T07:11:00Z",
+            "document_type_business_area": "Driver Fitness",
+            "queue": "Team - Intake",
+            "dmer_status": "",
+            "document_url": f"{BASE}/files/bd4c19d6-4e12-45ae-a82b-dfac1fb91bd1.pdf",
+            "driver": {
+                "driver_id": "D0001",
+                "first_name": "Mock",
+                "middle_name": "",
+                "last_name": "One",
+                "licence_number": "1234567",
+                "documents": [
+                    {
+                        "file_name": "DMER-0001 - MOCKONE",
+                        "document_type": "DMER",
+                        "document_status": "Uploaded",
+                        "uploaded_date": "2024-10-03T07:11:00Z",
+                        "document_url": f"{BASE}/files/bd4c19d6-4e12-45ae-a82b-dfac1fb91bd1.pdf",
+                        "dps_date": "",
+                    }
+                ],
+            },
+            "case": {
+                "case_id": "C0001",
+                "case_title": "0001 - MOCKONE - RSBC - 1",
+                "case_type": "RSBC",
+                "case_priority": "Regular",
+                "case_owner": "Team - Intake",
+                "case_status": "Open Pending Submission",
+            },
         },
         {
-            "document_guid": "MOCK-DMER-0002",
-            "document_url": f"{BASE}/files/MOCK-DMER-0002.pdf",
+            "dps_queue": "Unknown",
+            "document_guid": "ccf30a7b-8598-4bdc-a3ee-b7dc17c74f9f",
+            "document_name": "DMER-0002 - MOCKTWO.pdf",
+            "document_type": "DMER",
+            "document_status": "Uploaded",
+            "document_priority": "Regular",
+            "received_date": "2024-10-03T08:00:00Z",
+            "document_type_business_area": "Driver Fitness",
+            "queue": "Team - Intake",
+            "dmer_status": "",
+            "document_url": f"{BASE}/files/ccf30a7b-8598-4bdc-a3ee-b7dc17c74f9f.pdf",
             "driver": None,
-            "documents": [],
-            "case": {},
+            "case": {
+                "case_id": "C0002",
+                "case_title": "0002 - MOCKTWO - RSBC - 1",
+                "case_type": "RSBC",
+                "case_priority": "Regular",
+                "case_owner": "Team - Intake",
+                "case_status": "Open Pending Submission",
+            },
         },
     ],
     "nextLink": f"{BASE}/mercury/documents?queue=BOTH&page_size=50&cursor=page2",
@@ -63,11 +115,42 @@ _PAGE_1 = {
 _PAGE_2 = {
     "value": [
         {
-            "document_guid": "MOCK-DMER-0003",
-            "document_url": f"{BASE}/files/MOCK-DMER-0003.pdf",
-            "driver": {"licence_number": "7654321"},
-            "documents": [],
-            "case": {},
+            "dps_queue": "General",
+            "document_guid": "9e21b720-40c6-4fe2-937b-c0fe4534766d",
+            "document_name": "DMER-0003 - MOCKTHREE.pdf",
+            "document_type": "DMER",
+            "document_status": "Uploaded",
+            "document_priority": "Regular",
+            "received_date": "2024-10-03T09:00:00Z",
+            "document_type_business_area": "Driver Fitness",
+            "queue": "Team - Intake",
+            "dmer_status": "",
+            "document_url": f"{BASE}/files/9e21b720-40c6-4fe2-937b-c0fe4534766d.pdf",
+            "driver": {
+                "driver_id": "D0003",
+                "first_name": "Mock",
+                "middle_name": "",
+                "last_name": "Three",
+                "licence_number": "7654321",
+                "documents": [
+                    {
+                        "file_name": "DMER-0003 - MOCKTHREE",
+                        "document_type": "DMER",
+                        "document_status": "Uploaded",
+                        "uploaded_date": "2024-10-03T09:00:00Z",
+                        "document_url": f"{BASE}/files/9e21b720-40c6-4fe2-937b-c0fe4534766d.pdf",
+                        "dps_date": "",
+                    }
+                ],
+            },
+            "case": {
+                "case_id": "C0003",
+                "case_title": "0003 - MOCKTHREE - RSBC - 1",
+                "case_type": "RSBC",
+                "case_priority": "Regular",
+                "case_owner": "Team - Intake",
+                "case_status": "Open Pending Submission",
+            },
         },
     ],
     "nextLink": None,
