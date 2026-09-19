@@ -1,6 +1,13 @@
 
 # workflow-orchestrator
 
+> **Superseded.** The revised architecture splits this into two orchestrations. See
+> [`docs/development/stages/03-document-orchestration.md`](../development/stages/03-document-orchestration.md)
+> (per-document) and
+> [`docs/development/stages/06-driver-orchestration.md`](../development/stages/06-driver-orchestration.md)
+> (per-driver, new) for the current implementation reference — the single-orchestration
+> responsibilities below are from the original architecture.
+
 **Azure compute:** Durable Functions (orchestrator + activities)
 
 ## Responsibilities

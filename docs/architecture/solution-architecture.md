@@ -1,7 +1,12 @@
 
 # Solution Architecture
 
-Source of truth: `DMER Intake Automation- Architecture (Azure Cloud) - Explained.docx` (in this folder).
+> **Superseded.** This describes the *original* architecture. The current source of truth is
+> `DMER_Intake_Automation_Revised_Architecture.docx` (this folder) and
+> [`docs/development/README.md`](../development/README.md), which documents the revised pipeline,
+> data model, and Azure services for implementation. Kept for history; not updated further.
+
+Source of truth (original): `DMER Intake Automation- Architecture (Azure Cloud) - Explained.docx` (in this folder).
 
 This file is the living, markdown-native companion to that document — see
 `repository-design.md` for the full repository/infrastructure design derived from it,

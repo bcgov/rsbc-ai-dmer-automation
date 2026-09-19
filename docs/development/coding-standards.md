@@ -54,14 +54,17 @@ per-service once that's true.
 ## Managed Identity & networking
 
 - Every service uses a **user-assigned Managed Identity**; no connection strings, no shared
-  keys, no secrets in app settings other than Key Vault references — **except**
-  `normalizer-service`'s call to the external Azure OpenAI endpoint (see below), which is
-  the one documented exception in this repository.
+  keys, no secrets in app settings other than Key Vault references — **except** the Azure OpenAI
+  calls in [Extraction](../development/stages/02-extraction.md) and
+  [Activity: Normalize](../development/stages/04-activity-normalize.md) (see below), which are
+  the one documented exception in this repository. (Originally scoped to a standalone
+  `normalizer-service`; the revised architecture calls the same external endpoint from two stages —
+  see [`docs/development/services/azure-openai.md`](../development/services/azure-openai.md).)
 - All PaaS dependencies we provision (Storage, Service Bus, PostgreSQL, Document Intelligence,
   Key Vault, App Configuration) are reached over **private endpoints** inside the platform
   team's VNet — public network access is disabled.
-- The Azure OpenAI model `normalizer-service` calls is hosted in a separate Azure AI Hub/AI
+- The Azure OpenAI (GPT-5.1) model these stages call is hosted in a separate Azure AI Hub/AI
   Foundry project in a separate subscription — not provisioned by this repo, not reachable via
   our private endpoints. It is called over its public endpoint, authenticated with an API key
   stored in Key Vault (read through `libs/dmer_common/config`), not Managed Identity. See
-  `docs/architecture/repository-design.md` §10 and §13 (item 8).
+  [`docs/development/services/azure-openai.md`](../development/services/azure-openai.md).

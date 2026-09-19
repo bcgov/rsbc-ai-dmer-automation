@@ -1,6 +1,16 @@
 # DMER Intake Automation — Repository & Infrastructure Design
 
-**Source of truth:** `docs/architecture/DMER Intake Automation- Architecture (Azure Cloud) - Explained.docx`
+> **Superseded.** This repository/service design was derived from the *original* architecture. The
+> revised architecture (`DMER_Intake_Automation_Revised_Architecture.docx`, this folder) changes
+> the service boundaries, queue topology, and database schema significantly — see
+> [`docs/development/README.md`](../development/README.md#what-changed-from-the-original-architecture)
+> for the summary of changes and
+> [`docs/development/README.md#open-questions--decisions-required`](../development/README.md#open-questions--decisions-required)
+> for the proposed (not yet confirmed) folder-structure mapping. This document is kept for history
+> and for infrastructure conventions (naming, Bicep module layout, GitOps practices) that are
+> largely still valid; do not treat its service list, queue names, or Bicep module list as current.
+
+**Source of truth (original):** `docs/architecture/DMER Intake Automation- Architecture (Azure Cloud) - Explained.docx`
 
 This document is the enterprise repository and infrastructure design for the DMER Optimization /
 Intake Automation project: a monorepo following Azure best practices, Domain-Driven service

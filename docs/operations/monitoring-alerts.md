@@ -1,6 +1,13 @@
 
 # Monitoring & Alerts
 
+> **Partially superseded.** Infra-level alerts below (Function failure rate, Container App
+> restarts, PostgreSQL CPU/storage) are still valid. Queue-specific alerts reference the original
+> architecture's queue names. See
+> [`docs/development/services/azure-monitor.md`](../development/services/azure-monitor.md) for the
+> revised alert set, including the outbox-age and driver-join-stuck alerts that have no equivalent
+> below.
+
 | Alert | Condition | Severity |
 |---|---|---|
 | DLQ depth | Any `$DeadLetterQueue` (queue or subscription) > 0 for 5 min | Sev 2 |
