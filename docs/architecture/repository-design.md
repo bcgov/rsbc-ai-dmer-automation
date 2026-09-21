@@ -299,7 +299,7 @@ docs/
 | `shared/resource-group.bicep`               | Creates the application resource group (e.g. `rg-rsbc-dmer-dev`). Subscription-scoped; only used by `subscription.bicep`, never by `main.bicep`.                                                                                                                            |
 | `identity/managed-identity.bicep`           | User-assigned Managed Identity per service, with an optional RBAC role-assignment block (least privilege only).                                                                                                                                                             |
 | `storage/storage-account.bicep`             | StorageV2 account: private endpoint, TLS 1.2 minimum, public network access disabled, lifecycle management policy hook.                                                                                                                                                     |
-| `storage/blob-containers.bicep`             | Creates the seven containers: `raw`, `ocr`, `normalized`, `rules`, `audit`, `failed`, `archive` (§ Storage layout).                                                                                                                                                         |
+| `storage/blob-containers.bicep`             | Creates the pipeline-stage containers: `raw`, `ocr`, `normalized`, `rules`, `audit`, `failed`, `archive`, plus the two di-processor extraction-output containers `extracted-dmer` and `combined-extracted-dmer` (stage-named exception to the singular-noun rule — see §12) (§ Storage layout). |
 | `servicebus/namespace.bicep`                | Service Bus namespace, Premium tier (for private endpoint + availability zone support), private endpoint.                                                                                                                                                                   |
 | `servicebus/queue.bicep`                    | Reusable queue module: max delivery count, lock duration, duplicate-detection window — instantiated for `raw-dmer-queue` and `extracted-dmer-queue`.                                                                                                                        |
 | `servicebus/topic.bicep`                    | Reusable topic + subscription module — instantiated for `dmer-lifecycle-events`.                                                                                                                                                                                            |
@@ -362,7 +362,8 @@ Existing VNet (platform-provided, referenced only — never created by this repo
       └─ Function App VNet integration (Premium plan, per Function App)
 
 Storage Account
- └─ Blob Containers: raw, ocr, normalized, rules, audit, failed, archive
+ └─ Blob Containers: raw, ocr, normalized, rules, audit, failed, archive,
+                     extracted-dmer, combined-extracted-dmer
 
 Service Bus Namespace
  └─ Queue: raw-dmer-queue (+ native DLQ)
@@ -448,7 +449,9 @@ Pattern (Cloud Adoption Framework-aligned):
 Service Bus entities: `kebab-case`, `<domain>-<stage>-queue` for queues (`raw-dmer-queue`),
 `<domain>-events` for topics (`dmer-lifecycle-events`), `sub-<consumer>` for subscriptions
 (`sub-post-processing`). Blob containers: lowercase singular noun matching pipeline stage
-(`raw`, `ocr`, `normalized`, `rules`, `audit`, `failed`, `archive`). PostgreSQL: `snake_case`,
+(`raw`, `ocr`, `normalized`, `rules`, `audit`, `failed`, `archive`), with the documented
+exception of di-processor's `extracted-dmer` and `combined-extracted-dmer` (stage-named).
+PostgreSQL: `snake_case`,
 plural table names (except `audit_log`, kept singular by log-table convention).
 
 ## 13. Recommended Additions Beyond the Architecture Document

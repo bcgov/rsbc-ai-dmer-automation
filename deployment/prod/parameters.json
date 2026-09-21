@@ -21,7 +21,9 @@
     "privateDnsZoneIdBlob": { "value": "" },
     "documentIntelligenceSku": { "value": "S0" },
     "storageSkuName": { "value": "Standard_ZRS" },
-    "blobContainerNames": { "value": ["raw"] },
+    "blobContainerNames": {
+      "value": ["raw", "extracted-dmer", "combined-extracted-dmer"]
+    },
     "allowSharedKeyAccess": { "value": false },
     "disableLocalAuthDocumentIntelligence": { "value": true },
     "costCenter": { "value": "RSBC" },
