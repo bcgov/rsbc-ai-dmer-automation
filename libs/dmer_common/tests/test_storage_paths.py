@@ -1,0 +1,54 @@
+"""Tests for blob path builders and BlobClient URL helpers (pure, no Azure I/O)."""
+
+from __future__ import annotations
+
+import pytest
+from dmer_common.storage import (
+    combined_path,
+    containers,
+    handwritten_path,
+    ocr_path,
+    top_level_path,
+)
+
+
+def test_path_builders_namespace_by_document_id():
+    # GIVEN a document id
+    # WHEN building each stage path
+    # THEN the path is namespaced under the document id with the right filename
+    assert top_level_path("doc-1") == "doc-1/top_level.json"
+    assert ocr_path("doc-1") == "doc-1/ocr.json"
+    assert handwritten_path("doc-1") == "doc-1/handwritten.json"
+    assert combined_path("doc-1") == "doc-1/combined.json"
+
+
+def test_path_builders_strip_stray_slashes():
+    # GIVEN a document id with surrounding slashes/whitespace
+    # WHEN building a path THEN they are normalized away
+    assert ocr_path(" /doc-1/ ") == "doc-1/ocr.json"
+
+
+@pytest.mark.parametrize("bad", ["", "   ", "/"])
+def test_path_builders_reject_empty_document_id(bad):
+    # GIVEN an empty document id
+    # WHEN building a path THEN it raises
+    with pytest.raises(ValueError):
+        combined_path(bad)
+
+
+def test_container_defaults(monkeypatch):
+    # GIVEN no container env overrides
+    monkeypatch.delenv("EXTRACTED_DMER_CONTAINER", raising=False)
+    monkeypatch.delenv("COMBINED_EXTRACTED_DMER_CONTAINER", raising=False)
+    # THEN the getters return the contracted default names
+    assert containers.extracted_dmer() == "extracted-dmer"
+    assert containers.combined_extracted_dmer() == "combined-extracted-dmer"
+
+
+def test_container_names_configurable_via_env(monkeypatch):
+    # GIVEN env overrides for the container names
+    monkeypatch.setenv("EXTRACTED_DMER_CONTAINER", "extracted-custom")
+    monkeypatch.setenv("COMBINED_EXTRACTED_DMER_CONTAINER", "combined-custom")
+    # THEN the getters reflect the overrides
+    assert containers.extracted_dmer() == "extracted-custom"
+    assert containers.combined_extracted_dmer() == "combined-custom"

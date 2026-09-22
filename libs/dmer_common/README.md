@@ -21,6 +21,8 @@ pip install -e ../../libs/dmer_common
 | `retry` | Standardized retry/circuit-breaker policies |
 | `mercury_client` | Anti-corruption layer for Mercury (Dynamics) integration |
 | `config` | App Configuration / Key Vault reference loader |
+| `doc_intelligence` | Document Intelligence client (Managed Identity, private endpoint) |
+| `openai_client` | External Azure OpenAI client (public endpoint, Key Vault API key) |
 
 No service should import the raw Azure SDKs directly for these concerns — always go
 through `dmer_common` so retry, auth, and telemetry behavior stay consistent.

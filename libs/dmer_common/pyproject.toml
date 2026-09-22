@@ -3,7 +3,22 @@ name = "dmer-common"
 version = "0.1.0"
 description = "Shared library for RSBC DMER Automation services"
 requires-python = ">=3.12"
-# dependencies intentionally omitted from this skeleton
+dependencies = [
+    "pydantic>=2.6,<3",
+    "azure-storage-blob>=12.19,<13",
+    "azure-identity>=1.16,<2",
+    "azure-servicebus>=7.12,<8",
+    "azure-ai-documentintelligence>=1.0,<2",
+    "openai>=1.40",
+    "tenacity>=8,<10",
+    "SQLAlchemy>=2.0,<3",
+    "asyncpg>=0.29",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+]
 
 [build-system]
 requires = ["setuptools>=68"]

@@ -1,6 +1,11 @@
 
 # `raw-dmer-queue`
 
+> **Superseded.** The revised architecture uses four queues with different names and a single
+> shared message shape — see
+> [`docs/development/message-contracts.md`](../../development/message-contracts.md). This queue's
+> nearest equivalent is `dmer-ingest` (producer/consumer roles differ — see that doc).
+
 | | |
 |---|---|
 | Type | Service Bus Queue |

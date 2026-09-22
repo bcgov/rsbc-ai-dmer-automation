@@ -1,5 +1,11 @@
 # Naming Conventions
 
+> **Partially superseded.** The resource-naming *pattern* below is still current. The Service Bus
+> entity **examples** (`raw-dmer-queue`, `dmer-lifecycle-events`, `sub-post-processing`) are from
+> the original architecture — see
+> [`docs/development/message-contracts.md`](../development/message-contracts.md) for the revised
+> four-queue topology (`dmer-ingest`, `dmer-raw`, `dmer-extracted`, `driver-decision`; no topics).
+
 See `docs/architecture/repository-design.md` for the full Azure resource naming convention
 table. Summary pattern:
 
