@@ -4,3 +4,12 @@ psycopg2-binary
 azure-identity
 azure-storage-blob
 azure-servicebus
+sqlalchemy
+asyncpg
+# dmer_common has no PyPI/registry presence (private, unpublished) -- Azure's
+# remote build (Oryx) only sees this directory's own contents, so the wheel
+# travels alongside the function code itself rather than being installed
+# from an index. Rebuild it (from libs/dmer_common) and replace this file
+# whenever dmer_common changes -- `pip install` won't notice a same-named
+# wheel is stale, it has to be regenerated and re-copied by hand.
+./dmer_common-0.1.0-py3-none-any.whl
