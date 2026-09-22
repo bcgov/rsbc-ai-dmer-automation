@@ -1,6 +1,11 @@
 
 # `dmer-lifecycle-events` (Topic)
 
+> **Superseded.** The revised architecture has no lifecycle-events topic — post-processing is now
+> an in-process Durable activity rather than a topic subscriber. See
+> [`docs/development/message-contracts.md`](../../development/message-contracts.md) and
+> [`docs/development/stages/08-post-processing.md`](../../development/stages/08-post-processing.md).
+
 | | |
 |---|---|
 | Type | Service Bus Topic |

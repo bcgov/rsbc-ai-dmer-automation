@@ -1,6 +1,11 @@
 
 # `extracted-dmer-queue`
 
+> **Superseded.** See
+> [`docs/development/message-contracts.md`](../../development/message-contracts.md) for the
+> revised architecture's four queues and shared message shape. This queue's nearest equivalent is
+> `dmer-extracted` (payload shape differs — see that doc).
+
 | | |
 |---|---|
 | Type | Service Bus Queue |
