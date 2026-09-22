@@ -1,0 +1,82 @@
+"""Typed runtime settings for di-processor.
+
+Every value is read through :mod:`dmer_common.config`, which is the single site
+that touches the environment (App Configuration values and Key Vault references
+are surfaced as environment variables in Container Apps). Nothing here is
+hardcoded per environment (Requirement 8.3); missing required values fail fast
+via :func:`dmer_common.config.require`.
+
+The external Azure OpenAI settings (endpoint + Key Vault API key — the single
+documented Managed-Identity exception) are loaded via
+:func:`dmer_common.config.openai_settings`, not re-read here.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from dmer_common import config
+
+
+@dataclass(frozen=True)
+class Settings:
+    """di-processor runtime configuration.
+
+    Attributes
+    ----------
+    app_configuration_endpoint:
+        App Configuration endpoint the runtime bootstraps config from.
+    service_bus_namespace_fqdn:
+        Fully-qualified Service Bus namespace (Managed Identity auth).
+    raw_dmer_queue:
+        Source queue this service consumes.
+    extracted_dmer_queue:
+        Destination queue for the v2 combined-extraction message.
+    postgres_host:
+        PostgreSQL host (Managed Identity token auth).
+    blob_account_url:
+        Blob storage account URL (``https://<account>.blob.core.windows.net``).
+    doc_intelligence_endpoint:
+        Document Intelligence private-endpoint URL (Managed Identity).
+    custom_model_id:
+        Custom-trained DI model id used for Stage A top-level extraction.
+    prompt_version:
+        Optional version tag for the LLM reconstruction prompt (recorded in the
+        combined extraction metadata).
+    health_port:
+        Port the readiness/liveness HTTP server binds to.
+    """
+
+    app_configuration_endpoint: str
+    service_bus_namespace_fqdn: str
+    raw_dmer_queue: str
+    extracted_dmer_queue: str
+    postgres_host: str
+    blob_account_url: str
+    doc_intelligence_endpoint: str
+    custom_model_id: str
+    prompt_version: str | None
+    health_port: int
+
+
+def load_settings() -> Settings:
+    """Load and validate di-processor settings from configuration.
+
+    Raises :class:`dmer_common.config.ConfigError` if a required value is
+    missing, so the service fails fast at startup rather than mid-pipeline.
+    """
+    port = config.get("HEALTH_PORT", "8080") or "8080"
+    return Settings(
+        app_configuration_endpoint=config.require("APP_CONFIGURATION_ENDPOINT"),
+        service_bus_namespace_fqdn=config.require("SERVICE_BUS_NAMESPACE_FQDN"),
+        raw_dmer_queue=config.get("RAW_DMER_QUEUE", "raw-dmer-queue")
+        or "raw-dmer-queue",
+        extracted_dmer_queue=config.get("EXTRACTED_DMER_QUEUE", "extracted-dmer-queue")
+        or "extracted-dmer-queue",
+        postgres_host=config.require("POSTGRES_HOST"),
+        blob_account_url=config.require("BLOB_ACCOUNT_URL"),
+        doc_intelligence_endpoint=config.require("DOC_INTELLIGENCE_ENDPOINT"),
+        custom_model_id=config.require("DI_CUSTOM_MODEL_ID"),
+        prompt_version=config.get("LLM_PROMPT_VERSION"),
+        health_port=int(port),
+    )

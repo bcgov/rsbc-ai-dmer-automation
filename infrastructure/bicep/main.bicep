@@ -94,10 +94,33 @@ param owner string = 'RSBC-DMER'
 @description('Data classification tag value — DMER content is personal/medical information (FOIPPA).')
 param dataClassification string = 'protected-b'
 
+// --- di-processor Container App inputs -------------------------------------
+// The Container Apps Environment and Service Bus namespace are shared/other-
+// workstream resources not provisioned by this template; they are supplied by
+// ID/FQDN (the same "platform/shared resource passed in by ID" pattern used for
+// privateEndpointSubnetId and the Private DNS zones above). See tasks.md §11.
+
+@description('Resource ID of the shared Container Apps Environment di-processor runs in (provisioned by another workstream, passed in by ID). Empty = di-processor Container App not deployed by this template yet.')
+param containerAppsEnvironmentId string = ''
+
+@description('Fully-qualified di-processor container image, e.g. myacr.azurecr.io/di-processor:1.0.0. Required when containerAppsEnvironmentId is supplied.')
+param diProcessorImage string = ''
+
+@description('Service Bus namespace FQDN the di-processor KEDA scaler watches, e.g. sb-rsbc-dmer-shared-dev-001.servicebus.windows.net (shared resource, passed in by FQDN). Required when containerAppsEnvironmentId is supplied.')
+param serviceBusNamespaceFqdn string = ''
+
+@description('Optional container registry login server for image pull via the di-processor Managed Identity (e.g. myacr.azurecr.io). Empty = public image / no registry auth.')
+param containerRegistryServer string = ''
+
+@description('Optional Log Analytics Workspace resource ID for di-processor Container App diagnostics (shared resource, passed in by ID). Empty = diagnostics not attached here.')
+param logAnalyticsWorkspaceId string = ''
+
 var sharedTags = buildTags(environment, 'shared', costCenter, owner, dataClassification)
 var documentIntelligenceAccountName = resourceName('di', 'shared', environment, instance)
 var storageAccountNameValue = storageAccountName(environment, location, instance)
 var diProcessorIdentityName = resourceName('id', 'di-processor', environment, instance)
+var diProcessorContainerAppName = resourceName('ca', 'di-processor', environment, instance)
+var deployDiProcessorContainerApp = !empty(containerAppsEnvironmentId)
 
 // ---------------------------------------------------------------------------
 // 1. Managed Identity
@@ -169,9 +192,18 @@ module blobContainers 'modules/storage/blob-containers.bicep' = {
 // ---------------------------------------------------------------------------
 // 4. RBAC role assignments (least privilege only — see
 //    docs/standards/security-guidelines.md)
+//
+// di-processor's own RBAC: Document Intelligence (Cognitive Services User) and
+// the blob containers (container-scoped Reader on raw, Data Contributor on
+// extracted-dmer / combined-extracted-dmer). Service Bus, Key Vault, App
+// Configuration, and PostgreSQL are shared/other-service resources provisioned
+// and granted by their own workstreams — out of scope for this template today.
+// di-processor's runtime access to them is added when those resources are
+// composed here by that work. See tasks.md §11 (scope note).
 // ---------------------------------------------------------------------------
 var cognitiveServicesUserRoleId = 'a97b65f3-24c7-4388-baec-2e87135dc908'
 var storageBlobDataReaderRoleId = '2a2b9908-6ea1-4ae2-8e65-a410df84e7d1'
+var storageBlobDataContributorRoleId = 'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
 
 resource documentIntelligenceExisting 'Microsoft.CognitiveServices/accounts@2024-10-01' existing = {
   name: documentIntelligenceAccountName
@@ -180,10 +212,28 @@ resource documentIntelligenceExisting 'Microsoft.CognitiveServices/accounts@2024
   ]
 }
 
-resource storageAccountExisting 'Microsoft.Storage/storageAccounts@2023-05-01' existing = {
-  name: storageAccountNameValue
+// Container-scoped references for least-privilege blob RBAC. di-processor reads
+// the source document from `raw` and writes extraction artifacts to
+// `extracted-dmer` / `combined-extracted-dmer` — so it gets Reader on the
+// former and Data Contributor on the latter two, never account-wide access.
+resource rawContainerExisting 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' existing = {
+  name: '${storageAccountNameValue}/default/raw'
   dependsOn: [
-    storage
+    blobContainers
+  ]
+}
+
+resource extractedContainerExisting 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' existing = {
+  name: '${storageAccountNameValue}/default/extracted-dmer'
+  dependsOn: [
+    blobContainers
+  ]
+}
+
+resource combinedContainerExisting 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' existing = {
+  name: '${storageAccountNameValue}/default/combined-extracted-dmer'
+  dependsOn: [
+    blobContainers
   ]
 }
 
@@ -198,14 +248,62 @@ resource diProcessorCognitiveServicesUser 'Microsoft.Authorization/roleAssignmen
   }
 }
 
-@description('Lets id-rsbc-dmer-di-processor read blobs (training/source documents). Read-only — di-processor writes go through libs/dmer_common/storage once that service is built, at which point revisit for Contributor if needed.')
-resource diProcessorStorageBlobDataReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(storageAccountExisting.id, diProcessorIdentityName, storageBlobDataReaderRoleId)
-  scope: storageAccountExisting
+@description('Lets id-rsbc-dmer-di-processor read the source DMER from the raw container (read-only, container-scoped).')
+resource diProcessorRawBlobDataReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(rawContainerExisting.id, diProcessorIdentityName, storageBlobDataReaderRoleId)
+  scope: rawContainerExisting
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', storageBlobDataReaderRoleId)
     principalId: diProcessorIdentity.outputs.principalId
     principalType: 'ServicePrincipal'
+  }
+}
+
+@description('Lets id-rsbc-dmer-di-processor write extraction artifacts to the extracted-dmer container (container-scoped).')
+resource diProcessorExtractedBlobDataContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(extractedContainerExisting.id, diProcessorIdentityName, storageBlobDataContributorRoleId)
+  scope: extractedContainerExisting
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', storageBlobDataContributorRoleId)
+    principalId: diProcessorIdentity.outputs.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+@description('Lets id-rsbc-dmer-di-processor write the unified combined extraction to the combined-extracted-dmer container (container-scoped).')
+resource diProcessorCombinedBlobDataContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(combinedContainerExisting.id, diProcessorIdentityName, storageBlobDataContributorRoleId)
+  scope: combinedContainerExisting
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', storageBlobDataContributorRoleId)
+    principalId: diProcessorIdentity.outputs.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 5. di-processor Container App
+//
+// Instantiated only when a Container Apps Environment ID is supplied — the
+// environment and Service Bus namespace are shared/other-workstream resources
+// passed in by ID/FQDN, not created here. Least-privilege RBAC for the attached
+// identity is declared in §4 above. Diagnostics route to the shared Log
+// Analytics workspace when its ID is supplied. See tasks.md §11.2.
+// ---------------------------------------------------------------------------
+module diProcessorContainerApp 'modules/compute/container-app.bicep' = if (deployDiProcessorContainerApp) {
+  name: '${deployment().name}-ca-di-processor'
+  params: {
+    name: diProcessorContainerAppName
+    location: location
+    tags: sharedTags
+    containerAppsEnvironmentId: containerAppsEnvironmentId
+    userAssignedIdentityId: diProcessorIdentity.outputs.id
+    image: diProcessorImage
+    registryServer: containerRegistryServer
+    serviceBusNamespaceFqdn: serviceBusNamespaceFqdn
+    scaleQueueName: 'raw-dmer-queue'
+    minReplicas: environment == 'prod' ? 1 : 0
+    logAnalyticsWorkspaceId: logAnalyticsWorkspaceId
   }
 }
 
@@ -217,3 +315,6 @@ output documentIntelligenceEndpoint string = documentIntelligence.outputs.endpoi
 output storageAccountDeployedName string = storage.outputs.name
 output storageBlobEndpoint string = storage.outputs.blobEndpoint
 output diProcessorManagedIdentityClientId string = diProcessorIdentity.outputs.clientId
+
+@description('Name of the di-processor Container App, or empty when not deployed by this template (no Container Apps Environment ID supplied).')
+output diProcessorContainerAppName string = diProcessorContainerApp.?outputs.name ?? ''

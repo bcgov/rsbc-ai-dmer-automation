@@ -31,6 +31,7 @@ class DIResult:
     content: str
     pages: list[dict[str, Any]] = field(default_factory=list)
     documents: list[dict[str, Any]] = field(default_factory=list)
+    tables: list[dict[str, Any]] = field(default_factory=list)
 
     @classmethod
     def from_sdk(cls, result: Any) -> DIResult:
@@ -40,6 +41,7 @@ class DIResult:
             content=as_dict.get("content", "") or "",
             pages=list(as_dict.get("pages", []) or []),
             documents=list(as_dict.get("documents", []) or []),
+            tables=list(as_dict.get("tables", []) or []),
         )
 
 
@@ -79,8 +81,10 @@ class DocumentIntelligenceClient:
             )
             from azure.identity import DefaultAzureCredential
 
+            # Strip trailing slashes so the SDK does not produce a double slash
+            # (e.g. ".../project//documentintelligence/...") when it appends paths.
             self._client = _SdkClient(
-                endpoint=endpoint,
+                endpoint=endpoint.rstrip("/"),
                 credential=credential or DefaultAzureCredential(),
             )
 

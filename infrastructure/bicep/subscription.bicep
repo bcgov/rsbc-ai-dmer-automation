@@ -91,6 +91,21 @@ param owner string = 'RSBC-DMER'
 @description('Data classification tag value — DMER content is personal/medical information (FOIPPA).')
 param dataClassification string = 'protected-b'
 
+@description('Resource ID of the shared Container Apps Environment di-processor runs in (other-workstream resource, passed in by ID). Empty = di-processor Container App not deployed.')
+param containerAppsEnvironmentId string = ''
+
+@description('Fully-qualified di-processor container image. Required when containerAppsEnvironmentId is supplied.')
+param diProcessorImage string = ''
+
+@description('Service Bus namespace FQDN the di-processor KEDA scaler watches (shared resource, passed in by FQDN). Required when containerAppsEnvironmentId is supplied.')
+param serviceBusNamespaceFqdn string = ''
+
+@description('Optional container registry login server for image pull via the di-processor Managed Identity. Empty = public image / no registry auth.')
+param containerRegistryServer string = ''
+
+@description('Optional Log Analytics Workspace resource ID for di-processor Container App diagnostics. Empty = diagnostics not attached.')
+param logAnalyticsWorkspaceId string = ''
+
 var sharedTags = buildTags(environment, 'shared', costCenter, owner, dataClassification)
 var privateEndpointSubnetName = resourceName('snet', 'pe', environment, instance)
 var networkSecurityGroupName = resourceName('nsg', 'pe', environment, instance)
@@ -156,6 +171,11 @@ module workload 'main.bicep' = {
     costCenter: costCenter
     owner: owner
     dataClassification: dataClassification
+    containerAppsEnvironmentId: containerAppsEnvironmentId
+    diProcessorImage: diProcessorImage
+    serviceBusNamespaceFqdn: serviceBusNamespaceFqdn
+    containerRegistryServer: containerRegistryServer
+    logAnalyticsWorkspaceId: logAnalyticsWorkspaceId
   }
   dependsOn: [
     appResourceGroup

@@ -1,19 +1,24 @@
 // blob-containers.bicep
 //
 // Purpose: Blob containers on an existing storage account. The full pipeline
-// design calls for seven containers — raw, ocr, normalized, rules, audit,
-// failed, archive (docs/architecture/repository-design.md §11) — but only the
-// ones a currently-deployed consumer needs are created; the rest are added
-// alongside the service that consumes them, via
-// deployment/<env>/parameters.json (never hardcoded here).
+// design calls for the stage containers — raw, ocr, normalized, rules, audit,
+// failed, archive (docs/architecture/repository-design.md §11) — plus the two
+// di-processor extraction-output containers, extracted-dmer and
+// combined-extracted-dmer. Only the ones a currently-deployed consumer needs
+// are created; the rest are added alongside the service that consumes them,
+// via deployment/<env>/parameters.json (never hardcoded here).
 //
-// Today, only `raw` is created — it holds the Document Intelligence
-// custom-model training/test document set.
+// `raw` holds the Document Intelligence custom-model training/test document
+// set. `extracted-dmer` (intermediate top-level/OCR/handwritten artifacts) and
+// `combined-extracted-dmer` (the unified combined extraction) are consumed by
+// di-processor. Note: those two names deliberately deviate from the
+// lowercase-singular-noun container convention to match the pipeline stage
+// names — see docs/standards/naming-conventions.md and the di-processor ADR.
 
 @description('Name of the existing storage account to create containers on.')
 param storageAccountName string
 
-@description('Container names to create — lowercase, singular noun matching pipeline stage. See docs/standards/naming-conventions.md.')
+@description('Container names to create — lowercase, singular noun matching pipeline stage, except the di-processor extraction containers `extracted-dmer` and `combined-extracted-dmer` (stage-named exception). See docs/standards/naming-conventions.md.')
 param containerNames array = [
   'raw'
 ]

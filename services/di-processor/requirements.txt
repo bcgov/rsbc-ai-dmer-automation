@@ -1,2 +1,14 @@
-# Runtime dependencies for this Container App (dmer-common, etc.)
-# Intentionally left minimal in this skeleton.
+# Runtime dependencies for the di-processor Container App.
+#
+# All Blob / Service Bus / PostgreSQL / Document Intelligence / Azure OpenAI I/O
+# goes through dmer_common, which declares the Azure SDKs, openai, SQLAlchemy,
+# asyncpg, tenacity, and pydantic. Only the service-specific imaging libraries
+# (ported from the POC) are pinned here in addition to dmer_common.
+#
+# In the image build, dmer_common is installed from the copied libs/ source
+# (see Dockerfile); locally, install it editable: pip install -e ../../libs/dmer_common
+dmer-common
+
+# PDF render + image handling for the handwritten extraction path (POC-derived).
+pymupdf>=1.24,<2
+pillow>=10,<12
