@@ -1,9 +1,11 @@
 // postgresql-flexible-server.bicep
 //
-// Purpose: PostgreSQL Flexible Server backing dmer_processing/mercury_links
-// (see services/intake-processor/schema.sql). Written to capture
-// rsbc-ai-database-dev's actual live configuration, provisioned by hand
-// before this module existed.
+// Purpose: PostgreSQL Flexible Server backing the revised architecture's
+// schema (database/migrations/V0001__create_dmer_pipeline_schema.sql,
+// docs/development/data-model.md) -- originally written to capture
+// rsbc-ai-database-dev's live configuration (provisioned by hand before
+// this module existed, back when it backed the original architecture's
+// dmer_processing/mercury_links tables, since retired -- see V0002).
 //
 // Network model: private endpoint (publicNetworkAccess: Disabled), not the
 // alternative VNet-delegated-subnet model Postgres Flexible Server also

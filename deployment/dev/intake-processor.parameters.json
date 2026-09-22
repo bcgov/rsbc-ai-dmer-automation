@@ -20,7 +20,7 @@
       "value": "/subscriptions/e34c5ef8-e2f1-4a67-a94f-29cb158155c2/resourceGroups/DefaultResourceGroup-CCAN/providers/Microsoft.OperationalInsights/workspaces/DefaultWorkspace-e34c5ef8-e2f1-4a67-a94f-29cb158155c2-CCAN"
     },
     "pythonVersion": { "value": "3.12" },
-    "dmerRawContainer": { "value": "incoming-dmer-queue" },
+    "dmerRawContainer": { "value": "raw-dmer" },
     "dmerPollSchedule": { "value": "0 */2 * * * *" },
     "postgresHost": { "value": "psql-rsbc-dmer-shared-dev-001.postgres.database.azure.com" },
     "postgresPort": { "value": "5432" },

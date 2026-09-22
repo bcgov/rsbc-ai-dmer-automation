@@ -108,13 +108,19 @@ param pythonVersion string = '3.12'
 @description('Connection string (account key) for storageAccountName — used for both AzureWebJobsStorage and DEPLOYMENT_STORAGE_CONNECTION_STRING. Supply via a pipeline secret, never checked into a parameters.json file.')
 param storageAccountConnectionString string
 
-@description('Blob container that dmer_intake uploads downloaded DMER PDFs into.')
-param dmerRawContainer string = 'incoming-dmer-queue'
+@description('Blob container the Ingest Function writes downloaded DMER PDFs into, at raw-dmer/{yyyy}/{MM}/{document_guid}.pdf (see docs/development/stages/01-ingest.md). Renamed from the original architecture\'s "incoming-dmer-queue" to match the revised architecture\'s container name.')
+param dmerRawContainer string = 'raw-dmer'
 
-@description('NCRONTAB schedule for the Mercury backlog poll.')
+@description('NCRONTAB schedule for the Page Poller\'s Mercury backlog poll.')
 param dmerPollSchedule string = '0 */5 * * * *'
 
-@description('Postgres Flexible Server hostname (dmer_processing / mercury_links tables). The AAD role for this Function App\'s managed identity is created out-of-band via SQL, not by this template — see docs/services/intake-processor.md.')
+@description('Service Bus queue the Page Poller/Webhook Listener publish to and the Ingest Function consumes (see docs/development/message-contracts.md).')
+param dmerIngestQueueName string = 'dmer-ingest'
+
+@description('Service Bus queue the Ingest Function publishes to once a document is downloaded (see docs/development/message-contracts.md).')
+param dmerRawQueueName string = 'dmer-raw'
+
+@description('Postgres Flexible Server hostname (dmer_document/driver/poll_checkpoint/dmer_stage_run tables -- see docs/development/data-model.md). The AAD role for this Function App\'s managed identity is created out-of-band via SQL, not by this template — see services/intake-processor/create-principal.sql + roles.sql.')
 @minLength(1)
 param postgresHost string
 
@@ -137,7 +143,7 @@ param mercuryQueue string = 'BOTH'
 @description('Mercury API page size.')
 param mercuryPageSize string = '50'
 
-@description('Fully-qualified Service Bus namespace hostname (e.g. sb-rsbc-dmer-shared-dev-001.servicebus.windows.net) that _publish_raw_dmer_message authenticates against via DefaultAzureCredential. This template grants its own managed identity Azure Service Bus Data Sender on raw-dmer-queue specifically -- see the role assignment module below.')
+@description('Fully-qualified Service Bus namespace hostname (e.g. sb-rsbc-dmer-shared-dev-001.servicebus.windows.net) the Page Poller, Webhook Listener, and Ingest Function authenticate against via DefaultAzureCredential. This template grants its own managed identity queue-scoped Service Bus roles on dmer-ingest and dmer-raw -- see the role assignment modules below.')
 @minLength(1)
 param serviceBusNamespaceFqdn string
 
@@ -159,6 +165,7 @@ var serviceTags = buildTags(environment, 'intake-processor', costCenter, owner, 
 // second redundant parameter -- FQDNs are always "<namespace>.servicebus.windows.net".
 var serviceBusNamespaceName = split(serviceBusNamespaceFqdn, '.')[0]
 var serviceBusDataSenderRoleId = '69a216fc-b8fb-44d8-bc22-1f3c2cd27a39'
+var serviceBusDataReceiverRoleId = '4f6d3b9b-027b-4f4c-9142-0e5a2a2247e0'
 
 // ---------------------------------------------------------------------------
 // 1. Application Insights
@@ -186,6 +193,8 @@ var appSettings = {
   APPLICATIONINSIGHTS_CONNECTION_STRING: appInsights.outputs.connectionString
   DMER_RAW_CONTAINER: dmerRawContainer
   DMER_POLL_SCHEDULE: dmerPollSchedule
+  DMER_INGEST_QUEUE: dmerIngestQueueName
+  DMER_RAW_QUEUE: dmerRawQueueName
   POSTGRES_HOST: postgresHost
   POSTGRES_PORT: postgresPort
   POSTGRES_DATABASE: postgresDatabase
@@ -195,6 +204,15 @@ var appSettings = {
   MERCURY_QUEUE: mercuryQueue
   MERCURY_PAGE_SIZE: mercuryPageSize
   SERVICE_BUS_NAMESPACE_FQDN: serviceBusNamespaceFqdn
+  // Identity-based connection for the dmer_ingest function's Service Bus
+  // *trigger* binding specifically -- a different mechanism from
+  // SERVICE_BUS_NAMESPACE_FQDN above (which DefaultAzureCredential-based
+  // manual sends/receives in code use). The Functions host resolves the
+  // trigger's own connection via this `<prefix>__fullyQualifiedNamespace`
+  // app setting convention before any of this app's Python code runs, so
+  // both settings point at the same namespace but serve genuinely
+  // different resolution paths.
+  ServiceBusConnection__fullyQualifiedNamespace: serviceBusNamespaceFqdn
 }
 
 module functionApp 'modules/compute/function-app.bicep' = {
@@ -241,20 +259,45 @@ module privateEndpoint 'modules/networking/private-endpoint.bicep' = {
 
 // ---------------------------------------------------------------------------
 // 4. Service Bus RBAC -- grants this Function App's own managed identity
-//    Azure Service Bus Data Sender, scoped to just raw-dmer-queue (not the
-//    whole namespace). Self-contained here rather than living in
-//    main.bicep: this identity doesn't exist until the module above
-//    creates it, so keeping the grant in the same deployment that creates
-//    the identity avoids needing a second main.bicep run once this
-//    Function App exists (main.bicep has no way to know this principalId
-//    otherwise, since it's created in a different resource group).
+//    exactly the access each of its three components needs (see
+//    docs/development/stages/01-ingest.md), scoped to individual queues, not
+//    the whole namespace: the Page Poller/Webhook Listener send to
+//    dmer-ingest, the Ingest Function receives from dmer-ingest and sends
+//    to dmer-raw. Self-contained here rather than living in main.bicep:
+//    this identity doesn't exist until the module above creates it, so
+//    keeping the grant in the same deployment that creates the identity
+//    avoids needing a second main.bicep run once this Function App exists
+//    (main.bicep has no way to know this principalId otherwise, since it's
+//    created in a different resource group).
 // ---------------------------------------------------------------------------
-module serviceBusRoleAssignment 'modules/servicebus/data-plane-role-assignment.bicep' = {
-  name: '${deployment().name}-sb-role'
+module dmerIngestSenderRoleAssignment 'modules/servicebus/data-plane-role-assignment.bicep' = {
+  name: '${deployment().name}-sb-role-ingest-send'
   scope: resourceGroup(serviceBusResourceGroupName)
   params: {
     serviceBusNamespaceName: serviceBusNamespaceName
-    queueName: 'raw-dmer-queue'
+    queueName: dmerIngestQueueName
+    principalId: functionApp.outputs.principalId
+    roleDefinitionId: serviceBusDataSenderRoleId
+  }
+}
+
+module dmerIngestReceiverRoleAssignment 'modules/servicebus/data-plane-role-assignment.bicep' = {
+  name: '${deployment().name}-sb-role-ingest-receive'
+  scope: resourceGroup(serviceBusResourceGroupName)
+  params: {
+    serviceBusNamespaceName: serviceBusNamespaceName
+    queueName: dmerIngestQueueName
+    principalId: functionApp.outputs.principalId
+    roleDefinitionId: serviceBusDataReceiverRoleId
+  }
+}
+
+module dmerRawSenderRoleAssignment 'modules/servicebus/data-plane-role-assignment.bicep' = {
+  name: '${deployment().name}-sb-role-raw-send'
+  scope: resourceGroup(serviceBusResourceGroupName)
+  params: {
+    serviceBusNamespaceName: serviceBusNamespaceName
+    queueName: dmerRawQueueName
     principalId: functionApp.outputs.principalId
     roleDefinitionId: serviceBusDataSenderRoleId
   }

@@ -1,8 +1,9 @@
 // postgresql-database.bicep
 //
 // Purpose: The single database on the PostgreSQL Flexible Server (see
-// postgresql-flexible-server.bicep) that dmer_processing/mercury_links
-// live in — see services/intake-processor/schema.sql.
+// postgresql-flexible-server.bicep) that the revised architecture's schema
+// lives in — see database/migrations/V0001__create_dmer_pipeline_schema.sql
+// and docs/development/data-model.md.
 //
 // Firewall rules aren't part of this module: the server's network access is
 // entirely private-endpoint-based (publicNetworkAccess: Disabled), so

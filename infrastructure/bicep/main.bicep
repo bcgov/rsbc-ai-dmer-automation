@@ -132,6 +132,14 @@ var serviceBusNamespaceName = resourceName('sb', 'shared', environment, instance
 var postgresServerName = resourceName('psql', 'shared', environment, instance)
 var rawDmerQueueName = 'raw-dmer-queue'
 var extractedDmerQueueName = 'extracted-dmer-queue'
+// Revised architecture (docs/development/message-contracts.md) -- the
+// Ingest stage's two queues. Coexists with the two above rather than
+// replacing them: di-processor (raw-dmer-queue/extracted-dmer-queue's other
+// consumer/producer) hasn't been rebuilt for the revised architecture yet,
+// so those stay live for it. dmer-extracted and driver-decision belong to
+// later stages not built yet -- not declared here until they are.
+var dmerIngestQueueName = 'dmer-ingest'
+var dmerRawQueueName = 'dmer-raw'
 
 // ---------------------------------------------------------------------------
 // 1. Managed Identity
@@ -246,12 +254,16 @@ resource diProcessorStorageBlobDataReader 'Microsoft.Authorization/roleAssignmen
 // ---------------------------------------------------------------------------
 // 5. Service Bus
 //
-// One namespace, two queues (docs/contracts/queues/raw-dmer-queue.md,
-// extracted-dmer-queue.md) — no topics yet: PaddleOCR isn't a Service Bus
-// consumer (it's a separately-deployed Container App, `paddleocr-gpu-app`
-// in this same resource group, called directly over HTTP by di-processor
-// rather than via pub/sub), and there's no "combine" stage either. See
-// docs/architecture/repository-design.md §11's dependency diagram.
+// One namespace, four queues so far: raw-dmer-queue/extracted-dmer-queue
+// (docs/contracts/queues/*.md, original architecture — still live for
+// di-processor, not yet rebuilt) and dmer-ingest/dmer-raw
+// (docs/development/message-contracts.md, revised architecture — the
+// Ingest stage). dmer-extracted and driver-decision (the revised
+// architecture's remaining two queues) aren't declared yet — later stages,
+// not built. No topics: PaddleOCR isn't a Service Bus consumer (it's a
+// separately-deployed Container App, `paddleocr-gpu-app` in this same
+// resource group, called directly over HTTP by di-processor rather than
+// via pub/sub).
 // ---------------------------------------------------------------------------
 module serviceBusNamespace 'modules/servicebus/namespace.bicep' = {
   name: '${deployment().name}-sb-namespace'
@@ -301,11 +313,44 @@ module extractedDmerQueue 'modules/servicebus/queue.bicep' = {
   }
 }
 
+module dmerIngestQueue 'modules/servicebus/queue.bicep' = {
+  name: '${deployment().name}-sb-dmer-ingest-queue'
+  params: {
+    namespaceName: serviceBusNamespace.outputs.name
+    name: dmerIngestQueueName
+    maxDeliveryCount: 5
+    // Duplicate detection window sized to the poll interval (~5 min default,
+    // question I-14 may adjust) -- message-contracts.md: "window sized to
+    // the poll interval", keyed on MessageId = document_guid (01-ingest.md).
+    duplicateDetectionWindow: 'PT5M'
+  }
+}
+
+module dmerRawQueue 'modules/servicebus/queue.bicep' = {
+  name: '${deployment().name}-sb-dmer-raw-queue'
+  params: {
+    namespaceName: serviceBusNamespace.outputs.name
+    name: dmerRawQueueName
+    maxDeliveryCount: 5
+    // "Lock duration 5 minutes with lock renewal during extraction"
+    // (message-contracts.md) -- lock renewal is consumer-side behaviour
+    // (auto-renewal on the receiver), not a queue property; nothing more
+    // to configure here for it.
+    lockDuration: 'PT5M'
+    // No duplicate-detection window specified for dmer-raw in
+    // message-contracts.md -- left disabled, same reasoning as extracted-dmer-queue.
+  }
+}
+
 // ---------------------------------------------------------------------------
-// 6. PostgreSQL — dmer_processing/mercury_links (see
-//    services/intake-processor/schema.sql). AAD role grants for individual
-//    service identities (e.g. intake-processor's Function App) are a
-//    data-plane concern, not created here — see
+// 6. PostgreSQL — the revised architecture's schema (see
+//    database/migrations/V0001__create_dmer_pipeline_schema.sql and
+//    docs/development/data-model.md); the original architecture's
+//    dmer_processing/mercury_links tables were retired in
+//    database/migrations/V0002__drop_original_architecture_tables.sql once
+//    the Ingest stage was rebuilt against the new schema. AAD role grants
+//    for individual service identities (e.g. intake-processor's Function
+//    App) are a data-plane concern, not created here — see
 //    services/intake-processor/roles.sql and apply_roles.sh.
 // ---------------------------------------------------------------------------
 module postgresServer 'modules/database/postgresql-flexible-server.bicep' = {
@@ -405,6 +450,8 @@ output serviceBusNamespaceName string = serviceBusNamespace.outputs.name
 output serviceBusEndpoint string = serviceBusNamespace.outputs.serviceBusEndpoint
 output rawDmerQueueName string = rawDmerQueue.outputs.name
 output extractedDmerQueueName string = extractedDmerQueue.outputs.name
+output dmerIngestQueueName string = dmerIngestQueue.outputs.name
+output dmerRawQueueName string = dmerRawQueue.outputs.name
 output postgresServerName string = postgresServer.outputs.name
 output postgresFullyQualifiedDomainName string = postgresServer.outputs.fullyQualifiedDomainName
 output postgresDatabaseName string = postgresDatabase.outputs.name

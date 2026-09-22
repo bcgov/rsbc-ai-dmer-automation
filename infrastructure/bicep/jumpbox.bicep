@@ -100,11 +100,16 @@ param dataClassification string = 'protected-b'
 
 var serviceTags = buildTags(environment, 'jumpbox', costCenter, owner, dataClassification)
 
-// Azure Service Bus Data Receiver — lets sb_queue_viewer.py peek/receive/
+// Azure Service Bus Data Owner — lets sb_queue_viewer.py peek/receive/
 // complete/abandon/dead-letter messages via the VM's own managed identity,
-// with zero interactive login. See docs/contracts/queues/ for what this
-// tool inspects.
-var serviceBusDataReceiverRoleId = '4f6d3b9b-027b-4f4c-9142-0e5a2a2247e0'
+// with zero interactive login, AND list the namespace's queues at startup
+// to populate its queue dropdown dynamically rather than hardcoding names.
+// Data Receiver alone (the previous role here) covers the message
+// operations but not that last one -- listing queues is a management-plane
+// operation (ServiceBusAdministrationClient), which every data-plane role
+// below Owner is refused. See docs/contracts/queues/ for what this tool
+// inspects.
+var serviceBusDataOwnerRoleId = '090c5cfd-751d-490a-894a-3ce6f1109419'
 
 // ---------------------------------------------------------------------------
 // 1. Bastion — the only network path to the VM below.
@@ -156,7 +161,7 @@ module serviceBusRoleAssignment 'modules/servicebus/data-plane-role-assignment.b
   params: {
     serviceBusNamespaceName: serviceBusNamespaceName
     principalId: jumpboxVm.outputs.principalId
-    roleDefinitionId: serviceBusDataReceiverRoleId
+    roleDefinitionId: serviceBusDataOwnerRoleId
   }
 }
 
