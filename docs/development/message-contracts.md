@@ -51,7 +51,6 @@ One shape for all four queues — pointers only, never extracted/normalized cont
   "document_guid":  "123e4567-e89b-...",
   "driver_key":     "a91b77e4-...",
   "blob_url":       "https://.../extracted-dmer/8f3c1b2a.json",
-  "correlation_id": "5d10...",
   "attempt":        1,
   "enqueued_at":    "2026-09-18T12:00:00Z"
 }
@@ -59,7 +58,7 @@ One shape for all four queues — pointers only, never extracted/normalized cont
 
 | Field | Notes |
 |---|---|
-| `document_id` | Internal `dmer_document.id` (uuid) — not `document_guid`. Use this for every DB join and log line. |
+| `document_id` | Internal `dmer_document.id` (uuid) — not `document_guid`. Use this for every DB join and log line; also the tracing key across a document's whole life — there is no separate `correlation_id`. |
 | `document_guid` | Mercury's identifier. Carried for traceability; **do not** use it as a business key downstream of Ingest (see `data-model.md#document_guid-is-not-a-content-key`). |
 | `driver_key` | Null until Extraction resolves it (or Mercury supplied it at Ingest). Required on `driver-decision`. |
 | `blob_url` | Points at the artifact the *next* stage needs — `raw-dmer` for `dmer-ingest`→Ingest's own read, `extracted-dmer` for `dmer-extracted`, etc. Never an extraction/normalization payload inline. |
@@ -114,17 +113,23 @@ Under the revised architecture:
 - There are **four** queues, not two, with the names above (`dmer-ingest`, `dmer-raw`,
   `dmer-extracted`, `driver-decision`), and a fifth logical delivery path (`mercury_outbox`, DB-driven).
 - One message shape covers all four queues (`document_id`, `document_guid`, `driver_key`,
-  `blob_url`, `correlation_id`, `attempt`, `enqueued_at`) rather than a distinct DTO per queue.
+  `blob_url`, `attempt`, `enqueued_at`) rather than a distinct DTO per queue.
 - `driver-decision` requires **sessions** (`SessionId = driver_key`) — the current
   `ServiceBusPublisher`/`ServiceBusConsumer` in `libs/dmer_common/src/dmer_common/messaging/` have
   no session-aware send/receive path yet; a session receiver (`ServiceBusSessionReceiver`, or the
   Durable Functions Service Bus session trigger) is new work, not an extension of the existing
   consumer.
 
-**What's reusable as-is:** the `Envelope` base class's camelCase-on-the-wire pattern
-(`message_id`/`correlation_id`/`schema_version`), the `ServiceBusPublisher`/`ServiceBusConsumer`
-settlement logic (complete on success, dead-letter with reason on handler failure, no-op on a
-`message_id` already processed), and the idempotency store abstraction. These are
-architecture-agnostic and should be kept; only the concrete DTOs and the queue names they map to
-need to change. Add `IngestMessage` (or rename `RawDmerMessage`), `RawMessage`, `ExtractedMessage`,
-and `DriverDecisionMessage` (session-aware) as the four envelope subclasses.
+**Already done:** the `Envelope` base class now carries `message_id`/`document_id`/`schema_version`
+(no separate `correlation_id` — `document_id` serves that role, per the correlation-id decision
+above), and `RawDmerMessage`/`ExtractedDmerMessage` no longer redeclare `document_id` themselves
+since it's inherited from `Envelope`. `dmer_common.telemetry`'s context-propagation helpers
+(`document_id_context`/`get_document_id`) and `ServiceBusPublisher`/`ServiceBusConsumer` were
+updated to match.
+
+**What's reusable as-is, still pending the queue-specific rework:** the `Envelope` base class's
+camelCase-on-the-wire pattern, and the `ServiceBusPublisher`/`ServiceBusConsumer` settlement logic
+(complete on success, dead-letter with reason on handler failure, no-op on a `message_id` already
+processed) and idempotency store abstraction — all architecture-agnostic and already kept. Still to
+add: `IngestMessage` (or rename `RawDmerMessage`), `RawMessage`, `ExtractedMessage`, and
+`DriverDecisionMessage` (session-aware) as the four envelope subclasses for the new queue names.
