@@ -1,5 +1,9 @@
 """sb_queue_viewer.py -- a minimal desktop GUI for peeking Service Bus queue
-messages on sb-rsbc-dmer-shared-dev-001 (raw-dmer-queue, extracted-dmer-queue).
+messages on sb-rsbc-dmer-shared-dev-001. The queue dropdown is populated by
+listing whatever queues actually exist on the namespace at startup, not a
+hardcoded name list -- so it never needs editing when a queue is renamed or
+added (e.g. across the raw-dmer-queue/extracted-dmer-queue -> dmer-ingest/
+dmer-raw/dmer-extracted/driver-decision rename).
 
 Why this exists: the Azure Portal's own Service Bus Explorer (Peek/Send/
 Receive) refuses to operate against a namespace with
@@ -52,8 +56,10 @@ Run:
 
 Auth: uses ManagedIdentityCredential -- authenticates as the host's own
 system-assigned managed identity, no browser/device-code prompt at all.
-That identity needs a role granting Service Bus data-plane read access
-(e.g. "Azure Service Bus Data Receiver") on the namespace or queue. Only
+That identity needs "Azure Service Bus Data Owner" on the namespace --
+not just Data Receiver/Sender, because the queue dropdown is populated at
+startup via ServiceBusAdministrationClient.list_queues(), a management-
+plane operation every data-plane role below Owner is refused for. Only
 works when run on a host with a usable managed identity (e.g. an Azure VM)
 -- won't work run on a machine with no managed identity to fall back to.
 """
@@ -71,10 +77,19 @@ from azure.servicebus import (
     ServiceBusReceiveMode,
     ServiceBusSubQueue,
 )
+from azure.servicebus.management import ServiceBusAdministrationClient
 
 NAMESPACE_FQDN = "sb-rsbc-dmer-shared-dev-001.servicebus.windows.net"
-QUEUES = ["raw-dmer-queue", "extracted-dmer-queue"]
 RECEIVE_MODES = ["Peek Lock", "Receive and Delete"]
+
+
+def _list_queue_names(credential) -> list[str]:
+    """Queue names as they exist on the namespace right now, sorted --
+    queried fresh every startup rather than hardcoded, so a rename/add on
+    the Bicep side is picked up here with no code change.
+    """
+    with ServiceBusAdministrationClient(NAMESPACE_FQDN, credential) as admin_client:
+        return sorted(q.name for q in admin_client.list_queues())
 
 
 def _extract_body_bytes(body) -> bytes:
@@ -94,9 +109,12 @@ class QueueViewer(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Service Bus Queue Viewer (private endpoint)")
-        self.geometry("960x560")
+        self.geometry("1180x560")
 
-        self._credential = None  # created lazily on first Peek/Receive
+        # Created eagerly (not lazily on first Peek/Receive, like the old
+        # per-click ServiceBusClient below still is) -- listing queues at
+        # startup needs it right away.
+        self._credential = ManagedIdentityCredential()
         # Peek Lock leaves the receiver connection open (locks are tied to
         # it) between Receive and whatever Complete/Abandon/Dead-letter
         # click comes after -- unlike Peek, which opens/closes per click.
@@ -113,10 +131,16 @@ class QueueViewer(tk.Tk):
         top.pack(fill="x", padx=8, pady=8)
 
         ttk.Label(top, text="Queue:").pack(side="left")
-        self.queue_var = tk.StringVar(value=QUEUES[0])
-        ttk.Combobox(
-            top, textvariable=self.queue_var, values=QUEUES, state="readonly", width=28
-        ).pack(side="left", padx=(4, 12))
+        self.queue_var = tk.StringVar()
+        self.queue_combo = ttk.Combobox(
+            top, textvariable=self.queue_var, values=[], state="readonly", width=28
+        )
+        self.queue_combo.pack(side="left", padx=(4, 12))
+        self.refresh_queues_btn = ttk.Button(
+            top, text="Refresh queues", command=self._on_refresh_queues
+        )
+        self.refresh_queues_btn.pack(side="left", padx=(0, 12))
+        self._refresh_queue_list(initial=True)
 
         self.dlq_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(top, text="Dead-letter sub-queue", variable=self.dlq_var).pack(
@@ -172,14 +196,15 @@ class QueueViewer(tk.Tk):
 
         tree_frame = ttk.Frame(paned)
         columns = (
-            "dmer_id",
-            "driver_license",
-            "document_uri",
-            "received_at",
+            "document_id",
+            "document_guid",
+            "driver_key",
+            "blob_url",
+            "enqueued_at",
             "delivery_count",
             "sequence_number",
         )
-        widths = (140, 100, 340, 180, 90, 100)
+        widths = (140, 140, 140, 300, 180, 90, 100)
         # selectmode="extended" -- ctrl/shift-click to select several rows
         # at once; Complete/Abandon/Dead-letter act on all of them together.
         self.tree = ttk.Treeview(
@@ -200,6 +225,34 @@ class QueueViewer(tk.Tk):
 
         self._rows: dict[str, dict] = {}
 
+    def _refresh_queue_list(self, initial: bool = False):
+        """(Re-)populate the queue dropdown from the namespace itself.
+
+        On startup, a failure here (e.g. the role grant hasn't propagated
+        yet) still lets the window open -- just with an empty dropdown and
+        an error dialog -- rather than crashing before the user can see
+        what went wrong.
+        """
+        try:
+            names = _list_queue_names(self._credential)
+        except Exception as exc:  # noqa: BLE001 -- shown to the user, not swallowed
+            messagebox.showerror("Could not list queues", str(exc))
+            if initial:
+                names = []
+            else:
+                return
+        previous = self.queue_var.get()
+        self.queue_combo["values"] = names
+        if previous in names:
+            self.queue_var.set(previous)
+        elif names:
+            self.queue_var.set(names[0])
+        else:
+            self.queue_var.set("")
+
+    def _on_refresh_queues(self):
+        self._refresh_queue_list()
+
     def _on_peek(self):
         self._set_controls_state("disabled")
         self.status_var.set("Peeking...")
@@ -210,9 +263,6 @@ class QueueViewer(tk.Tk):
             queue_name = self.queue_var.get()
             max_count = int(self.count_var.get() or "50")
             sub_queue = ServiceBusSubQueue.DEAD_LETTER if self.dlq_var.get() else None
-
-            if self._credential is None:
-                self._credential = ManagedIdentityCredential()
 
             with ServiceBusClient(NAMESPACE_FQDN, self._credential) as client:
                 with client.get_queue_receiver(queue_name, sub_queue=sub_queue) as receiver:
@@ -250,9 +300,6 @@ class QueueViewer(tk.Tk):
                 if peek_lock
                 else ServiceBusReceiveMode.RECEIVE_AND_DELETE
             )
-
-            if self._credential is None:
-                self._credential = ManagedIdentityCredential()
 
             # Any previous Peek Lock receive's connection is done with as
             # soon as a new receive starts -- its still-locked messages (if
@@ -315,12 +362,11 @@ class QueueViewer(tk.Tk):
                 "end",
                 iid=iid,
                 values=(
-                    (body.get("mercuryRecord") or {}).get("document_guid", ""),
-                    ((body.get("mercuryRecord") or {}).get("driver") or {}).get(
-                        "licence_number", ""
-                    ),
-                    body.get("documentUri", ""),
-                    body.get("receivedAt", ""),
+                    body.get("documentId", ""),
+                    body.get("documentGuid", ""),
+                    body.get("driverKey", ""),
+                    body.get("blobUrl", ""),
+                    body.get("enqueuedAt", ""),
                     msg.delivery_count,
                     msg.sequence_number,
                 ),
