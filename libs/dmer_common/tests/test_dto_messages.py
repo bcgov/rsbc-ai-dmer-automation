@@ -18,7 +18,6 @@ from pydantic import ValidationError
 
 RAW_WIRE = {
     "messageId": "11111111-1111-1111-1111-111111111111",
-    "correlationId": "case-123",
     "schemaVersion": "1.0",
     "sourceSystem": "mercury-webhook",
     "documentId": "doc-1",
@@ -30,7 +29,6 @@ RAW_WIRE = {
 
 EXTRACTED_WIRE = {
     "messageId": "22222222-2222-2222-2222-222222222222",
-    "correlationId": "case-123",
     "schemaVersion": "2.0",
     "documentId": "doc-1",
     "mercuryCaseId": "case-123",
@@ -66,7 +64,6 @@ def test_extracted_message_defaults_schema_version_and_serializes():
     # GIVEN an extracted message built from Python (no schema_version given)
     msg = ExtractedDmerMessage(
         message_id="22222222-2222-2222-2222-222222222222",
-        correlation_id="case-123",
         document_id="doc-1",
         mercury_case_id="case-123",
         sha256_hash="abc123",

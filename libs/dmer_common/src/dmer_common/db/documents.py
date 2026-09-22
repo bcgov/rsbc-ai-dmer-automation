@@ -34,7 +34,6 @@ documents = Table(
     "documents",
     metadata,
     Column("document_id", String, primary_key=True),
-    Column("correlation_id", String, nullable=False),
     Column("status", String, nullable=False),
     Column("initial_extraction_uri", String, nullable=True),
     Column("combined_extraction_uri", String, nullable=True),
@@ -54,7 +53,6 @@ class DocumentRecord:
     """A row in the ``documents`` table."""
 
     document_id: str
-    correlation_id: str
     status: DocumentStatus
     initial_extraction_uri: str | None = None
     combined_extraction_uri: str | None = None
@@ -108,7 +106,6 @@ class DocumentRepository:
     async def upsert_status(
         self,
         document_id: str,
-        correlation_id: str,
         status: DocumentStatus,
         *,
         initial_extraction_uri: str | None = None,
@@ -125,7 +122,6 @@ class DocumentRepository:
 
         values: dict[str, object] = {
             "document_id": document_id,
-            "correlation_id": correlation_id,
             "status": target.value,
         }
         if initial_extraction_uri is not None:

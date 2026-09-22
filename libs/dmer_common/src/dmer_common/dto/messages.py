@@ -27,10 +27,10 @@ class RawDmerMessage(Envelope):
 
     See ``docs/contracts/queues/raw-dmer-queue.md``. ``message_id`` is the
     idempotency key; di-processor must no-op on a duplicate it has completed.
+    ``document_id`` is inherited from :class:`Envelope`.
     """
 
     source_system: str
-    document_id: str
     mercury_case_id: str
     document_uri: str
     received_at: datetime
@@ -41,11 +41,11 @@ class ExtractedDmerMessage(Envelope):
     """``extracted-dmer-queue`` v2 message.
 
     See ``docs/contracts/queues/extracted-dmer-queue.md``. References the final
-    combined extraction result rather than a raw OCR result.
+    combined extraction result rather than a raw OCR result. ``document_id``
+    is inherited from :class:`Envelope`.
     """
 
     schema_version: str = EXTRACTED_DMER_SCHEMA_VERSION
-    document_id: str
     mercury_case_id: str
     sha256_hash: str
     combined_result_uri: str

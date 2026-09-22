@@ -1,7 +1,7 @@
 """Envelope-aware Service Bus consumer with idempotency and settlement.
 
 The consumer receives raw Service Bus messages, extracts the envelope
-(``messageId``/``correlationId``), binds the correlation id for the duration of
+(``messageId``/``documentId``), binds the document id for the duration of
 handling, and enforces idempotency on ``messageId`` before invoking the handler.
 
 Settlement:
@@ -19,7 +19,7 @@ import json
 from collections.abc import Callable
 from typing import Any, Protocol
 
-from ..telemetry import correlation_context, get_logger
+from ..telemetry import document_id_context, get_logger
 from .idempotency import IdempotencyStore, InMemoryIdempotencyStore
 
 _log = get_logger(__name__)
@@ -59,7 +59,7 @@ def _envelope(message: Any) -> dict[str, Any]:
 
 
 class ServiceBusConsumer:
-    """Consumes messages, enforcing correlation propagation and idempotency.
+    """Consumes messages, enforcing document-id propagation and idempotency.
 
     Parameters
     ----------
@@ -87,7 +87,7 @@ class ServiceBusConsumer:
         """
         envelope = _envelope(message)
         message_id = envelope.get("messageId")
-        correlation_id = envelope.get("correlationId")
+        document_id = envelope.get("documentId")
         if not message_id:
             self._receiver.dead_letter_message(
                 message,
@@ -96,7 +96,7 @@ class ServiceBusConsumer:
             )
             return False
 
-        with correlation_context(correlation_id):
+        with document_id_context(document_id):
             if self._idempotency.is_processed(message_id):
                 _log.info(
                     "duplicate message; completing without reprocessing",
