@@ -34,6 +34,8 @@ stage should call `get_logger(__name__)` and rely on its redaction rather than h
 |---|---|---|
 | Active message count per queue | Earliest indicator of a stalled stage | Sustained growth over a defined window |
 | Dead-letter message count | Poison input or a systemic failure | Any non-zero value, and separately on rate of change |
+| DLQ-drain failures by `failure_category` | Distinguishes a permanent-business failure (expected, produces a guarded fallback) from a transient/processing/unknown failure (must not, and needs recovery or human triage) | Any `TRANSIENT`/`PROCESSING`/`UNKNOWN` row; each `UNKNOWN` individually |
+| Fallback decisions (`decided_by = FALLBACK`) | Every one is a DMER the AI could not process; a spike is a model/input-quality regression | Rate above the agreed baseline — see [DLQ Drain](../stages/10-dlq-drain.md) |
 | Oldest `PENDING` outbox row age | Direct measure of the no-lost-outcome guarantee | Older than the agreed SLA to Intake |
 | `driver_evaluation` rows in `WAITING` past SLA | The join is stuck | Any row beyond threshold after a sweeper pass |
 | Stage duration p50/p95 from `dmer_stage_run` | Capacity planning and quota pressure | p95 beyond the modelled budget |
