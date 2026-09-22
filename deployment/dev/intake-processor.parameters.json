@@ -5,9 +5,12 @@
     "environment": { "value": "dev" },
     "location": { "value": "canadacentral" },
     "functionAppName": { "value": "func-rsbc-dmer-intake-processor-dev" },
-    "hostingPlanName": { "value": "ASP-rsbcdmeraioptimizationrg-945e" },
+    "hostingPlanName": { "value": "asp-rsbc-dmer-intake-processor-dev-001" },
     "virtualNetworkSubnetId": {
       "value": "/subscriptions/e34c5ef8-e2f1-4a67-a94f-29cb158155c2/resourceGroups/f11861-dev-networking/providers/Microsoft.Network/virtualNetworks/f11861-dev-vwan-spoke/subnets/snet-rsbc-dmer-intake-processor-dev"
+    },
+    "privateEndpointSubnetId": {
+      "value": "/subscriptions/e34c5ef8-e2f1-4a67-a94f-29cb158155c2/resourceGroups/f11861-dev-networking/providers/Microsoft.Network/virtualNetworks/f11861-dev-vwan-spoke/subnets/snet-rsbc-dmer-ai-optimization-private-endpoints"
     },
     "storageAccountName": { "value": "rsbcstorage" },
     "deploymentPackageContainerName": {
@@ -19,7 +22,7 @@
     "pythonVersion": { "value": "3.12" },
     "dmerRawContainer": { "value": "incoming-dmer-queue" },
     "dmerPollSchedule": { "value": "0 */2 * * * *" },
-    "postgresHost": { "value": "rsbc-ai-database-dev.postgres.database.azure.com" },
+    "postgresHost": { "value": "psql-rsbc-dmer-shared-dev-001.postgres.database.azure.com" },
     "postgresPort": { "value": "5432" },
     "postgresDatabase": { "value": "dmer" },
     "mercuryApiBaseUrl": {
@@ -30,6 +33,7 @@
     "serviceBusNamespaceFqdn": {
       "value": "sb-rsbc-dmer-shared-dev-001.servicebus.windows.net"
     },
+    "serviceBusResourceGroupName": { "value": "rg-rsbc-dmer-dev" },
     "costCenter": { "value": "RSBC" },
     "owner": { "value": "RSBC-DMER" },
     "dataClassification": { "value": "protected-b" }

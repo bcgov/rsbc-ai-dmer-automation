@@ -105,14 +105,31 @@ param serviceBusSkuName string = 'Premium'
 @description('Optional resource ID of the platform/hub-managed Private DNS Zone for privatelink.servicebus.windows.net. Leave empty — confirmed empty for every other private endpoint in this landing zone (see docs/deployment/deployment-guide.md, "Private DNS: confirmed behavior"); the platform\'s DINE policy registers the DNS A-record automatically regardless of resource type.')
 param privateDnsZoneIdServiceBus string = ''
 
-@description('Principal ID of intake-processor\'s Function App managed identity, granted Send access on raw-dmer-queue. Deployed by a separate template (infrastructure/bicep/intake-processor.bicep) in a different resource group, so this can\'t be resolved as a module output here — pass the already-known principal ID directly. Leave empty to skip this grant (e.g. before that Function App exists yet).')
-param intakeProcessorPrincipalId string = ''
+@description('PostgreSQL administrator login username.')
+param postgresAdministratorLogin string = 'rsbc_dmer_admin'
+
+@secure()
+@description('PostgreSQL administrator login password. Supply via a pipeline secret, never a parameters.json file.')
+param postgresAdministratorLoginPassword string
+
+@description('PostgreSQL compute SKU name.')
+param postgresSkuName string = 'Standard_B2s'
+
+@description('PostgreSQL compute SKU tier.')
+param postgresSkuTier string = 'Burstable'
+
+@description('PostgreSQL storage size in GB.')
+param postgresStorageSizeGB int = 32
+
+@description('Optional resource ID of the platform/hub-managed Private DNS Zone for privatelink.postgres.database.azure.com. Leave empty — same confirmed-empty reasoning as privateDnsZoneIdServiceBus above.')
+param privateDnsZoneIdPostgres string = ''
 
 var sharedTags = buildTags(environment, 'shared', costCenter, owner, dataClassification)
 var documentIntelligenceAccountName = resourceName('di', 'shared', environment, instance)
 var storageAccountNameValue = storageAccountName(environment, location, instance)
 var diProcessorIdentityName = resourceName('id', 'di-processor', environment, instance)
 var serviceBusNamespaceName = resourceName('sb', 'shared', environment, instance)
+var postgresServerName = resourceName('psql', 'shared', environment, instance)
 var rawDmerQueueName = 'raw-dmer-queue'
 var extractedDmerQueueName = 'extracted-dmer-queue'
 
@@ -285,7 +302,51 @@ module extractedDmerQueue 'modules/servicebus/queue.bicep' = {
 }
 
 // ---------------------------------------------------------------------------
-// 6. Service Bus RBAC role assignments
+// 6. PostgreSQL — dmer_processing/mercury_links (see
+//    services/intake-processor/schema.sql). AAD role grants for individual
+//    service identities (e.g. intake-processor's Function App) are a
+//    data-plane concern, not created here — see
+//    services/intake-processor/roles.sql and apply_roles.sh.
+// ---------------------------------------------------------------------------
+module postgresServer 'modules/database/postgresql-flexible-server.bicep' = {
+  name: '${deployment().name}-psql-server'
+  params: {
+    name: postgresServerName
+    location: location
+    tags: sharedTags
+    administratorLogin: postgresAdministratorLogin
+    administratorLoginPassword: postgresAdministratorLoginPassword
+    skuName: postgresSkuName
+    skuTier: postgresSkuTier
+    storageSizeGB: postgresStorageSizeGB
+  }
+}
+
+module postgresDatabase 'modules/database/postgresql-database.bicep' = {
+  name: '${deployment().name}-psql-database'
+  params: {
+    serverName: postgresServer.outputs.name
+    databaseName: 'dmer'
+  }
+}
+
+module postgresPrivateEndpoint 'modules/networking/private-endpoint.bicep' = {
+  name: '${deployment().name}-psql-pe'
+  params: {
+    name: resourceName('pe-psql', 'shared', environment, instance)
+    location: location
+    tags: sharedTags
+    subnetId: privateEndpointSubnetId
+    targetResourceId: postgresServer.outputs.id
+    groupIds: [
+      'postgresqlServer'
+    ]
+    privateDnsZoneResourceId: privateDnsZoneIdPostgres
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 7. Service Bus RBAC role assignments
 // ---------------------------------------------------------------------------
 var serviceBusDataSenderRoleId = '69a216fc-b8fb-44d8-bc22-1f3c2cd27a39'
 var serviceBusDataReceiverRoleId = '4f6d3b9b-027b-4f4c-9142-0e5a2a2247e0'
@@ -326,16 +387,11 @@ resource diProcessorExtractedDmerSender 'Microsoft.Authorization/roleAssignments
   }
 }
 
-@description('Lets intake-processor\'s Function App publish to raw-dmer-queue. Skipped (no-op) when intakeProcessorPrincipalId is left empty.')
-resource intakeProcessorRawDmerSender 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(intakeProcessorPrincipalId)) {
-  name: guid(rawDmerQueueExisting.id, 'intake-processor', serviceBusDataSenderRoleId)
-  scope: rawDmerQueueExisting
-  properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', serviceBusDataSenderRoleId)
-    principalId: intakeProcessorPrincipalId
-    principalType: 'ServicePrincipal'
-  }
-}
+// intake-processor's own Service Bus grant lives in intake-processor.bicep
+// itself now, not here -- see that template's own role-assignment module
+// for why (its identity doesn't exist until that deployment creates it,
+// so a grant declared here would need this template run a second time
+// afterward; keeping it there avoids that entirely).
 
 // ---------------------------------------------------------------------------
 // Outputs
@@ -349,3 +405,6 @@ output serviceBusNamespaceName string = serviceBusNamespace.outputs.name
 output serviceBusEndpoint string = serviceBusNamespace.outputs.serviceBusEndpoint
 output rawDmerQueueName string = rawDmerQueue.outputs.name
 output extractedDmerQueueName string = extractedDmerQueue.outputs.name
+output postgresServerName string = postgresServer.outputs.name
+output postgresFullyQualifiedDomainName string = postgresServer.outputs.fullyQualifiedDomainName
+output postgresDatabaseName string = postgresDatabase.outputs.name

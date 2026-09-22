@@ -8,24 +8,32 @@
 // that every other service's compute eventually will.
 //
 // Why this is a separate entry point rather than another section of
-// main.bicep: DEV's intake-processor resources already live in
-// rsbc-dmer-ai-optimization-rg, a different resource group than
-// main.bicep's usual target (rg-rsbc-dmer-dev) — they were provisioned
-// manually before this repo's Bicep existed. A single `main.bicep`
-// deployment targets exactly one resource group, so bundling both slices
-// into one unconditional template would make every deployment try to
-// create the Document Intelligence/Storage slice AND the Function App
-// slice in whichever resource group you happened to target. If these
-// resources are ever consolidated into one resource group, folding this
-// template's modules into main.bicep (behind a parameter, the same way
-// every other not-yet-wired module in main.bicep's header comment is
-// meant to be added) becomes straightforward — the modules themselves
-// don't change either way.
+// main.bicep: a single `main.bicep` deployment targets exactly one
+// resource group, so bundling both slices into one unconditional template
+// would make every deployment try to create the Document
+// Intelligence/Storage slice AND the Function App slice in whichever
+// resource group you happened to target. Keeping this as its own
+// resourceGroup-scoped template (below) means it deploys into whichever
+// resource group you point `--resource-group` at when running it —
+// nothing in this file hardcodes a target resource group or environment
+// name, so the same template works for dev/test/prod, and for a Function
+// App living in the same resource group as everything else in main.bicep
+// (today's DEV arrangement, both in rg-rsbc-dmer-dev) or a different one
+// entirely (DEV's arrangement up until this repo's Bicep captured it,
+// before intake-processor's resources were consolidated out of the
+// originally-manually-created rsbc-dmer-ai-optimization-rg). If these two
+// templates' resources always end up in the same resource group across
+// every environment going forward, folding this template's modules into
+// main.bicep (behind a parameter, the same way every other not-yet-wired
+// module in main.bicep's header comment is meant to be added) becomes
+// straightforward — the modules themselves don't change either way.
 //
 // Not created here, referenced as already existing: the storage account
 // (AzureWebJobsStorage/deployment package storage — shared with other
-// things in this resource group, so not something intake-processor's own
-// IaC should own), the VNet integration subnet (delegated to
+// things in whichever resource group it lives in, so not something
+// intake-processor's own IaC should own; not necessarily the same
+// resource group this template deploys into, see storageAccountName's own
+// description below), the VNet integration subnet (delegated to
 // Microsoft.App/environments, created manually), the Postgres Flexible
 // Server and its AAD role/grants for this Function App's managed identity
 // (data-plane SQL, not an ARM concept — see
@@ -70,7 +78,18 @@ param hostingPlanName string
 @minLength(1)
 param virtualNetworkSubnetId string
 
-@description('Name of the existing storage account backing AzureWebJobsStorage and the deployment package container. Referenced, not created — this account is shared with other things in the resource group.')
+@description('Resource ID of the existing subnet this Function App\'s inbound private endpoint\'s NIC is placed in — the same private-endpoint subnet the jump box and (in rg-rsbc-dmer-dev) Document Intelligence/Storage/Service Bus all use. A different subnet from virtualNetworkSubnetId above: that one is for outbound VNet integration, this one is for inbound private-endpoint access to this Function App itself.')
+@minLength(1)
+param privateEndpointSubnetId string
+
+@description('Whether the Function App accepts public-internet traffic (including its SCM deploy endpoint). Enabled lets code be published from outside the VNet; set Disabled per environment to restrict access to the private endpoint only.')
+@allowed([
+  'Enabled'
+  'Disabled'
+])
+param publicNetworkAccess string = 'Enabled'
+
+@description('Name of the existing storage account backing AzureWebJobsStorage and the deployment package container. Referenced, not created — this account is shared with other things, not necessarily in the same resource group this template deploys into (the Function App module only ever builds a blob URL string from this name, never an `existing` resource lookup, so it works regardless of which resource group actually holds it).')
 @minLength(1)
 param storageAccountName string
 
@@ -118,9 +137,13 @@ param mercuryQueue string = 'BOTH'
 @description('Mercury API page size.')
 param mercuryPageSize string = '50'
 
-@description('Fully-qualified Service Bus namespace hostname (e.g. sb-rsbc-dmer-shared-dev-001.servicebus.windows.net) that _publish_raw_dmer_message authenticates against via DefaultAzureCredential. This Function App\'s managed identity needs Azure Service Bus Data Sender on raw-dmer-queue specifically — granted by main.bicep\'s intakeProcessorRawDmerSender (see deployment/dev/parameters.json\'s intakeProcessorPrincipalId), not by this template.')
+@description('Fully-qualified Service Bus namespace hostname (e.g. sb-rsbc-dmer-shared-dev-001.servicebus.windows.net) that _publish_raw_dmer_message authenticates against via DefaultAzureCredential. This template grants its own managed identity Azure Service Bus Data Sender on raw-dmer-queue specifically -- see the role assignment module below.')
 @minLength(1)
 param serviceBusNamespaceFqdn string
+
+@description('Name of the resource group containing the Service Bus namespace, e.g. rg-rsbc-dmer-dev — may differ from this template\'s own target resource group.')
+@minLength(1)
+param serviceBusResourceGroupName string
 
 @description('Cost center tag value.')
 param costCenter string = 'RSBC'
@@ -132,6 +155,10 @@ param owner string = 'RSBC-DMER'
 param dataClassification string = 'protected-b'
 
 var serviceTags = buildTags(environment, 'intake-processor', costCenter, owner, dataClassification)
+// Bare namespace name, derived from the FQDN parameter rather than a
+// second redundant parameter -- FQDNs are always "<namespace>.servicebus.windows.net".
+var serviceBusNamespaceName = split(serviceBusNamespaceFqdn, '.')[0]
+var serviceBusDataSenderRoleId = '69a216fc-b8fb-44d8-bc22-1f3c2cd27a39'
 
 // ---------------------------------------------------------------------------
 // 1. Application Insights
@@ -183,10 +210,53 @@ module functionApp 'modules/compute/function-app.bicep' = {
     }
     hostingPlanName: hostingPlanName
     virtualNetworkSubnetId: virtualNetworkSubnetId
+    publicNetworkAccess: publicNetworkAccess
     storageAccountName: storageAccountName
     deploymentPackageContainerName: deploymentPackageContainerName
     pythonVersion: pythonVersion
     appSettings: appSettings
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 3. Private endpoint -- inbound access to this Function App. Was live only
+//    because someone created it by hand (in f11861-dev-networking, not this
+//    resource group) before this template covered it -- deployed here into
+//    the same resource group as the Function App itself, matching
+//    main.bicep's convention for DI/Storage/Service Bus.
+// ---------------------------------------------------------------------------
+module privateEndpoint 'modules/networking/private-endpoint.bicep' = {
+  name: '${deployment().name}-pe'
+  params: {
+    name: 'pe-${functionAppName}'
+    location: location
+    tags: serviceTags
+    subnetId: privateEndpointSubnetId
+    targetResourceId: functionApp.outputs.id
+    groupIds: [
+      'sites'
+    ]
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 4. Service Bus RBAC -- grants this Function App's own managed identity
+//    Azure Service Bus Data Sender, scoped to just raw-dmer-queue (not the
+//    whole namespace). Self-contained here rather than living in
+//    main.bicep: this identity doesn't exist until the module above
+//    creates it, so keeping the grant in the same deployment that creates
+//    the identity avoids needing a second main.bicep run once this
+//    Function App exists (main.bicep has no way to know this principalId
+//    otherwise, since it's created in a different resource group).
+// ---------------------------------------------------------------------------
+module serviceBusRoleAssignment 'modules/servicebus/data-plane-role-assignment.bicep' = {
+  name: '${deployment().name}-sb-role'
+  scope: resourceGroup(serviceBusResourceGroupName)
+  params: {
+    serviceBusNamespaceName: serviceBusNamespaceName
+    queueName: 'raw-dmer-queue'
+    principalId: functionApp.outputs.principalId
+    roleDefinitionId: serviceBusDataSenderRoleId
   }
 }
 

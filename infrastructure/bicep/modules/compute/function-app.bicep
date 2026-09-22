@@ -75,6 +75,13 @@ param maximumInstanceCount int = 100
 @secure()
 param appSettings object
 
+@description('Whether the Function App (including its SCM/Kudu deploy endpoint) accepts traffic from the public internet. Enabled lets `func azure functionapp publish` deploy from outside the VNet; Disabled restricts all inbound access to the private endpoint. Explicit here so the setting is deterministic rather than left to whatever the platform or a landing-zone policy defaults it to.')
+@allowed([
+  'Enabled'
+  'Disabled'
+])
+param publicNetworkAccess string = 'Enabled'
+
 @description('Extra tags applied only to the Function App site, merged on top of `tags` — not the hosting plan. Use this for the "hidden-link: /app-insights-resource-id" tag Azure\'s own tooling manages: an explicit `tags` on the site resource REPLACES the whole tag set rather than merging with it, so omitting that tag here would silently delete the Portal\'s Application Insights association on the next deployment.')
 param siteExtraTags object = {}
 
@@ -103,6 +110,7 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
   properties: {
     serverFarmId: hostingPlan.id
     httpsOnly: true
+    publicNetworkAccess: publicNetworkAccess
     virtualNetworkSubnetId: virtualNetworkSubnetId
     vnetRouteAllEnabled: false
     functionAppConfig: {

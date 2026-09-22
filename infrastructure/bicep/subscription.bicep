@@ -82,8 +82,24 @@ param allowSharedKeyAccess bool = true
 @description('Whether to disable Document Intelligence API-key auth in favour of Azure AD/RBAC only.')
 param disableLocalAuthDocumentIntelligence bool = false
 
-@description('Principal ID of intake-processor\'s Function App managed identity — grants it Azure Service Bus Data Sender on raw-dmer-queue (see main.bicep\'s intakeProcessorRawDmerSender). Left empty by default since intake-processor.bicep is deployed separately and its identity may not exist yet on a fresh environment\'s first deployment.')
-param intakeProcessorPrincipalId string = ''
+@description('PostgreSQL administrator login username.')
+param postgresAdministratorLogin string = 'rsbc_dmer_admin'
+
+@secure()
+@description('PostgreSQL administrator login password. Supply via a pipeline secret, never a parameters.json file.')
+param postgresAdministratorLoginPassword string
+
+@description('PostgreSQL compute SKU name.')
+param postgresSkuName string = 'Standard_B2s'
+
+@description('PostgreSQL compute SKU tier.')
+param postgresSkuTier string = 'Burstable'
+
+@description('PostgreSQL storage size in GB.')
+param postgresStorageSizeGB int = 32
+
+@description('Optional resource ID of the platform/hub-managed Private DNS Zone for privatelink.postgres.database.azure.com. Leave empty — same confirmed-empty reasoning as other private endpoints in this landing zone.')
+param privateDnsZoneIdPostgres string = ''
 
 @description('Cost center tag value.')
 param costCenter string = 'RSBC'
@@ -156,7 +172,12 @@ module workload 'main.bicep' = {
     blobContainerNames: blobContainerNames
     allowSharedKeyAccess: allowSharedKeyAccess
     disableLocalAuthDocumentIntelligence: disableLocalAuthDocumentIntelligence
-    intakeProcessorPrincipalId: intakeProcessorPrincipalId
+    postgresAdministratorLogin: postgresAdministratorLogin
+    postgresAdministratorLoginPassword: postgresAdministratorLoginPassword
+    postgresSkuName: postgresSkuName
+    postgresSkuTier: postgresSkuTier
+    postgresStorageSizeGB: postgresStorageSizeGB
+    privateDnsZoneIdPostgres: privateDnsZoneIdPostgres
     costCenter: costCenter
     owner: owner
     dataClassification: dataClassification

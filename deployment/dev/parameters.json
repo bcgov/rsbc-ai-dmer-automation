@@ -22,7 +22,6 @@
     "blobContainerNames": { "value": ["raw"] },
     "allowSharedKeyAccess": { "value": true },
     "disableLocalAuthDocumentIntelligence": { "value": false },
-    "intakeProcessorPrincipalId": { "value": "8cfa9b31-4898-4290-8f04-4b6927d083e5" },
     "costCenter": { "value": "RSBC" },
     "owner": { "value": "RSBC-DMER" },
     "dataClassification": { "value": "protected-b" }

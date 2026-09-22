@@ -1,20 +1,41 @@
 // postgresql-database.bicep
 //
-// Purpose: PostgreSQL database + firewall/AAD administrator configuration
+// Purpose: The single database on the PostgreSQL Flexible Server (see
+// postgresql-flexible-server.bicep) that dmer_processing/mercury_links
+// live in — see services/intake-processor/schema.sql.
 //
-// Structural placeholder only — resource declarations are intentionally deferred.
-// See docs/architecture/repository-design.md for this module's full responsibility,
-// parameters, and dependency list.
+// Firewall rules aren't part of this module: the server's network access is
+// entirely private-endpoint-based (publicNetworkAccess: Disabled), so
+// Microsoft.DBforPostgreSQL/flexibleServers/firewallRules doesn't apply —
+// there's no public IP allowlisting to configure. AAD administrator setup
+// isn't here either — see postgresql-flexible-server.bicep's header for why
+// that's confirmed not to exist as a formal ARM resource on the live server.
+//
+// The database's own schema (tables, columns) is a data-plane concern, not
+// an ARM one — applied separately via schema.sql, same reasoning as
+// Document Intelligence's labeling/training (see
+// docs/deployment/deployment-guide.md, "Document Intelligence Studio,
+// labeling, and custom models: what Bicep can and can't do").
 
-@description('Target environment: dev | test | prod')
-param environment string
+@description('Name of the parent PostgreSQL Flexible Server.')
+@minLength(3)
+param serverName string
 
-@description('Azure region (Canada Central by default)')
-param location string = resourceGroup().location
+@description('Database name.')
+param databaseName string = 'dmer'
 
-@description('Standard resource tags')
-param tags object = {}
+resource server 'Microsoft.DBforPostgreSQL/flexibleServers@2024-08-01' existing = {
+  name: serverName
+}
 
+resource database 'Microsoft.DBforPostgreSQL/flexibleServers/databases@2024-08-01' = {
+  parent: server
+  name: databaseName
+  properties: {
+    charset: 'UTF8'
+    collation: 'en_US.utf8'
+  }
+}
 
-
-// TODO: resource declarations
+@description('Name of the database.')
+output name string = database.name
