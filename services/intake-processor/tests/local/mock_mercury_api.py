@@ -1,5 +1,5 @@
 """Local-only mock of the Mercury backlog API, for exercising intake-processor's
-`dmer_intake` poller end to end without hitting the real Mercury service.
+`dmer_poll` poller end to end without hitting the real Mercury service.
 
 Run it alongside Azurite, the local Postgres container, and `func start` (see
 ../../README.md for the full local testing procedure):
@@ -16,22 +16,25 @@ the full set of fields Mercury actually returns (dps_queue, document_name,
 document_type, document_status, document_priority, received_date,
 document_type_business_area, queue, dmer_status, a driver object with
 first/last name + licence_number + a documents[] history, and a case
-object) -- intake-processor embeds all of it verbatim in the raw-dmer-queue
-message (see _publish_raw_dmer_message), so none of it should be dropped
-here just because intake-processor's own extraction logic only reads
+object) -- intake-processor embeds all of it verbatim in the dmer-raw message
+(see _publish_message, called from dmer_ingest), so none of it should be
+dropped here just because intake-processor's own extraction logic only reads
 document_guid/document_url/driver.licence_number today. `document_url` is
 kept at the top level (not only nested inside driver.documents[]) since
 that's what intake-processor currently reads to know what to download --
 each one points back at this same server, which serves a tiny dummy PDF
-there so `_download_to_blob` has something real to fetch.
+there so `_download_source_pdf` has something real to fetch.
 
 Two pages are served: page 1 (2 records, one with a driver and one without)
 has a `nextLink` to page 2 (1 record, with a driver); page 2 has no
 `nextLink`, so the next poll after that restarts the cycle at page 1 -- same
 end-of-cycle behaviour as the real design. Because the same three
-document_guids come back every cycle, restarting also exercises the dedup
-path (`_already_known_dmer_ids` / `ON CONFLICT DO NOTHING`): after the first
-full cycle, every subsequent poll should log 0 new DMERs.
+document_guids come back every cycle, restarting also exercises
+`_upsert_document_and_driver`'s upsert-on-conflict path: the dmer_document
+row is updated in place rather than duplicated, and a dmer-ingest message
+gets republished for it every cycle regardless -- Service Bus's duplicate
+detection window and dmer_ingest's own replay guard are what actually
+suppress reprocessing here, not the poller skipping already-known records.
 """
 
 from __future__ import annotations

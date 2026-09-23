@@ -11,6 +11,9 @@ venv/
 coverage.xml
 htmlcov/
 
+# Office lock files
+~$*
+
 # Azure Functions
 local.settings.json
 bin/

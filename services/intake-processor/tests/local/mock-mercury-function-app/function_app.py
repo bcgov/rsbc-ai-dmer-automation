@@ -18,7 +18,7 @@
 # file's docstring for the full rationale on why every field is included
 # here even though intake-processor's own extraction logic only reads
 # document_guid/document_url/driver.licence_number today: the rest gets
-# embedded verbatim in the raw-dmer-queue message.
+# embedded verbatim in the dmer-raw message.
 
 from __future__ import annotations
 

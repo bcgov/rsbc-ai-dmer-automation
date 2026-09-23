@@ -151,14 +151,17 @@ var storageAccountNameValue = storageAccountName(environment, location, instance
 var diProcessorIdentityName = resourceName('id', 'di-processor', environment, instance)
 var serviceBusNamespaceName = resourceName('sb', 'shared', environment, instance)
 var postgresServerName = resourceName('psql', 'shared', environment, instance)
-var rawDmerQueueName = 'raw-dmer-queue'
 var extractedDmerQueueName = 'extracted-dmer-queue'
 // Revised architecture (docs/development/message-contracts.md) -- the
-// Ingest stage's two queues. Coexists with the two above rather than
-// replacing them: di-processor (raw-dmer-queue/extracted-dmer-queue's other
-// consumer/producer) hasn't been rebuilt for the revised architecture yet,
-// so those stay live for it. dmer-extracted and driver-decision belong to
-// later stages not built yet -- not declared here until they are.
+// Ingest stage's two queues. extracted-dmer-queue (original architecture)
+// stays live for di-processor, which still produces to it and hasn't been
+// rebuilt for the revised architecture yet. raw-dmer-queue (the original
+// architecture's other queue, intake-processor's old output) was removed --
+// intake-processor now publishes to dmer-raw instead; di-processor's own
+// consumer still reads raw-dmer-queue by name in its current code, so it
+// needs migrating to dmer-raw separately (not done here). dmer-extracted
+// and driver-decision belong to later stages not built yet -- not declared
+// here until they are.
 var dmerIngestQueueName = 'dmer-ingest'
 var dmerRawQueueName = 'dmer-raw'
 var diProcessorContainerAppName = resourceName('ca', 'di-processor', environment, instance)
@@ -343,6 +346,12 @@ module diProcessorContainerApp 'modules/compute/container-app.bicep' = if (deplo
     image: diProcessorImage
     registryServer: containerRegistryServer
     serviceBusNamespaceFqdn: serviceBusNamespaceFqdn
+    // Matches di-processor's current (unmigrated) consumer code, which
+    // still reads raw-dmer-queue by name -- that queue itself was removed
+    // from this template (see the Service Bus section's header comment
+    // below), so this Container App can't actually scale correctly until
+    // di-processor is migrated to dmer-raw. Harmless today only because
+    // deployDiProcessorContainerApp is false by default (not deployed).
     scaleQueueName: 'raw-dmer-queue'
     minReplicas: environment == 'prod' ? 1 : 0
     logAnalyticsWorkspaceId: logAnalyticsWorkspaceId
@@ -352,16 +361,19 @@ module diProcessorContainerApp 'modules/compute/container-app.bicep' = if (deplo
 // ---------------------------------------------------------------------------
 // 6. Service Bus
 //
-// One namespace, four queues so far: raw-dmer-queue/extracted-dmer-queue
+// One namespace, three queues so far: extracted-dmer-queue
 // (docs/contracts/queues/*.md, original architecture — still live for
 // di-processor, not yet rebuilt) and dmer-ingest/dmer-raw
 // (docs/development/message-contracts.md, revised architecture — the
-// Ingest stage). dmer-extracted and driver-decision (the revised
-// architecture's remaining two queues) aren't declared yet — later stages,
-// not built. No topics: PaddleOCR isn't a Service Bus consumer (it's a
-// separately-deployed Container App, `paddleocr-gpu-app` in this same
-// resource group, called directly over HTTP by di-processor rather than
-// via pub/sub).
+// Ingest stage). raw-dmer-queue (the original architecture's other queue)
+// was removed once intake-processor's own rebuild stopped publishing to it
+// — see the note above dmerIngestQueueName's declaration; di-processor's
+// consumer code still needs migrating off it separately. dmer-extracted
+// and driver-decision (the revised architecture's remaining two queues)
+// aren't declared yet — later stages, not built. No topics: PaddleOCR isn't
+// a Service Bus consumer (it's a separately-deployed Container App,
+// `paddleocr-gpu-app` in this same resource group, called directly over
+// HTTP by di-processor rather than via pub/sub).
 // ---------------------------------------------------------------------------
 module serviceBusNamespace 'modules/servicebus/namespace.bicep' = {
   name: '${deployment().name}-sb-namespace'
@@ -385,17 +397,6 @@ module serviceBusPrivateEndpoint 'modules/networking/private-endpoint.bicep' = {
       'namespace'
     ]
     privateDnsZoneResourceId: privateDnsZoneIdServiceBus
-  }
-}
-
-module rawDmerQueue 'modules/servicebus/queue.bicep' = {
-  name: '${deployment().name}-sb-raw-dmer-queue'
-  params: {
-    namespaceName: serviceBusNamespace.outputs.name
-    name: rawDmerQueueName
-    maxDeliveryCount: 5
-    lockDuration: 'PT5M'
-    duplicateDetectionWindow: 'PT10M'
   }
 }
 
@@ -492,14 +493,6 @@ module postgresPrivateEndpoint 'modules/networking/private-endpoint.bicep' = {
 // 8. Service Bus RBAC role assignments
 // ---------------------------------------------------------------------------
 var serviceBusDataSenderRoleId = '69a216fc-b8fb-44d8-bc22-1f3c2cd27a39'
-var serviceBusDataReceiverRoleId = '4f6d3b9b-027b-4f4c-9142-0e5a2a2247e0'
-
-resource rawDmerQueueExisting 'Microsoft.ServiceBus/namespaces/queues@2024-01-01' existing = {
-  name: '${serviceBusNamespaceName}/${rawDmerQueueName}'
-  dependsOn: [
-    rawDmerQueue
-  ]
-}
 
 resource extractedDmerQueueExisting 'Microsoft.ServiceBus/namespaces/queues@2024-01-01' existing = {
   name: '${serviceBusNamespaceName}/${extractedDmerQueueName}'
@@ -508,16 +501,10 @@ resource extractedDmerQueueExisting 'Microsoft.ServiceBus/namespaces/queues@2024
   ]
 }
 
-@description('Lets id-rsbc-dmer-di-processor consume raw-dmer-queue (intake-processor\'s output).')
-resource diProcessorRawDmerReceiver 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(rawDmerQueueExisting.id, diProcessorIdentityName, serviceBusDataReceiverRoleId)
-  scope: rawDmerQueueExisting
-  properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', serviceBusDataReceiverRoleId)
-    principalId: diProcessorIdentity.outputs.principalId
-    principalType: 'ServicePrincipal'
-  }
-}
+// di-processor's raw-dmer-queue receiver grant was removed along with the
+// queue itself -- its consumer code still reads that queue name today, so
+// it will fail to open a receiver until it's migrated to dmer-raw (not done
+// here; see the comment above dmerIngestQueueName's declaration).
 
 @description('Lets id-rsbc-dmer-di-processor publish its result to extracted-dmer-queue.')
 resource diProcessorExtractedDmerSender 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
@@ -546,7 +533,6 @@ output storageBlobEndpoint string = storage.outputs.blobEndpoint
 output diProcessorManagedIdentityClientId string = diProcessorIdentity.outputs.clientId
 output serviceBusNamespaceName string = serviceBusNamespace.outputs.name
 output serviceBusEndpoint string = serviceBusNamespace.outputs.serviceBusEndpoint
-output rawDmerQueueName string = rawDmerQueue.outputs.name
 output extractedDmerQueueName string = extractedDmerQueue.outputs.name
 output dmerIngestQueueName string = dmerIngestQueue.outputs.name
 output dmerRawQueueName string = dmerRawQueue.outputs.name
