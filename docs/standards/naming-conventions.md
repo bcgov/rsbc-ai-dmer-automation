@@ -26,6 +26,11 @@ topics (`dmer-lifecycle-events`), `sub-<consumer>` for subscriptions (`sub-post-
 Lowercase, singular-noun, matching pipeline stage: `raw`, `ocr`, `normalized`, `rules`,
 `audit`, `failed`, `archive`.
 
+Documented exception: the two di-processor extraction-output containers `extracted-dmer`
+(intermediate top-level/OCR/handwritten artifacts) and `combined-extracted-dmer` (the unified
+combined extraction) deliberately deviate from the singular-noun rule to match the pipeline
+stage names. See the di-processor ADR and `docs/architecture/repository-design.md` §10/§11.
+
 ## PostgreSQL
 
 `snake_case` tables and columns; table names are plural nouns (`documents`, `audit_log`
