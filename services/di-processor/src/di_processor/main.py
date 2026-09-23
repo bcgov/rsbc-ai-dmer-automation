@@ -27,7 +27,7 @@ from dmer_common.storage import BlobClient
 from dmer_common.telemetry import get_logger
 
 from .config import Settings, load_settings
-from .consumer import make_handler
+from .consumer import idempotency_scope, make_handler
 from .health import HealthServer
 from .pipeline import Pipeline, PipelineConfig
 
@@ -77,7 +77,9 @@ def build_application(
         stage_run_repository=stage_run_repository,
         publisher=publisher,
     )
-    consumer = ServiceBusConsumer(receiver)
+    consumer = ServiceBusConsumer(
+        receiver, idempotency_scope=idempotency_scope(settings.dmer_raw_queue)
+    )
     return Application(
         settings=settings,
         pipeline=pipeline,

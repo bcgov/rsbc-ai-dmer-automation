@@ -86,17 +86,25 @@ class ServiceBusConsumer:
     ----------
     receiver:
         An Azure ``ServiceBusReceiver`` (or compatible) for a single queue.
+    idempotency_scope:
+        Names this consumer in the idempotency store, e.g.
+        ``di-processor/dmer-raw``. Required, so a store shared between services
+        can never let one consumer's completed ``messageId`` suppress another's.
     idempotency_store:
-        Records completed ``messageId``s (defaults to in-memory).
+        Records completed ``(scope, messageId)`` pairs (defaults to in-memory).
     """
 
     def __init__(
         self,
         receiver: _Receiver,
         *,
+        idempotency_scope: str,
         idempotency_store: IdempotencyStore | None = None,
     ) -> None:
+        if not idempotency_scope:
+            raise ValueError("idempotency_scope must be a non-empty consumer name")
         self._receiver = receiver
+        self._scope = idempotency_scope
         self._idempotency = idempotency_store or InMemoryIdempotencyStore()
 
     def handle(self, message: Any, handler: Callable[[dict[str, Any]], None]) -> bool:
@@ -118,7 +126,7 @@ class ServiceBusConsumer:
             return False
 
         with correlation_context(correlation_id):
-            if self._idempotency.is_processed(message_id):
+            if self._idempotency.is_processed(self._scope, message_id):
                 _log.info(
                     "duplicate message; completing without reprocessing",
                     extra={"message_id": message_id},
@@ -146,6 +154,6 @@ class ServiceBusConsumer:
                     error_description=description,
                 )
                 raise
-            self._idempotency.mark_processed(message_id)
+            self._idempotency.mark_processed(self._scope, message_id)
             self._receiver.complete_message(message)
             return True

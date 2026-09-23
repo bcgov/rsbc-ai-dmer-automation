@@ -17,7 +17,7 @@ from di_processor.failures import FailureCode, PipelineFailure
 from di_processor.pipeline import Pipeline, PipelineConfig
 from dmer_common.db import PipelineStage, PipelineStatus
 from dmer_common.db.dmer_document import _validated_status
-from dmer_common.dto import RawMessage
+from dmer_common.dto import EXTRACTED_EVENT, RawMessage, event_message_id
 from PIL import Image
 
 pytestmark = pytest.mark.asyncio
@@ -290,7 +290,10 @@ async def test_replay_at_extracted_republishes_stored_pointer(monkeypatch):
     assert len(publisher.published) == 1
     msg = publisher.published[0]
     assert msg.blob_url == stored
-    assert msg.message_id == "m-1"  # same id, so downstream dedups a repeat
+    # same deterministic extraction-event id as the first publish, so
+    # downstream dedups the repeat — and never the upstream dmer-raw id
+    assert msg.message_id == event_message_id(EXTRACTED_EVENT, "doc-1")
+    assert msg.message_id != "m-1"
 
 
 async def test_replay_at_extracted_without_pointer_routes_to_manual_review(
@@ -741,3 +744,35 @@ async def test_failure_text_never_reaches_detail_or_logs(monkeypatch, caplog):
     assert "epilepsy" not in caplog.text
     # (the original stays on __cause__ for local debugging only)
     assert FAKE_PII in str(failure.__cause__)
+
+
+# --- dmer-extracted message id ----------------------------------------------
+
+
+async def test_extracted_message_id_is_not_the_upstream_raw_id(monkeypatch):
+    publisher = FakePublisher()
+    await _pipeline(monkeypatch, publisher=publisher).run(_raw_message())
+
+    msg = publisher.published[0]
+    assert msg.message_id != "m-1"
+    assert msg.message_id == event_message_id(EXTRACTED_EVENT, "doc-1")
+    # the upstream link is the correlation id, not a shared message id
+    assert msg.correlation_id == "case-1"
+
+
+async def test_extracted_message_id_is_stable_across_upstream_redeliveries(
+    monkeypatch,
+):
+    # GIVEN the same document arrives twice with different dmer-raw message ids
+    # (e.g. Ingest or the sweeper re-published it)
+    first_pub, second_pub = FakePublisher(), FakePublisher()
+    await _pipeline(monkeypatch, publisher=first_pub).run(
+        _raw_message(message_id="m-1")
+    )
+    await _pipeline(monkeypatch, publisher=second_pub).run(
+        _raw_message(message_id="m-2", attempt=2)
+    )
+
+    # THEN both publishes carry the same extraction-event id, so downstream
+    # recognizes the second as a repeat
+    assert first_pub.published[0].message_id == second_pub.published[0].message_id

@@ -47,6 +47,7 @@ One shape for all four queues — pointers only, never extracted/normalized cont
 ```json
 {
   "schema_version": "1.0",
+  "message_id":     "5893ac38-40b3-5070-...",
   "document_id":    "8f3c1b2a-...",
   "document_guid":  "123e4567-e89b-...",
   "driver_key":     "a91b77e4-...",
@@ -59,6 +60,7 @@ One shape for all four queues — pointers only, never extracted/normalized cont
 
 | Field | Notes |
 |---|---|
+| `message_id` | Identifies **this** event on **this** queue, and is the idempotency key. Derive it deterministically from the event — `dmer_common.dto.event_message_id(<queue>, <natural key>)`, e.g. `event_message_id("dmer-extracted", document_id)` — so every retry or replay of the same event carries the same ID. **Never copy the upstream message's `message_id`**: two different events would then share an ID, and a consumer could mistake one for the other (or fail to recognise a replay triggered by a re-sent upstream message). `correlation_id` is what links events across stages. Also used as the Service Bus `MessageId` (broker duplicate detection, per queue). The `dmer-ingest` exception: `MessageId = document_guid`, for broker duplicate detection of re-polled documents. |
 | `document_id` | Internal `dmer_document.id` (uuid) — not `document_guid`. Use this for every DB join and log line. |
 | `document_guid` | Mercury's identifier. Carried for traceability; **do not** use it as a business key downstream of Ingest (see `data-model.md#document_guid-is-not-a-content-key`). |
 | `driver_key` | Set only when Mercury supplied it at Ingest; otherwise resolved by [Document Orchestration's Resolve Driver activity](stages/03-document-orchestration.md#activity-resolve-driver) before `driver-decision` is published; Extraction forwards it as received. Required on `driver-decision`. |
@@ -124,7 +126,10 @@ Under the revised architecture:
 **What's reusable as-is:** the `Envelope` base class's camelCase-on-the-wire pattern
 (`message_id`/`correlation_id`/`schema_version`), the `ServiceBusPublisher`/`ServiceBusConsumer`
 settlement logic (complete on success, dead-letter with reason on handler failure, no-op on a
-`message_id` already processed), and the idempotency store abstraction. These are
+`message_id` already processed), and the idempotency store abstraction — keyed on
+`(idempotency_scope, message_id)`, where the scope names the consumer (e.g.
+`di-processor/dmer-raw`), so a store shared between services can never let one consumer's
+completed ID suppress another's; a durable implementation keys its table the same way. These are
 architecture-agnostic and should be kept; only the concrete DTOs and the queue names they map to
 need to change. Add `IngestMessage` (or rename `RawDmerMessage`), `RawMessage`, `ExtractedMessage`,
 and `DriverDecisionMessage` (session-aware) as the four envelope subclasses.

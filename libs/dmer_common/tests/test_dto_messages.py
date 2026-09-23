@@ -107,3 +107,30 @@ def test_unknown_field_is_rejected():
     # WHEN parsed THEN validation fails (extra=forbid guards contract drift)
     with pytest.raises(ValidationError):
         ExtractedMessage.model_validate(bad)
+
+
+def test_event_message_id_is_deterministic_per_event():
+    import uuid
+
+    from dmer_common.dto import EXTRACTED_EVENT, event_message_id
+
+    first = event_message_id(EXTRACTED_EVENT, "doc-1")
+    # same event + key -> same id (a replay republishes the same event)
+    assert event_message_id(EXTRACTED_EVENT, "doc-1") == first
+    # a valid UUID
+    assert str(uuid.UUID(first)) == first
+    # different document or different event -> different id
+    assert event_message_id(EXTRACTED_EVENT, "doc-2") != first
+    assert event_message_id("dmer-normalized", "doc-1") != first
+
+
+def test_event_message_id_is_stable_across_releases():
+    # Pinned: changing the namespace or format would re-key every event and
+    # break downstream idempotency for anything already published.
+    from dmer_common.dto import EXTRACTED_EVENT, event_message_id
+
+    assert event_message_id(EXTRACTED_EVENT, "doc-1") == PINNED_EXTRACTED_DOC_1
+
+
+# event_message_id("dmer-extracted", "doc-1") — pinned; see the stability test.
+PINNED_EXTRACTED_DOC_1 = "5893ac38-40b3-5070-bb1e-0236fb1fd093"

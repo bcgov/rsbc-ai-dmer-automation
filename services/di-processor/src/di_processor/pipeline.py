@@ -66,7 +66,12 @@ from dmer_common.db import (
     StageRunRepository,
 )
 from dmer_common.doc_intelligence import DocumentIntelligenceClient
-from dmer_common.dto import ExtractedMessage, RawMessage
+from dmer_common.dto import (
+    EXTRACTED_EVENT,
+    ExtractedMessage,
+    RawMessage,
+    event_message_id,
+)
 from dmer_common.messaging import ServiceBusPublisher
 from dmer_common.openai_client import OpenAIClient
 from dmer_common.storage import (
@@ -375,8 +380,9 @@ class Pipeline:
         """Re-publish the stored combined-extraction pointer for an EXTRACTED doc.
 
         Covers a crash after EXTRACTED was persisted but before (or during) the
-        publish. The re-sent message keeps the original ``message_id``, so a
-        consumer that already processed the first publish no-ops on it.
+        publish. The re-sent message carries the same deterministic
+        ``message_id`` as the first publish, so a consumer that already processed
+        it no-ops on it.
         """
         doc_id = message.document_id
         with failure_step(FailureCode.DB_READ_FAILED):
@@ -394,10 +400,17 @@ class Pipeline:
         )
 
     def _publish(self, message: RawMessage, blob_url: str) -> None:
-        """Publish the ``dmer-extracted`` pointer message for ``message``."""
+        """Publish the ``dmer-extracted`` pointer message for ``message``.
+
+        ``message_id`` identifies the *extraction* event, derived from the
+        document — never the incoming ``dmer-raw`` ID. Every publish or replay
+        for a document carries the same ID (so downstream idempotency catches
+        repeats, whatever upstream message triggered it), and it can never be
+        mistaken for the upstream event. ``correlation_id`` links the two.
+        """
         self._publisher.publish(
             ExtractedMessage(
-                message_id=message.message_id,
+                message_id=event_message_id(EXTRACTED_EVENT, message.document_id),
                 correlation_id=message.correlation_id,
                 document_id=message.document_id,
                 document_guid=message.document_guid,

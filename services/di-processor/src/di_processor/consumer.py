@@ -40,15 +40,22 @@ def make_handler(pipeline: Pipeline) -> Callable[[dict[str, Any]], None]:
     return handle
 
 
+def idempotency_scope(queue: str) -> str:
+    """This consumer's name in the shared idempotency store."""
+    return f"di-processor/{queue}"
+
+
 def make_consumer(
-    receiver: Any, pipeline: Pipeline, **kwargs: Any
+    receiver: Any, pipeline: Pipeline, *, queue: str = "dmer-raw", **kwargs: Any
 ) -> tuple[ServiceBusConsumer, Callable[[dict[str, Any]], None]]:
     """Build the shared consumer plus the pipeline-bound handler.
 
-    ``receiver`` is an Azure ``ServiceBusReceiver`` for ``dmer-raw``; ``kwargs``
+    ``receiver`` is an Azure ``ServiceBusReceiver`` for ``queue``; ``kwargs``
     are forwarded to :class:`ServiceBusConsumer` (e.g. a durable
     ``idempotency_store``). Returns the consumer and the handler to pass to
     :meth:`ServiceBusConsumer.handle` per message.
     """
-    consumer = ServiceBusConsumer(receiver, **kwargs)
+    consumer = ServiceBusConsumer(
+        receiver, idempotency_scope=idempotency_scope(queue), **kwargs
+    )
     return consumer, make_handler(pipeline)

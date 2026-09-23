@@ -53,7 +53,10 @@ quota, not by cost). See `../services/azure-container-apps.md` for the KEDA scal
    write it to `extracted-dmer`, and compute the canonical comparison hash used later for duplicate
    detection.
 9. **Publish.** Send to `dmer-extracted` with `document_id`, the `driver_key` as received on
-   `dmer-raw` (null when Mercury supplied none), and the extracted blob URL.
+   `dmer-raw` (null when Mercury supplied none), and the extracted blob URL. `message_id` is
+   `event_message_id("dmer-extracted", document_id)` — the same for every publish or replay of
+   this document's extraction, and never the incoming `dmer-raw` ID (see
+   [message-contracts.md](../message-contracts.md#message-envelope)).
 
 ### Cut-off detection in practice
 

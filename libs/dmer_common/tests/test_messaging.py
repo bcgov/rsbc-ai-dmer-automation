@@ -59,7 +59,7 @@ def _raw(message_id: str = "m-1", correlation_id: str = "case-1") -> FakeMessage
 def test_consumer_completes_on_success_and_propagates_correlation():
     # GIVEN a consumer and a message
     receiver = FakeReceiver()
-    consumer = ServiceBusConsumer(receiver)
+    consumer = ServiceBusConsumer(receiver, idempotency_scope="test/queue")
     seen = {}
 
     def handler(env: dict) -> None:
@@ -78,7 +78,7 @@ def test_consumer_completes_on_success_and_propagates_correlation():
 def test_consumer_dead_letters_and_reraises_on_handler_error():
     # GIVEN a consumer whose handler raises
     receiver = FakeReceiver()
-    consumer = ServiceBusConsumer(receiver)
+    consumer = ServiceBusConsumer(receiver, idempotency_scope="test/queue")
 
     def handler(_env: dict) -> None:
         raise RuntimeError("processing failed")
@@ -94,7 +94,9 @@ def test_consumer_is_idempotent_on_duplicate_message_id():
     # GIVEN a shared idempotency store and two messages with the same messageId
     receiver = FakeReceiver()
     store = InMemoryIdempotencyStore()
-    consumer = ServiceBusConsumer(receiver, idempotency_store=store)
+    consumer = ServiceBusConsumer(
+        receiver, idempotency_scope="test/queue", idempotency_store=store
+    )
     count = {"n": 0}
 
     def handler(_env: dict) -> None:
@@ -113,7 +115,7 @@ def test_consumer_is_idempotent_on_duplicate_message_id():
 def test_consumer_dead_letters_message_without_message_id():
     # GIVEN a message missing messageId
     receiver = FakeReceiver()
-    consumer = ServiceBusConsumer(receiver)
+    consumer = ServiceBusConsumer(receiver, idempotency_scope="test/queue")
     bad = FakeMessage({"correlationId": "case-1", "schemaVersion": "1.0"})
     # WHEN handled THEN it is dead-lettered and the handler never runs
     ran = consumer.handle(bad, lambda _e: pytest.fail("should not run"))
@@ -163,7 +165,7 @@ class _ClassifiedError(Exception):
 def test_consumer_uses_handler_supplied_dead_letter_reason():
     # GIVEN a handler raising a classified error
     receiver = FakeReceiver()
-    consumer = ServiceBusConsumer(receiver)
+    consumer = ServiceBusConsumer(receiver, idempotency_scope="test/queue")
 
     def handler(_env: dict) -> None:
         raise _ClassifiedError("licence 01234567")
@@ -179,7 +181,7 @@ def test_consumer_uses_handler_supplied_dead_letter_reason():
 
 def test_consumer_falls_back_to_handler_error_for_plain_exceptions():
     receiver = FakeReceiver()
-    consumer = ServiceBusConsumer(receiver)
+    consumer = ServiceBusConsumer(receiver, idempotency_scope="test/queue")
 
     def handler(_env: dict) -> None:
         raise ValueError("anything")
@@ -194,7 +196,7 @@ def test_consumer_falls_back_to_handler_error_for_plain_exceptions():
 def test_consumer_never_logs_or_sends_the_exception_message(caplog):
     # GIVEN a handler error whose message carries extracted values
     receiver = FakeReceiver()
-    consumer = ServiceBusConsumer(receiver)
+    consumer = ServiceBusConsumer(receiver, idempotency_scope="test/queue")
 
     def handler(_env: dict) -> None:
         raise RuntimeError("licence 01234567; dx: epilepsy")
@@ -207,3 +209,33 @@ def test_consumer_never_logs_or_sends_the_exception_message(caplog):
     assert "epilepsy" not in caplog.text
     _msg, reason, description = receiver.dead_lettered[0]
     assert "01234567" not in f"{reason} {description}"
+
+
+def test_idempotency_is_scoped_per_consumer():
+    # GIVEN one shared store and two consumers of different queues
+    store = InMemoryIdempotencyStore()
+    first = ServiceBusConsumer(
+        FakeReceiver(),
+        idempotency_scope="di-processor/dmer-raw",
+        idempotency_store=store,
+    )
+    second_receiver = FakeReceiver()
+    second = ServiceBusConsumer(
+        second_receiver,
+        idempotency_scope="document-orchestrator/dmer-extracted",
+        idempotency_store=store,
+    )
+    calls = []
+
+    # WHEN both see a message with the same messageId
+    first.handle(_raw("same-id"), lambda env: calls.append("first"))
+    ran = second.handle(_raw("same-id"), lambda env: calls.append("second"))
+
+    # THEN the second consumer still processes it (not suppressed as a duplicate)
+    assert ran is True
+    assert calls == ["first", "second"]
+
+
+def test_consumer_requires_an_idempotency_scope():
+    with pytest.raises(ValueError, match="idempotency_scope"):
+        ServiceBusConsumer(FakeReceiver(), idempotency_scope="")

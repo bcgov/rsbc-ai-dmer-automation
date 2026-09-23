@@ -59,7 +59,11 @@ def test_publish_then_consume_round_trip():
         store = InMemoryIdempotencyStore()
         received: list[dict] = []
         with sb.get_queue_receiver(QUEUE, max_wait_time=10) as receiver:
-            consumer = ServiceBusConsumer(receiver, idempotency_store=store)
+            consumer = ServiceBusConsumer(
+                receiver,
+                idempotency_scope="integration/test-queue",
+                idempotency_store=store,
+            )
             for msg in receiver:
                 consumer.handle(msg, lambda env: received.append(env))
                 break
