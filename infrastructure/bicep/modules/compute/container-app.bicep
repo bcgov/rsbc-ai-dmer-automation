@@ -48,8 +48,8 @@ param environmentVariables array = []
 @minLength(1)
 param serviceBusNamespaceFqdn string
 
-@description('Service Bus queue the KEDA scaler watches (di-processor scales on raw-dmer-queue depth).')
-param scaleQueueName string = 'raw-dmer-queue'
+@description('Service Bus queue the KEDA scaler watches (di-processor scales on dmer-raw depth).')
+param scaleQueueName string = 'dmer-raw'
 
 @description('KEDA target: scale out one replica per this many queued messages.')
 param scaleMessageCount int = 5

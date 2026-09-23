@@ -90,25 +90,46 @@ class TopLevelField(BaseModel):
     confidence: float | None = None
 
 
+class CutoffFlags(BaseModel):
+    """Whether the header and signature bands survived the fax/scan.
+
+    Three separate flags, deliberately not collapsed — Intake needs to know which
+    half of the form is missing. ``None`` means undeterminable (no page layout).
+    The ``*_anchors`` / ``signature_fields`` lists are the evidence found, kept
+    for audit and threshold tuning.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    has_header: bool | None = None
+    has_signature: bool | None = None
+    is_cutoff: bool | None = None
+    header_anchors: list[str] = Field(default_factory=list)
+    signature_anchors: list[str] = Field(default_factory=list)
+    signature_fields: list[str] = Field(default_factory=list)
+
+
 class TopLevelExtraction(BaseModel):
     """Custom-model top-level output.
 
     The trained model's field set is configuration; kept permissive so a model
     revision that adds fields does not break parsing. Values are normalized to
-    :class:`TopLevelField`.
+    :class:`TopLevelField`. ``cutoff`` is computed from the same call's page
+    layout (see :mod:`di_processor.extraction.cutoff`).
     """
 
     model_config = ConfigDict(extra="forbid")
 
     fields: dict[str, TopLevelField] = Field(default_factory=dict)
+    cutoff: CutoffFlags = Field(default_factory=CutoffFlags)
 
 
 class CombinedExtraction(BaseModel):
-    """Unified combined extraction persisted to ``combined-extracted-dmer``.
+    """Unified combined extraction persisted to ``extracted-dmer/<doc>/combined.json``.
 
     Top-level and handwritten fields are merged into a single flat ``fields`` map
     (top-level keys namespaced under ``top_level.``; handwritten keys as-is),
-    with document-level metadata.
+    with document-level metadata and the cut-off flags.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -120,6 +141,7 @@ class CombinedExtraction(BaseModel):
     processed_at: datetime
     fields: dict[str, Any] = Field(default_factory=dict)
     uncertain_fields: list[str] = Field(default_factory=list)
+    cutoff: CutoffFlags = Field(default_factory=CutoffFlags)
 
 
 def validate_llm_output(raw: dict[str, Any]) -> HandwrittenExtraction:

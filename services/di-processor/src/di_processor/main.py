@@ -2,7 +2,7 @@
 
 Wiring lives here (the composition root): load typed settings, construct the
 shared ``dmer_common`` clients (Blob, DI, OpenAI, PostgreSQL, Service Bus), build
-the :class:`Pipeline`, and drive the ``raw-dmer-queue`` receive loop. All I/O is
+the :class:`Pipeline`, and drive the ``dmer-raw`` receive loop. All I/O is
 delegated to ``dmer_common`` — no raw SDK client is opened here beyond the
 Service Bus receiver/sender the shared consumer/publisher wrap.
 
@@ -15,7 +15,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from dmer_common.db import DocumentRepository
+from dmer_common.db import (
+    DmerDocumentRepository,
+    ExtractionRepository,
+    StageRunRepository,
+)
 from dmer_common.doc_intelligence import DocumentIntelligenceClient
 from dmer_common.messaging import ServiceBusConsumer, ServiceBusPublisher
 from dmer_common.openai_client import OpenAIClient
@@ -48,14 +52,16 @@ def build_application(
     di_custom: DocumentIntelligenceClient,
     di_ocr: DocumentIntelligenceClient,
     openai: OpenAIClient,
-    repository: DocumentRepository,
+    repository: DmerDocumentRepository,
+    extraction_repository: ExtractionRepository,
+    stage_run_repository: StageRunRepository,
     publisher: ServiceBusPublisher,
     receiver: Any,
 ) -> Application:
     """Assemble the pipeline and consumer from pre-built clients.
 
     Kept separate from :func:`main` so tests can inject fakes without touching
-    Azure. The receiver is the Service Bus receiver for ``raw-dmer-queue``.
+    Azure. The receiver is the Service Bus receiver for ``dmer-raw``.
     """
     pipeline = Pipeline(
         config=PipelineConfig(
@@ -67,6 +73,8 @@ def build_application(
         di_ocr_client=di_ocr,
         openai=openai,
         repository=repository,
+        extraction_repository=extraction_repository,
+        stage_run_repository=stage_run_repository,
         publisher=publisher,
     )
     consumer = ServiceBusConsumer(receiver)
@@ -80,7 +88,7 @@ def build_application(
 
 
 def run(app: Application) -> None:
-    """Serve health endpoints and process ``raw-dmer-queue`` until interrupted.
+    """Serve health endpoints and process ``dmer-raw`` until interrupted.
 
     Blocks on the Service Bus receiver, handing each message to the shared
     consumer (which parses the envelope, enforces idempotency, and settles the
@@ -90,7 +98,7 @@ def run(app: Application) -> None:
     with HealthServer(app.settings.health_port, is_ready=lambda: ready["value"]):
         _log.info(
             "di-processor started; consuming",
-            extra={"queue": app.settings.raw_dmer_queue},
+            extra={"queue": app.settings.dmer_raw_queue},
         )
         try:
             for message in app.receiver:
@@ -124,8 +132,8 @@ def main() -> None:  # pragma: no cover - thin production wiring
     credential = DefaultAzureCredential()
 
     sb_client = ServiceBusClient(settings.service_bus_namespace_fqdn, credential)
-    receiver = sb_client.get_queue_receiver(settings.raw_dmer_queue)
-    sender = sb_client.get_queue_sender(settings.extracted_dmer_queue)
+    receiver = sb_client.get_queue_receiver(settings.dmer_raw_queue)
+    sender = sb_client.get_queue_sender(settings.dmer_extracted_queue)
 
     engine = create_async_engine(
         f"postgresql+asyncpg://{settings.postgres_host}/postgres"
@@ -141,7 +149,9 @@ def main() -> None:  # pragma: no cover - thin production wiring
             settings.doc_intelligence_endpoint, credential=credential
         ),
         openai=OpenAIClient(),
-        repository=DocumentRepository(engine),
+        repository=DmerDocumentRepository(engine),
+        extraction_repository=ExtractionRepository(engine),
+        stage_run_repository=StageRunRepository(engine),
         publisher=ServiceBusPublisher(sender),
         receiver=receiver,
     )

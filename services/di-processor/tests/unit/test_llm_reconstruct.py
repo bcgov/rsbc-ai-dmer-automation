@@ -7,6 +7,7 @@ import json
 import pytest
 from di_processor.extraction.llm_reconstruct import build_messages, reconstruct
 from di_processor.extraction.schemas import ExtractionError, HandwrittenExtraction
+from di_processor.failures import FailureCode, PipelineFailure
 from PIL import Image
 
 
@@ -90,6 +91,29 @@ def test_reconstruct_rejects_unrepairable_output():
     )
     client = _FakeOpenAI(bad)
     img = Image.new("RGB", (10, 10), "white")
-    # WHEN reconstructed THEN validation raises (Req 6.5)
-    with pytest.raises(ExtractionError):
+    # WHEN reconstructed THEN validation fails as LLM_OUTPUT_INVALID (Req 6.5)
+    with pytest.raises(PipelineFailure) as info:
         reconstruct(client, img, _ocr_json())
+    assert info.value.code is FailureCode.LLM_OUTPUT_INVALID
+    assert isinstance(info.value.__cause__, ExtractionError)
+    # the validation text (which echoes field values) is not in the detail
+    assert "6.5" not in info.value.safe_detail
+
+
+def test_reconstruct_call_failure_is_llm_call_failed():
+    # GIVEN the OpenAI call itself fails (after its retries / breaker)
+    class _Failing:
+        def complete(self, messages, **kwargs):
+            raise ConnectionError("upstream reset")
+
+    img = Image.new("RGB", (10, 10), "white")
+    with pytest.raises(PipelineFailure) as info:
+        reconstruct(_Failing(), img, _ocr_json())
+    assert info.value.code is FailureCode.LLM_CALL_FAILED
+
+
+def test_reconstruct_unparseable_output_is_llm_output_invalid():
+    img = Image.new("RGB", (10, 10), "white")
+    with pytest.raises(PipelineFailure) as info:
+        reconstruct(_FakeOpenAI("not json at all {{{"), img, _ocr_json())
+    assert info.value.code is FailureCode.LLM_OUTPUT_INVALID

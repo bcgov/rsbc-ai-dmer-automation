@@ -9,6 +9,12 @@ Settlement:
 - handler raises                -> ``dead_letter`` the message (native DLQ),
 - already-processed ``messageId`` -> ``complete`` without invoking the handler.
 
+Dead-letter reason: a handler exception may carry ``dead_letter_reason`` and
+``safe_detail`` string attributes (a classified, PII-safe failure); they become
+the dead-letter ``reason`` / ``description``. Otherwise the reason is
+``HandlerError`` and the description the exception type. The exception *message*
+is never logged or sent, since it can contain extracted values.
+
 The underlying Azure ``ServiceBusReceiver`` is injected so this logic is testable
 with a fake receiver.
 """
@@ -56,6 +62,21 @@ def _message_body(message: Any) -> bytes:
 def _envelope(message: Any) -> dict[str, Any]:
     """Parse the JSON envelope from a message body."""
     return json.loads(_message_body(message).decode("utf-8"))
+
+
+def _dead_letter_fields(exc: BaseException) -> tuple[str, str]:
+    """Return ``(reason, description)`` for dead-lettering ``exc``.
+
+    Uses the exception's ``dead_letter_reason`` / ``safe_detail`` when it
+    provides them as non-empty strings; otherwise ``HandlerError`` and the
+    exception type. Never the exception message.
+    """
+    reason = getattr(exc, "dead_letter_reason", None)
+    detail = getattr(exc, "safe_detail", None)
+    return (
+        reason if isinstance(reason, str) and reason else "HandlerError",
+        detail if isinstance(detail, str) and detail else type(exc).__name__,
+    )
 
 
 class ServiceBusConsumer:
@@ -107,14 +128,22 @@ class ServiceBusConsumer:
             try:
                 handler(envelope)
             except Exception as exc:  # route to DLQ, then re-raise
+                reason, description = _dead_letter_fields(exc)
+                # Never log str(exc): exception text can carry extracted PII /
+                # clinical values that key-based redaction cannot catch.
                 _log.error(
                     "handler failed; dead-lettering",
-                    extra={"message_id": message_id, "error": str(exc)},
+                    extra={
+                        "message_id": message_id,
+                        "error": type(exc).__name__,
+                        "reason": reason,
+                        "error_description": description,
+                    },
                 )
                 self._receiver.dead_letter_message(
                     message,
-                    reason="HandlerError",
-                    error_description=type(exc).__name__,
+                    reason=reason,
+                    error_description=description,
                 )
                 raise
             self._idempotency.mark_processed(message_id)

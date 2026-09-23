@@ -26,11 +26,15 @@
 // following the same pattern (module -> RBAC role assignment in this file),
 // as each service is built.
 //
-// NOTE: Azure OpenAI is NOT provisioned here. normalizer-service consumes a
-// model hosted in a separate Azure AI Hub/AI Foundry project in a separate
-// subscription via an endpoint URL + API key stored in Key Vault — see
-// docs/architecture/repository-design.md §10 and §13 (item 8). Not relevant
-// to this deployment (no Key Vault or normalizer-service yet either).
+// NOTE: Azure OpenAI is NOT provisioned here. It is hosted in a separate Azure
+// AI Hub/AI Foundry project in a separate subscription and consumed via an
+// endpoint URL + API key stored in Key Vault (see
+// docs/architecture/repository-design.md §10 and §13, item 8). di-processor is
+// wired to it below: the endpoint/deployment/API version are plain settings,
+// and the key is a Container App Key Vault secret reference
+// (openAiApiKeySecretUri). The Key Vault itself, and the di-processor
+// identity's Key Vault Secrets User grant on it, belong to the Key Vault
+// workstream and are not created here.
 //
 // Deployed per-environment with deployment/<env>/parameters.json — see
 // docs/deployment/deployment-guide.md.
@@ -115,12 +119,59 @@ param containerRegistryServer string = ''
 @description('Optional Log Analytics Workspace resource ID for di-processor Container App diagnostics (shared resource, passed in by ID). Empty = diagnostics not attached here.')
 param logAnalyticsWorkspaceId string = ''
 
+@description('PostgreSQL flexible server host for di-processor, e.g. psql-rsbc-dmer-shared-dev-001.postgres.database.azure.com (shared resource, other workstream). Required when containerAppsEnvironmentId is supplied.')
+param postgresHost string = ''
+
+@description('App Configuration endpoint, e.g. https://appcs-rsbc-dmer-shared-dev-001.azconfig.io (shared resource, other workstream). Required when containerAppsEnvironmentId is supplied.')
+param appConfigurationEndpoint string = ''
+
+@description('Document Intelligence custom DMER model id di-processor analyzes with, e.g. rsbc-ocr-dmer-v9. Required when containerAppsEnvironmentId is supplied.')
+param diCustomModelId string = ''
+
+@description('Optional LLM prompt/schema version recorded on dmer_stage_run.model_version. Empty = recorded as \'unversioned\'.')
+param llmPromptVersion string = ''
+
+@description('External Azure OpenAI (AI Hub) endpoint for di-processor handwriting reconstruction. Required when containerAppsEnvironmentId is supplied.')
+param openAiEndpoint string = ''
+
+@description('Azure OpenAI deployment name, e.g. gpt-5.1. Required when containerAppsEnvironmentId is supplied.')
+param openAiDeployment string = ''
+
+@description('Azure OpenAI API version. Required when containerAppsEnvironmentId is supplied.')
+param openAiApiVersion string = ''
+
+@description('Key Vault secret URI of the external Azure OpenAI API key (the documented Managed Identity exception), e.g. https://kv-rsbc-dmer-dev-001.vault.azure.net/secrets/azure-openai-api-key. Resolved by the Container App via the di-processor identity, which needs Key Vault Secrets User on that vault (granted by the Key Vault workstream). Required when containerAppsEnvironmentId is supplied.')
+param openAiApiKeySecretUri string = ''
+
 var sharedTags = buildTags(environment, 'shared', costCenter, owner, dataClassification)
 var documentIntelligenceAccountName = resourceName('di', 'shared', environment, instance)
 var storageAccountNameValue = storageAccountName(environment, location, instance)
 var diProcessorIdentityName = resourceName('id', 'di-processor', environment, instance)
 var diProcessorContainerAppName = resourceName('ca', 'di-processor', environment, instance)
 var deployDiProcessorContainerApp = !empty(containerAppsEnvironmentId)
+
+// di-processor runtime settings (services/di-processor/src/di_processor/config.py
+// reads configuration from environment variables only). Endpoints of resources
+// this template creates come from module outputs; shared resources come from
+// parameters. AZURE_CLIENT_ID selects the user-assigned identity for
+// DefaultAzureCredential. Queue / container / health-port names are left to the
+// code defaults (dmer-raw, dmer-extracted, extracted-dmer, 8080). The OpenAI API
+// key is not here: it is a Key Vault secret reference (openAiApiKeySecretUri).
+var diProcessorEnvironmentVariables = concat(
+  [
+    { name: 'APP_CONFIGURATION_ENDPOINT', value: appConfigurationEndpoint }
+    { name: 'SERVICE_BUS_NAMESPACE_FQDN', value: serviceBusNamespaceFqdn }
+    { name: 'POSTGRES_HOST', value: postgresHost }
+    { name: 'BLOB_ACCOUNT_URL', value: storage.outputs.blobEndpoint }
+    { name: 'DOC_INTELLIGENCE_ENDPOINT', value: documentIntelligence.outputs.endpoint }
+    { name: 'DI_CUSTOM_MODEL_ID', value: diCustomModelId }
+    { name: 'AZURE_CLIENT_ID', value: diProcessorIdentity.outputs.clientId }
+    { name: 'AZURE_OPENAI_ENDPOINT', value: openAiEndpoint }
+    { name: 'AZURE_OPENAI_DEPLOYMENT', value: openAiDeployment }
+    { name: 'AZURE_OPENAI_API_VERSION', value: openAiApiVersion }
+  ],
+  empty(llmPromptVersion) ? [] : [{ name: 'LLM_PROMPT_VERSION', value: llmPromptVersion }]
+)
 
 // ---------------------------------------------------------------------------
 // 1. Managed Identity
@@ -195,7 +246,7 @@ module blobContainers 'modules/storage/blob-containers.bicep' = {
 //
 // di-processor's own RBAC: Document Intelligence (Cognitive Services User) and
 // the blob containers (container-scoped Reader on raw, Data Contributor on
-// extracted-dmer / combined-extracted-dmer). Service Bus, Key Vault, App
+// extracted-dmer). Service Bus, Key Vault, App
 // Configuration, and PostgreSQL are shared/other-service resources provisioned
 // and granted by their own workstreams — out of scope for this template today.
 // di-processor's runtime access to them is added when those resources are
@@ -213,9 +264,10 @@ resource documentIntelligenceExisting 'Microsoft.CognitiveServices/accounts@2024
 }
 
 // Container-scoped references for least-privilege blob RBAC. di-processor reads
-// the source document from `raw` and writes extraction artifacts to
-// `extracted-dmer` / `combined-extracted-dmer` — so it gets Reader on the
-// former and Data Contributor on the latter two, never account-wide access.
+// the source document from `raw` and writes all extraction artifacts
+// (top-level, OCR, handwritten, combined) to `extracted-dmer` — so it gets
+// Reader on the former and Data Contributor on the latter, never account-wide
+// access.
 resource rawContainerExisting 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' existing = {
   name: '${storageAccountNameValue}/default/raw'
   dependsOn: [
@@ -225,13 +277,6 @@ resource rawContainerExisting 'Microsoft.Storage/storageAccounts/blobServices/co
 
 resource extractedContainerExisting 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' existing = {
   name: '${storageAccountNameValue}/default/extracted-dmer'
-  dependsOn: [
-    blobContainers
-  ]
-}
-
-resource combinedContainerExisting 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' existing = {
-  name: '${storageAccountNameValue}/default/combined-extracted-dmer'
   dependsOn: [
     blobContainers
   ]
@@ -270,17 +315,6 @@ resource diProcessorExtractedBlobDataContributor 'Microsoft.Authorization/roleAs
   }
 }
 
-@description('Lets id-rsbc-dmer-di-processor write the unified combined extraction to the combined-extracted-dmer container (container-scoped).')
-resource diProcessorCombinedBlobDataContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(combinedContainerExisting.id, diProcessorIdentityName, storageBlobDataContributorRoleId)
-  scope: combinedContainerExisting
-  properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', storageBlobDataContributorRoleId)
-    principalId: diProcessorIdentity.outputs.principalId
-    principalType: 'ServicePrincipal'
-  }
-}
-
 // ---------------------------------------------------------------------------
 // 5. di-processor Container App
 //
@@ -301,9 +335,11 @@ module diProcessorContainerApp 'modules/compute/container-app.bicep' = if (deplo
     image: diProcessorImage
     registryServer: containerRegistryServer
     serviceBusNamespaceFqdn: serviceBusNamespaceFqdn
-    scaleQueueName: 'raw-dmer-queue'
+    scaleQueueName: 'dmer-raw'
     minReplicas: environment == 'prod' ? 1 : 0
     logAnalyticsWorkspaceId: logAnalyticsWorkspaceId
+    environmentVariables: diProcessorEnvironmentVariables
+    openAiApiKeySecretUri: openAiApiKeySecretUri
   }
 }
 

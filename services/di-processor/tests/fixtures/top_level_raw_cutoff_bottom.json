@@ -1,0 +1,383 @@
+{
+  "_comment": "Trimmed from a real rsbc-ocr-dmer-v9 analyze result (services/diocr-poc/smoke_out/top_level_raw.json) of a DMER whose page 1 is cut off at the bottom (sections F/G sliced; examiner/signature block missing). Only header (y<11%) and bottom (y>90%) lines are kept; fax number masked.",
+  "pages": [
+    {
+      "pageNumber": 1,
+      "width": 8.6389,
+      "height": 10.8611,
+      "unit": "inch",
+      "lines": [
+        {
+          "content": "03/06/2024 WED 16:29 FAX 000 000 0000",
+          "polygon": [
+            0.3963,
+            0,
+            3.4178,
+            0.0016,
+            3.4177,
+            0.115,
+            0.3962,
+            0.1133
+          ]
+        },
+        {
+          "content": "41001/002",
+          "polygon": [
+            7.5167,
+            0.0032,
+            8.1858,
+            0.0005,
+            8.1863,
+            0.1173,
+            7.5172,
+            0.1201
+          ]
+        },
+        {
+          "content": "BRITISH",
+          "polygon": [
+            1.0411,
+            0.4575,
+            1.7502,
+            0.4609,
+            1.7494,
+            0.6131,
+            1.0405,
+            0.6101
+          ]
+        },
+        {
+          "content": "COLUMBIA",
+          "polygon": [
+            0.9433,
+            0.6112,
+            1.8403,
+            0.6142,
+            1.8398,
+            0.7629,
+            0.9428,
+            0.7599
+          ]
+        },
+        {
+          "content": "RoadSafetyBC",
+          "polygon": [
+            4.1242,
+            0.4659,
+            5.0067,
+            0.4659,
+            5.0067,
+            0.6012,
+            4.1242,
+            0.6012
+          ]
+        },
+        {
+          "content": "DRIVER'S MEDICAL EXAMINATION",
+          "polygon": [
+            3.1409,
+            0.6235,
+            5.989,
+            0.6199,
+            5.9892,
+            0.7823,
+            3.1411,
+            0.7859
+          ]
+        },
+        {
+          "content": "The personal information on this form is being collected under the authority of s. 26 of the Freedom of Information and Protection of Privacy Act and s. 25 or s. 29 of the Motor Vehicle Act for the purpose",
+          "polygon": [
+            0.291,
+            0.9853,
+            6.9889,
+            0.9889,
+            6.9889,
+            1.0886,
+            0.2909,
+            1.0849
+          ]
+        },
+        {
+          "content": "of determining your fitness to drive a motor vehicle. If you have any questions about the collection of your personal information please see the contact information in the \"To the driver\" section of the",
+          "polygon": [
+            0.2871,
+            1.0878,
+            7.0078,
+            1.0855,
+            7.0078,
+            1.1833,
+            0.2871,
+            1.1866
+          ]
+        },
+        {
+          "content": "Instructions.",
+          "polygon": [
+            0.292,
+            1.1891,
+            0.6781,
+            1.1898,
+            0.678,
+            1.2725,
+            0.2918,
+            1.2718
+          ]
+        },
+        {
+          "content": "2",
+          "polygon": [
+            7.6981,
+            0.4668,
+            8.0492,
+            0.4661,
+            8.0501,
+            0.9556,
+            7.699,
+            0.9562
+          ]
+        },
+        {
+          "content": "AREA ABOVE FOR OFFICE USE",
+          "polygon": [
+            7.2133,
+            1.1658,
+            8.2994,
+            1.1618,
+            8.2997,
+            1.2467,
+            7.2136,
+            1.2506
+          ]
+        },
+        {
+          "content": "E. RECOMMENDATION(S)",
+          "polygon": [
+            0.4229,
+            9.9531,
+            2.1676,
+            9.956,
+            2.1674,
+            10.1025,
+            0.4226,
+            10.0997
+          ]
+        },
+        {
+          "content": "Specialist Consult - Type",
+          "polygon": [
+            0.5695,
+            10.2377,
+            1.6652,
+            10.2385,
+            1.6652,
+            10.362,
+            0.5694,
+            10.3612
+          ]
+        },
+        {
+          "content": "Road test to assess",
+          "polygon": [
+            4.6616,
+            10.2002,
+            5.4828,
+            10.2023,
+            5.4825,
+            10.3072,
+            4.6613,
+            10.3052
+          ]
+        },
+        {
+          "content": "Rationale for road test",
+          "polygon": [
+            4.6651,
+            10.3583,
+            5.5821,
+            10.3581,
+            5.5821,
+            10.4725,
+            4.6651,
+            10.4728
+          ]
+        },
+        {
+          "content": "as above",
+          "polygon": [
+            5.7492,
+            10.2425,
+            7.0184,
+            10.2199,
+            7.0228,
+            10.4269,
+            5.7536,
+            10.4534
+          ]
+        },
+        {
+          "content": "Enclosed:",
+          "polygon": [
+            0.42,
+            10.4814,
+            0.8208,
+            10.479,
+            0.8211,
+            10.5887,
+            0.4207,
+            10.5911
+          ]
+        },
+        {
+          "content": "Yes",
+          "polygon": [
+            1.0999,
+            10.4865,
+            1.2562,
+            10.4873,
+            1.2557,
+            10.5843,
+            1.0994,
+            10.5836
+          ]
+        },
+        {
+          "content": "No",
+          "polygon": [
+            1.486,
+            10.4862,
+            1.6103,
+            10.4882,
+            1.6088,
+            10.5823,
+            1.4848,
+            10.5803
+          ]
+        },
+        {
+          "content": "I will arrange:",
+          "polygon": [
+            2.4407,
+            10.4812,
+            3.0392,
+            10.4871,
+            3.0381,
+            10.597,
+            2.4396,
+            10.5911
+          ]
+        },
+        {
+          "content": "Yes",
+          "polygon": [
+            3.2714,
+            10.4866,
+            3.4294,
+            10.49,
+            3.4274,
+            10.5842,
+            3.2694,
+            10.5808
+          ]
+        },
+        {
+          "content": "No",
+          "polygon": [
+            3.6601,
+            10.4864,
+            3.7827,
+            10.4893,
+            3.7805,
+            10.5815,
+            3.6579,
+            10.5786
+          ]
+        },
+        {
+          "content": "Restrictions (Reason & Type)",
+          "polygon": [
+            4.6644,
+            10.5011,
+            5.8689,
+            10.5075,
+            5.8682,
+            10.6305,
+            4.6637,
+            10.6236
+          ]
+        },
+        {
+          "content": "F. DRIVER'S CERTIFICATION AND CONSENT TO",
+          "polygon": [
+            0.4246,
+            10.7051,
+            3.7029,
+            10.7073,
+            3.7028,
+            10.8555,
+            0.4245,
+            10.8536
+          ]
+        },
+        {
+          "content": "REI ATIONCHID WITH DATIENT",
+          "polygon": [
+            4.5161,
+            10.7618,
+            6.7616,
+            10.7618,
+            6.7616,
+            10.8555,
+            4.5161,
+            10.8555
+          ]
+        }
+      ]
+    }
+  ],
+  "documents": [
+    {
+      "docType": "rsbc-ocr-dmer-v9",
+      "fields": {
+        "doctor_signature": {
+          "type": "signature"
+        },
+        "medical_examination_date": {
+          "type": "string",
+          "confidence": 0.981
+        },
+        "physician_or_np_fax_present": {
+          "type": "string",
+          "confidence": 0.934
+        },
+        "recommendations.road_test_to_assess": {
+          "type": "selectionMark",
+          "valueSelectionMark": "selected",
+          "content": ":selected:",
+          "boundingRegions": [
+            {
+              "pageNumber": 1,
+              "polygon": [
+                4.5158,
+                10.1946,
+                4.6067,
+                10.1946,
+                4.6067,
+                10.286,
+                4.5158,
+                10.286
+              ]
+            }
+          ],
+          "confidence": 0.948,
+          "spans": [
+            {
+              "offset": 3649,
+              "length": 10
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

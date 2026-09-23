@@ -1,12 +1,13 @@
-"""Integration test: DocumentRepository against PostgreSQL.
+"""Integration test: DmerDocumentRepository against PostgreSQL.
 
 Runs against a real PostgreSQL via an async SQLAlchemy engine. Skipped unless
 ``POSTGRES_TEST_DSN`` is set and an async driver (``asyncpg``) is importable, so
 the default unit run is unaffected.
 
-GIVEN a fresh documents table
-WHEN a document moves received -> extracting -> ... -> published with blob URLs
-THEN each status/URI is persisted and read back, and an illegal transition is
+GIVEN a fresh dmer_document table
+WHEN a document moves RECEIVED -> DOWNLOADED -> EXTRACTING -> EXTRACTED with the
+     combined-extraction blob URL
+THEN each status is persisted and read back, and an illegal transition is
      rejected.
 """
 
@@ -37,48 +38,196 @@ def test_status_lifecycle_persists_and_reads_back():
 
 
 async def _status_lifecycle():
-    from dmer_common.db import DocumentStatus
-    from dmer_common.db.documents import (
-        DocumentRepository,
+    from dmer_common.db import PipelineStage, PipelineStatus
+    from dmer_common.db.dmer_document import (
+        DmerDocumentRepository,
         InvalidStatusTransition,
+        dmer_document,
         metadata,
     )
+    from sqlalchemy import delete, select
     from sqlalchemy.ext.asyncio import create_async_engine
 
     assert DSN is not None
     engine = create_async_engine(DSN)
+    doc_id = "doc-int-db-1"
     try:
         async with engine.begin() as conn:
             await conn.run_sync(metadata.create_all)
+            # Re-runnable against a reused database: start from no row.
+            await conn.execute(
+                delete(dmer_document).where(dmer_document.c.id == doc_id)
+            )
 
-        repo = DocumentRepository(engine)
-        doc_id = "doc-int-db-1"
+        repo = DmerDocumentRepository(engine)
 
-        await repo.upsert_status(doc_id, "case-1", DocumentStatus.RECEIVED)
         await repo.upsert_status(
             doc_id,
             "case-1",
-            DocumentStatus.EXTRACTING,
-            initial_extraction_uri="extracted-dmer/doc-int-db-1/top_level.json",
+            PipelineStatus.RECEIVED,
+            document_guid="guid-int-db-1",
+            stage=PipelineStage.INGEST,
         )
-        assert await repo.get_status(doc_id) == DocumentStatus.EXTRACTING
+        await repo.upsert_status(
+            doc_id, "case-1", PipelineStatus.DOWNLOADED, stage=PipelineStage.EXTRACT
+        )
+        await repo.upsert_status(doc_id, "case-1", PipelineStatus.EXTRACTING)
+        assert await repo.get_status(doc_id) == PipelineStatus.EXTRACTING
 
         # Illegal jump is rejected.
         with pytest.raises(InvalidStatusTransition):
-            await repo.upsert_status(doc_id, "case-1", DocumentStatus.PUBLISHED)
+            await repo.upsert_status(doc_id, "case-1", PipelineStatus.DECIDED)
 
-        for status in (
-            DocumentStatus.SECTIONING,
-            DocumentStatus.COMBINING,
-            DocumentStatus.COMBINED,
-        ):
-            await repo.upsert_status(doc_id, "case-1", status)
         await repo.upsert_status(
             doc_id,
             "case-1",
-            DocumentStatus.PUBLISHED,
-            combined_extraction_uri="combined-extracted-dmer/doc-int-db-1/combined.json",
+            PipelineStatus.EXTRACTED,
+            stage=PipelineStage.NORMALIZE,
+            extracted_blob_url="extracted-dmer/doc-int-db-1/combined.json",
         )
-        assert await repo.get_status(doc_id) == DocumentStatus.PUBLISHED
+        assert await repo.get_status(doc_id) == PipelineStatus.EXTRACTED
+
+        # A status-only write (no stage) leaves current_stage where it was.
+        await repo.upsert_status(doc_id, "case-1", PipelineStatus.MANUAL_REVIEW)
+        async with engine.connect() as conn:
+            stage_now = (
+                await conn.execute(
+                    select(dmer_document.c.current_stage).where(
+                        dmer_document.c.id == doc_id
+                    )
+                )
+            ).scalar_one()
+        assert stage_now == "NORMALIZE"
+        assert (
+            await repo.get_extracted_blob_url(doc_id)
+            == "extracted-dmer/doc-int-db-1/combined.json"
+        )
+        assert await repo.get_extracted_blob_url("no-such-doc") is None
+    finally:
+        await engine.dispose()
+
+
+def test_stage_run_attempts_and_abandonment():
+    import asyncio
+
+    asyncio.run(_stage_run_attempts())
+
+
+async def _stage_run_attempts():
+    """GIVEN a fresh dmer_stage_run table
+    WHEN attempt 1 crashes (left RUNNING), attempt 2 fails, attempt 3 succeeds
+    THEN attempts are numbered 1..3, the crashed run is closed ABANDONED, and each
+         row carries its own outcome."""
+    from dmer_common.db import PipelineStage, StageRunRepository
+    from dmer_common.db.stage_run import dmer_stage_run, metadata
+    from sqlalchemy import delete, select
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    engine = create_async_engine(DSN)
+    doc_id = "doc-int-stage-run-1"
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(metadata.create_all)
+            await conn.execute(
+                delete(dmer_stage_run).where(dmer_stage_run.c.document_id == doc_id)
+            )
+
+        runs = StageRunRepository(engine)
+        crashed = await runs.start(doc_id, PipelineStage.EXTRACT, model_version="m1")
+        failed = await runs.start(doc_id, PipelineStage.EXTRACT, model_version="m1")
+        await runs.fail(failed, error_code="RuntimeError")
+        ok = await runs.start(doc_id, PipelineStage.EXTRACT, model_version="m2")
+        await runs.succeed(ok, output_blob_url="extracted-dmer/doc/combined.json")
+
+        async with engine.connect() as conn:
+            rows = {
+                r.id: r
+                for r in (
+                    await conn.execute(
+                        select(dmer_stage_run).where(
+                            dmer_stage_run.c.document_id == doc_id
+                        )
+                    )
+                )
+            }
+
+        assert [rows[i].attempt_no for i in (crashed, failed, ok)] == [1, 2, 3]
+        assert (rows[crashed].status, rows[crashed].error_code) == (
+            "FAILED",
+            "ABANDONED",
+        )
+        assert rows[crashed].ended_at is not None
+        assert (rows[failed].status, rows[failed].error_code) == (
+            "FAILED",
+            "RuntimeError",
+        )
+        assert rows[ok].status == "SUCCEEDED"
+        assert rows[ok].output_blob_url == "extracted-dmer/doc/combined.json"
+        assert rows[ok].model_version == "m2"
+    finally:
+        await engine.dispose()
+
+
+def test_extraction_upsert_is_idempotent_on_document_id():
+    import asyncio
+
+    asyncio.run(_extraction_upsert())
+
+
+async def _extraction_upsert():
+    """GIVEN a fresh dmer_extraction table
+    WHEN the same document's extraction is upserted twice (a reprocessed run)
+    THEN one row exists, holding the second run's values."""
+    from dmer_common.db import ExtractionRecord, ExtractionRepository
+    from dmer_common.db.dmer_extraction import dmer_extraction, metadata
+    from sqlalchemy import delete, select
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    engine = create_async_engine(DSN)
+    doc_id = "doc-int-extraction-1"
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(metadata.create_all)
+            await conn.execute(
+                delete(dmer_extraction).where(dmer_extraction.c.document_id == doc_id)
+            )
+
+        repo = ExtractionRepository(engine)
+        await repo.upsert(
+            ExtractionRecord(
+                document_id=doc_id,
+                licence_number_read="01234567",
+                has_header=True,
+                has_signature=True,
+                is_cutoff=False,
+            )
+        )
+        await repo.upsert(
+            ExtractionRecord(
+                document_id=doc_id,
+                licence_number_read="01234567",
+                has_header=True,
+                has_signature=False,
+                is_cutoff=True,
+            )
+        )
+
+        async with engine.connect() as conn:
+            rows = (
+                await conn.execute(
+                    select(dmer_extraction).where(
+                        dmer_extraction.c.document_id == doc_id
+                    )
+                )
+            ).all()
+
+        assert len(rows) == 1
+        row = rows[0]
+        assert row.licence_number_read == "01234567"
+        assert (row.has_header, row.has_signature, row.is_cutoff) == (
+            True,
+            False,
+            True,
+        )
     finally:
         await engine.dispose()
