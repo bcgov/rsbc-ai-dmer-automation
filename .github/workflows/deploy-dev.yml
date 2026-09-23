@@ -31,9 +31,13 @@ on:
   workflow_dispatch: {}
 
 concurrency:
-  # Not cancel-in-progress: a deploy that's already touching live DEV
-  # resources should finish rather than being cut off mid-way.
-  group: ${{ github.workflow }}-${{ github.ref }}
+  # Literal group name, not `github.workflow` -- this workflow calls
+  # build.yml as a reusable workflow below, which also runs standalone; see
+  # build.yml's concurrency comment for why a dynamic-name-derived group
+  # would deadlock against it. Also not cancel-in-progress: a deploy that's
+  # already touching live DEV resources should finish rather than being cut
+  # off mid-way.
+  group: deploy-dev-${{ github.ref }}
   cancel-in-progress: false
 
 permissions:

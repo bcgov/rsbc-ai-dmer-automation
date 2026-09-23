@@ -23,7 +23,6 @@ on:
       - 'requirements-dev.txt'
       - '.github/workflows/test.yml'
   workflow_dispatch: {}
-  workflow_call: {}
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

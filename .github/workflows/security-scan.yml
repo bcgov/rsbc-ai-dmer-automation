@@ -24,7 +24,6 @@ on:
       - 'services/intake-processor/requirements.txt'
       - '.github/workflows/security-scan.yml'
   workflow_dispatch: {}
-  workflow_call: {}
   schedule:
     # Weekly, so a newly-disclosed CVE against an already-merged dependency
     # still gets caught even with no code change to trigger the path filters
