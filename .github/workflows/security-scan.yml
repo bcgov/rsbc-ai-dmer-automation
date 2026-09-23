@@ -41,6 +41,9 @@ permissions:
 jobs:
   pip-audit:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/intake-processor
     steps:
       - uses: actions/checkout@v4
 
@@ -52,4 +55,4 @@ jobs:
         run: pip install pip-audit==2.7.3
 
       - name: Audit intake-processor's dependencies
-        run: pip-audit -r services/intake-processor/requirements.txt
+        run: pip-audit -r requirements.txt
