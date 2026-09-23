@@ -18,9 +18,9 @@ def test_blob_url_composes_account_container_path():
     # GIVEN a client and a container/path
     client = _client()
     # WHEN building the blob URL
-    url = client.blob_url(containers.combined_extracted_dmer(), "doc-1/combined.json")
+    url = client.blob_url(containers.extracted_dmer(), "doc-1/combined.json")
     # THEN it is the full https URL
-    assert url == f"{ACCOUNT}/combined-extracted-dmer/doc-1/combined.json"
+    assert url == f"{ACCOUNT}/extracted-dmer/doc-1/combined.json"
 
 
 def test_split_uri_round_trips_with_blob_url():

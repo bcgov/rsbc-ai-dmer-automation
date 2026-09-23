@@ -1,52 +1,65 @@
 """Queue message models for the DMER pipeline.
 
-Single source of truth for the schemas documented in ``docs/contracts/queues/``:
+Single source of truth for the message shapes documented in
+``docs/development/message-contracts.md``. Under the revised architecture **one
+envelope shape covers all four queues** — pointers only, never extracted or
+normalized content inline:
 
-- :class:`RawDmerMessage` — ``raw-dmer-queue`` (produced by intake-processor,
-  consumed by di-processor).
-- :class:`ExtractedDmerMessage` — ``extracted-dmer-queue`` v2 (produced by
-  di-processor, consumed by workflow-orchestrator). v2 replaces ``ocrResultUri``
-  with ``combinedResultUri`` and bumps ``schemaVersion`` to ``2.0``.
+- :class:`RawMessage` — ``dmer-raw`` (produced by the Ingest function, consumed
+  by ``di-processor``).
+- :class:`ExtractedMessage` — ``dmer-extracted`` (produced by ``di-processor``,
+  consumed by the document orchestrator).
+
+Both are thin subclasses of :class:`PipelineMessage`: the queue a message belongs
+to is context, not shape. ``schema_version`` defaults to
+:data:`PIPELINE_SCHEMA_VERSION`.
+
+Security: never place a licence number or clinical content in a message body —
+carry ``driver_key`` and a ``blob_url`` only (see message-contracts.md §Security).
 """
 
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
-
-from pydantic import Field
 
 from .envelope import Envelope
 
-RAW_DMER_SCHEMA_VERSION = "1.0"
-EXTRACTED_DMER_SCHEMA_VERSION = "2.0"
+PIPELINE_SCHEMA_VERSION = "1.0"
 
 
-class RawDmerMessage(Envelope):
-    """``raw-dmer-queue`` message.
+class PipelineMessage(Envelope):
+    """The one message shape carried on every pipeline queue.
 
-    See ``docs/contracts/queues/raw-dmer-queue.md``. ``message_id`` is the
-    idempotency key; di-processor must no-op on a duplicate it has completed.
+    See ``docs/development/message-contracts.md`` §Message envelope. ``blob_url``
+    points at the artifact the *next* stage needs (e.g. the source PDF under the
+    ``raw-dmer`` container for ``dmer-raw``; the combined extraction under
+    ``extracted-dmer`` for ``dmer-extracted``). ``message_id`` is the idempotency
+    key.
     """
 
-    source_system: str
+    schema_version: str = PIPELINE_SCHEMA_VERSION
     document_id: str
-    mercury_case_id: str
-    document_uri: str
-    received_at: datetime
-    payload: dict[str, Any] = Field(default_factory=dict)
+    document_guid: str
+    driver_key: str | None = None
+    blob_url: str
+    attempt: int = 1
+    enqueued_at: datetime
 
 
-class ExtractedDmerMessage(Envelope):
-    """``extracted-dmer-queue`` v2 message.
+class RawMessage(PipelineMessage):
+    """``dmer-raw`` message — a document awaiting extraction.
 
-    See ``docs/contracts/queues/extracted-dmer-queue.md``. References the final
-    combined extraction result rather than a raw OCR result.
+    ``blob_url`` points at the source PDF under the ``raw-dmer`` container.
+    ``driver_key`` may be null: Ingest supplies it only when Mercury returned a
+    driver object; otherwise Extraction resolves it (deferred — see the
+    di-processor spec).
     """
 
-    schema_version: str = EXTRACTED_DMER_SCHEMA_VERSION
-    document_id: str
-    mercury_case_id: str
-    sha256_hash: str
-    combined_result_uri: str
-    processed_at: datetime
+
+class ExtractedMessage(PipelineMessage):
+    """``dmer-extracted`` message — a document whose extraction is published.
+
+    ``blob_url`` points at the combined extraction JSON under the
+    ``extracted-dmer`` container; the document orchestrator reads it to start the
+    per-document durable orchestration.
+    """

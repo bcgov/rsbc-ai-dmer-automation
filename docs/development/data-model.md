@@ -47,10 +47,10 @@ document's current position in the pipeline.
 | `received_date` / `dps_date` | timestamptz | `dps_date` empty = "not yet triaged" (question I-9, confirmed reliable signal). Refreshed at decision time only. |
 | `queue` / `business_area` | text | DPS General / DPS Unknown, etc. |
 | `mercury_case_id` | text, nullable | Set when Mercury supplied a case. |
-| `driver_key` | uuid FK → `driver.driver_key`, nullable | Null until Mercury supplies a driver object or [Extraction](stages/02-extraction.md) resolves one from the page. |
+| `driver_key` | uuid FK → `driver.driver_key`, nullable | Null until Mercury supplies a driver object at Ingest. When Mercury supplies none it stays null — it is resolved by [Document Orchestration's Resolve Driver activity](stages/03-document-orchestration.md#activity-resolve-driver), not by Extraction. |
 | `raw_blob_url` | text | Set by Ingest once the source PDF lands in `raw-dmer`. |
 | `pipeline_status` | enum | Health/lifecycle state — see [Status modelling](#status-modelling). |
-| `current_stage` | enum | Position — see [Status modelling](#status-modelling). |
+| `current_stage` | enum | Position — see [Status modelling](#status-modelling). A stage that finishes sets the **next** stage (Ingest → `EXTRACT` with `DOWNLOADED`; Extraction → `NORMALIZE` with `EXTRACTED`). Status-only writes such as `MANUAL_REVIEW` leave it unchanged, so it still shows where the document stopped. |
 | `attempt_count` | int | Incremented on republish (sweeper) or stage retry. |
 | `correlation_id` | uuid | Generated once at ingest; constant for the document's life; propagate on every log line and queue message. |
 | `first_seen_at` / `updated_at` | timestamptz | `updated_at` is set on **every** write to this row, by every stage — it is what the reconciliation sweeper's stall-detection query scans. |
@@ -70,13 +70,16 @@ repeated in each stage doc.
 | `document_id` | uuid FK → `dmer_document.id` | |
 | `stage` | enum | `INGEST`, `EXTRACT`, `NORMALIZE`, `RULES`, `DECISION`, `POST` (see stage docs for exact value per stage). |
 | `status` | enum | `RUNNING`, `SUCCEEDED`, `FAILED`. |
-| `attempt_no` | int | |
+| `attempt_no` | int | Previous attempts for the same `(document_id, stage)` + 1, computed by the writer — **not** the queue message's `attempt` (Service Bus redelivery doesn't change it). |
 | `started_at` / `ended_at` | timestamptz | |
 | `output_blob_url` | text, nullable | The blob this attempt produced, if any. |
-| `model_version` | text, nullable | DI custom model version, GPT prompt/schema version, or rules version — whichever applies to the stage. |
-| `error_code` / `error_detail` | text, nullable | Set on `FAILED`. |
+| `model_version` | text, nullable | DI custom model version, GPT prompt/schema version, or rules version — whichever applies to the stage. Extraction writes `di=<custom model>;prompt=<prompt version>` (`prompt=unversioned` until prompt pinning is decided). |
+| `error_code` / `error_detail` | text, nullable | Set on `FAILED`. `error_code = ABANDONED` marks a run left `RUNNING` by a crash or lost lock, closed when the next attempt starts. Extraction writes a step-based failure code (see [Extraction §Failure codes](stages/02-extraction.md#failure-codes)) and a PII-safe `key=value` detail — exception type, HTTP status, circuit state — **never the exception message**, which can carry extracted PII/clinical values. |
 
 Index: `(document_id, stage, attempt_no DESC)` — the replay/timing query.
+
+Shared writer: `dmer_common.db.StageRunRepository` (`start` / `succeed` / `fail`). A stage writes a row
+only when it actually does its work — a replay that no-ops or only re-publishes writes none.
 
 ### `driver`
 
@@ -86,13 +89,15 @@ Mercury returns no driver object.
 | Column | Type | Notes |
 |---|---|---|
 | `driver_key` | uuid PK | Internal identifier. **Never put the licence number on a queue message** — use `driver_key` (security requirement, §9.2). |
-| `licence_number` | text, **UNIQUE** | Normalized: uppercase, punctuation stripped, before the uniqueness check. |
+| `licence_number` | text, **UNIQUE** | Canonical 8-digit form before the uniqueness check: BC licences are digits only, 7 or 8 long (8-digit since July 2023); separators stripped, 7-digit numbers zero-padded to 8, anything else invalid. One shared normalizer — `dmer_common.licence.normalize_licence` — for Ingest and Extraction. |
 | `mercury_driver_id` | text, nullable | |
 | `first_name` / `last_name` | text | |
 | `last_synced_at` | timestamptz | |
 
-`INSERT ... ON CONFLICT (licence_number) DO UPDATE` — written by both Ingest (when Mercury supplies
-a driver object) and Extraction (when a licence is read from the page and no row exists yet).
+`INSERT ... ON CONFLICT (licence_number) DO UPDATE` — written by Ingest (when Mercury supplies
+a driver object). Extraction does **not** write it; it records `dmer_extraction.licence_number_read`
+only. Creating a row from a page-read licence belongs to [Document Orchestration's Resolve Driver
+activity](stages/03-document-orchestration.md#activity-resolve-driver).
 
 ### `driver_evaluation`
 
@@ -103,7 +108,7 @@ The join unit — the row that makes "waiting on siblings" explicit and queryabl
 | `id` | uuid PK | |
 | `driver_key` | uuid FK → `driver.driver_key` | |
 | `status` | enum | `WAITING`, `STALE`, `READY`, `EVALUATING`, `DECIDED`, `POSTED` — see [Status modelling](#status-modelling). |
-| `expected_document_count` | int | Set during Extraction from the Mercury `GET by driver_licence` call; **re-verified** at decision time (question: a new document may have arrived mid-wait). |
+| `expected_document_count` | int | Set from the Mercury `GET by driver_licence` call — by [Document Orchestration's Resolve Driver activity](stages/03-document-orchestration.md#activity-resolve-driver), **not** by Extraction; **re-verified** at decision time (question: a new document may have arrived mid-wait). |
 | `completed_document_count` | int | Incremented by the rule-engine activity each time a sibling document reaches `RULES_APPLIED`. |
 | `last_mercury_check_at` | timestamptz | |
 | `evaluated_at` | timestamptz, nullable | |
@@ -120,7 +125,7 @@ not merely stored (the full extraction JSON lives in the `extracted-dmer` blob).
 | Column | Type | Notes |
 |---|---|---|
 | `document_id` | uuid PK, FK → `dmer_document.id` | |
-| `licence_number_read` | text, nullable | As read from the page (may disagree with Mercury's driver object). |
+| `licence_number_read` | text, nullable | As read from the page (may disagree with Mercury's driver object), in the same canonical 8-digit form as `driver.licence_number`. Null only when absent or not a valid 7/8-digit licence — model confidence does not gate it (it stays in the extraction blobs). |
 | `exam_date` | date, nullable | |
 | `physician_name` | text, nullable | |
 | `has_header` / `has_signature` / `is_cutoff` | bool | Three separate flags, deliberately not collapsed — Intake needs to know which half of the form is missing. |

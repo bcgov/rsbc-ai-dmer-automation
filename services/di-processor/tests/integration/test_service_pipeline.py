@@ -23,8 +23,8 @@ import fitz
 import pytest
 from di_processor.config import Settings
 from di_processor.main import build_application, run
-from dmer_common.db import DocumentRepository, DocumentStatus
-from dmer_common.db.documents import _validated_status
+from dmer_common.db import DmerDocumentRepository, PipelineStatus
+from dmer_common.db.dmer_document import _validated_status
 from dmer_common.doc_intelligence import DocumentIntelligenceClient
 from dmer_common.messaging import ServiceBusPublisher
 from dmer_common.openai_client import OpenAIClient
@@ -47,8 +47,8 @@ def _settings() -> Settings:
     return Settings(
         app_configuration_endpoint="https://appcfg.example",
         service_bus_namespace_fqdn="sb.example.servicebus.windows.net",
-        raw_dmer_queue="raw-dmer-queue",
-        extracted_dmer_queue="extracted-dmer-queue",
+        dmer_raw_queue="dmer-raw",
+        dmer_extracted_queue="dmer-extracted",
         postgres_host="pg.example",
         blob_account_url="https://acct.blob.core.windows.net",
         doc_intelligence_endpoint="https://di.example",
@@ -147,19 +147,8 @@ def _sb_body(message: Any) -> bytes:
     return b"".join(bytes(chunk) for chunk in body)
 
 
-class FakeAsyncEngine:
-    """Minimal async-engine emulation for DocumentRepository.
-
-    Backed by an in-memory dict but drives the repository's real transition
-    validation, standing in for the PostgreSQL boundary in this environment.
-    """
-
-    def __init__(self) -> None:
-        self.rows: dict[str, dict[str, Any]] = {}
-
-
-class InMemoryRepository(DocumentRepository):
-    """DocumentRepository over an in-memory store (PostgreSQL stand-in).
+class InMemoryRepository(DmerDocumentRepository):
+    """DmerDocumentRepository over an in-memory store (PostgreSQL stand-in).
 
     Reuses the repository's own ``_validated_status`` state-machine check so the
     same transition rules are exercised as against a live database.
@@ -167,36 +156,44 @@ class InMemoryRepository(DocumentRepository):
 
     def __init__(self) -> None:  # bypass AsyncEngine requirement
         self._rows: dict[str, dict[str, Any]] = {}
-        self.transitions: list[DocumentStatus] = []
+        self.transitions: list[PipelineStatus] = []
 
-    async def get_status(self, document_id: str) -> DocumentStatus | None:
+    async def get_status(self, document_id: str) -> PipelineStatus | None:
         row = self._rows.get(document_id)
-        return DocumentStatus(row["status"]) if row else None
+        return PipelineStatus(row["pipeline_status"]) if row else None
+
+    async def get_extracted_blob_url(self, document_id: str) -> str | None:
+        row = self._rows.get(document_id)
+        return row.get("extracted_blob_url") if row else None
 
     async def upsert_status(
         self,
         document_id: str,
         correlation_id: str,
-        status: DocumentStatus,
+        status: PipelineStatus,
         *,
-        initial_extraction_uri: str | None = None,
-        combined_extraction_uri: str | None = None,
-        failure_reason: str | None = None,
+        document_guid: str | None = None,
+        stage: Any = None,
+        extracted_blob_url: str | None = None,
     ) -> None:
         current = await self.get_status(document_id)
         target = _validated_status(current, status)
+        if current is None and not document_guid:
+            raise ValueError("document_guid is required on the initial insert")
+        if current is None and stage is None:
+            raise ValueError("stage is required on the initial insert")
         row = self._rows.setdefault(document_id, {})
         row.update(
-            document_id=document_id,
+            id=document_id,
             correlation_id=correlation_id,
-            status=target.value,
+            pipeline_status=target.value,
         )
-        if initial_extraction_uri is not None:
-            row["initial_extraction_uri"] = initial_extraction_uri
-        if combined_extraction_uri is not None:
-            row["combined_extraction_uri"] = combined_extraction_uri
-        if failure_reason is not None:
-            row["failure_reason"] = failure_reason
+        if stage is not None:
+            row["current_stage"] = stage.value
+        if document_guid is not None:
+            row["document_guid"] = document_guid
+        if extracted_blob_url is not None:
+            row["extracted_blob_url"] = extracted_blob_url
         self.transitions.append(target)
 
 
@@ -297,7 +294,54 @@ class FakeOpenAISdk:
         return _Resp()
 
 
-def _build_app(*, receiver, blob_service, repo, sender, fail_download=False):
+class InMemoryExtractionRepository:
+    """ExtractionRepository stand-in: keeps the latest row per document."""
+
+    def __init__(self) -> None:
+        self.rows: dict[str, Any] = {}
+
+    async def upsert(self, record: Any) -> None:
+        self.rows[record.document_id] = record
+
+
+class InMemoryStageRunRepository:
+    """StageRunRepository stand-in: keeps each run's final state."""
+
+    def __init__(self) -> None:
+        self.runs: list[dict[str, Any]] = []
+
+    async def start(self, document_id: str, stage: Any, *, model_version=None) -> int:
+        self.runs.append(
+            {
+                "document_id": document_id,
+                "stage": stage.value,
+                "status": "RUNNING",
+                "model_version": model_version,
+            }
+        )
+        return len(self.runs)
+
+    async def succeed(self, run_id: int, *, output_blob_url=None) -> None:
+        self.runs[run_id - 1].update(
+            status="SUCCEEDED", output_blob_url=output_blob_url
+        )
+
+    async def fail(self, run_id: int, *, error_code: str, error_detail=None) -> None:
+        self.runs[run_id - 1].update(
+            status="FAILED", error_code=error_code, error_detail=error_detail
+        )
+
+
+def _build_app(
+    *,
+    receiver,
+    blob_service,
+    repo,
+    sender,
+    fail_download=False,
+    extraction_repo=None,
+    stage_run_repo=None,
+):
     from di_processor.extraction.sanitize import load_field_keys
 
     settings = _settings()
@@ -328,22 +372,24 @@ def _build_app(*, receiver, blob_service, repo, sender, fail_download=False):
         di_ocr=di,
         openai=openai,
         repository=repo,
+        extraction_repository=extraction_repo or InMemoryExtractionRepository(),
+        stage_run_repository=stage_run_repo or InMemoryStageRunRepository(),
         publisher=ServiceBusPublisher(sender),
         receiver=receiver,
     )
 
 
-def _envelope(document_uri: str, **over) -> dict[str, Any]:
+def _envelope(blob_url: str, **over) -> dict[str, Any]:
     base = {
         "messageId": "m-1",
         "correlationId": "case-1",
         "schemaVersion": "1.0",
-        "sourceSystem": "mercury-webhook",
         "documentId": "doc-1",
-        "mercuryCaseId": "case-1",
-        "documentUri": document_uri,
-        "receivedAt": datetime(2026, 8, 5, tzinfo=UTC).isoformat(),
-        "payload": {},
+        "documentGuid": "123e4567-e89b-12d3-a456-426614174000",
+        "driverKey": None,
+        "blobUrl": blob_url,
+        "attempt": 1,
+        "enqueuedAt": datetime(2026, 8, 5, tzinfo=UTC).isoformat(),
     }
     base.update(over)
     return base
@@ -369,33 +415,34 @@ def test_end_to_end_consume_persist_publish():
     )
     run(app)
 
-    # status walked the full happy path to published
+    # current_stage handed on to the next stage
+    assert repo._rows["doc-1"]["current_stage"] == "NORMALIZE"
+
+    # pipeline_status walked the extraction slice to EXTRACTED
     assert repo.transitions == [
-        DocumentStatus.RECEIVED,
-        DocumentStatus.EXTRACTING,
-        DocumentStatus.SECTIONING,
-        DocumentStatus.COMBINING,
-        DocumentStatus.COMBINED,
-        DocumentStatus.PUBLISHED,
+        PipelineStatus.RECEIVED,
+        PipelineStatus.DOWNLOADED,
+        PipelineStatus.EXTRACTING,
+        PipelineStatus.EXTRACTED,
     ]
 
-    # artifacts persisted to both containers
-    containers = {c for (c, _p) in blob_service.store}
-    assert "extracted-dmer" in containers
-    assert "combined-extracted-dmer" in containers
+    # all extraction artifacts persisted under the single extracted-dmer
+    # container (the seeded source PDF lives in the separate `raw` input container)
+    output_containers = {c for (c, _p) in blob_service.store if c != "raw"}
+    assert output_containers == {"extracted-dmer"}
+    assert "combined-extracted-dmer" not in output_containers
     paths = {p for (_c, p) in blob_service.store}
     assert any(p.endswith("top_level.json") for p in paths)
     assert any(p.endswith("ocr.json") for p in paths)
     assert any(p.endswith("handwritten.json") for p in paths)
     assert any(p.endswith("combined.json") for p in paths)
 
-    # published exactly one v2 extracted-dmer message referencing the combined result
+    # published exactly one dmer-extracted message pointing at the combined result
     assert len(sender.sent) == 1
     body = json.loads(_sb_body(sender.sent[0]))
-    assert body["schemaVersion"] == "2.0"
     assert body["documentId"] == "doc-1"
-    assert body["combinedResultUri"].endswith("combined.json")
-    assert body["sha256Hash"]
+    assert body["documentGuid"] == "123e4567-e89b-12d3-a456-426614174000"
+    assert body["blobUrl"].endswith("combined.json")
 
     # source message completed (not dead-lettered)
     assert len(receiver.completed) == 1
@@ -417,16 +464,17 @@ def test_failure_path_dead_letters_and_records_failed():
     )
     run(app)
 
-    # failure recorded, nothing published, message dead-lettered
-    assert DocumentStatus.FAILED in repo.transitions
+    # failure routed to MANUAL_REVIEW, nothing published, message dead-lettered
+    assert PipelineStatus.MANUAL_REVIEW in repo.transitions
     assert sender.sent == []
     assert len(receiver.dead_lettered) == 1
     assert receiver.completed == []
 
 
-def test_idempotent_redelivery_is_noop():
-    """GIVEN a document already published WHEN redelivered THEN it no-ops and
-    the message is completed without republishing (Req 3.4)."""
+def test_redelivery_at_extracted_republishes_without_reprocessing():
+    """GIVEN a document persisted as EXTRACTED (crash before publish) WHEN
+    redelivered THEN the stored pointer is re-published, extraction is not
+    re-run, and the message is completed."""
     blob_service = FakeBlobService()
     doc_uri = blob_service.seed(
         "https://acct.blob.core.windows.net", "raw", "doc-1.pdf", _make_pdf()
@@ -434,11 +482,13 @@ def test_idempotent_redelivery_is_noop():
     receiver = FakeSbReceiver([_SbMessage(_envelope(doc_uri))])
     sender = FakeSbSender()
     repo = InMemoryRepository()
-    # Pre-seed the document as already published.
+    stored = "https://acct.blob.core.windows.net/extracted-dmer/doc-1/combined.json"
     repo._rows["doc-1"] = {
-        "document_id": "doc-1",
+        "id": "doc-1",
         "correlation_id": "case-1",
-        "status": DocumentStatus.PUBLISHED.value,
+        "document_guid": "123e4567-e89b-12d3-a456-426614174000",
+        "pipeline_status": PipelineStatus.EXTRACTED.value,
+        "extracted_blob_url": stored,
     }
 
     app = _build_app(
@@ -447,8 +497,64 @@ def test_idempotent_redelivery_is_noop():
     run(app)
 
     assert repo.transitions == []  # no new transitions written
-    assert sender.sent == []  # nothing republished
-    assert len(receiver.completed) == 1  # completed as a duplicate
+    assert {c for (c, _p) in blob_service.store} == {"raw"}  # nothing re-extracted
+    assert len(sender.sent) == 1
+    assert json.loads(_sb_body(sender.sent[0]))["blobUrl"] == stored
+    assert len(receiver.completed) == 1
+
+
+def test_redelivery_past_extraction_is_noop():
+    """GIVEN downstream already advanced the document WHEN redelivered THEN it
+    no-ops and the message is completed without republishing."""
+    blob_service = FakeBlobService()
+    doc_uri = blob_service.seed(
+        "https://acct.blob.core.windows.net", "raw", "doc-1.pdf", _make_pdf()
+    )
+    receiver = FakeSbReceiver([_SbMessage(_envelope(doc_uri))])
+    sender = FakeSbSender()
+    repo = InMemoryRepository()
+    repo._rows["doc-1"] = {
+        "id": "doc-1",
+        "correlation_id": "case-1",
+        "document_guid": "123e4567-e89b-12d3-a456-426614174000",
+        "pipeline_status": PipelineStatus.NORMALIZED.value,
+    }
+
+    app = _build_app(
+        receiver=receiver, blob_service=blob_service, repo=repo, sender=sender
+    )
+    run(app)
+
+    assert repo.transitions == []
+    assert sender.sent == []
+    assert len(receiver.completed) == 1
+
+
+def test_extraction_starts_from_ingest_owned_row():
+    """GIVEN Ingest already wrote the row at DOWNLOADED WHEN the service runs
+    THEN extraction continues from there (no RECEIVED re-insert) and publishes."""
+    blob_service = FakeBlobService()
+    doc_uri = blob_service.seed(
+        "https://acct.blob.core.windows.net", "raw", "doc-1.pdf", _make_pdf()
+    )
+    receiver = FakeSbReceiver([_SbMessage(_envelope(doc_uri))])
+    sender = FakeSbSender()
+    repo = InMemoryRepository()
+    repo._rows["doc-1"] = {
+        "id": "doc-1",
+        "correlation_id": "case-1",
+        "document_guid": "123e4567-e89b-12d3-a456-426614174000",
+        "pipeline_status": PipelineStatus.DOWNLOADED.value,
+    }
+
+    app = _build_app(
+        receiver=receiver, blob_service=blob_service, repo=repo, sender=sender
+    )
+    run(app)
+
+    assert repo.transitions == [PipelineStatus.EXTRACTING, PipelineStatus.EXTRACTED]
+    assert len(sender.sent) == 1
+    assert receiver.dead_lettered == []
 
 
 def test_document_uri_is_downloaded_via_storage_client():
@@ -475,3 +581,56 @@ def test_document_uri_is_downloaded_via_storage_client():
 
 if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(pytest.main([__file__, "-v"]))
+
+
+def test_stage_run_audit_trail_end_to_end():
+    """GIVEN a raw-dmer message WHEN the service runs THEN one EXTRACT stage run
+    is recorded SUCCEEDED with the model version and the combined blob URL."""
+    blob_service = FakeBlobService()
+    doc_uri = blob_service.seed(
+        "https://acct.blob.core.windows.net", "raw", "doc-1.pdf", _make_pdf()
+    )
+    receiver = FakeSbReceiver([_SbMessage(_envelope(doc_uri))])
+    sender = FakeSbSender()
+    stage_runs = InMemoryStageRunRepository()
+
+    app = _build_app(
+        receiver=receiver,
+        blob_service=blob_service,
+        repo=InMemoryRepository(),
+        sender=sender,
+        stage_run_repo=stage_runs,
+    )
+    run(app)
+
+    assert len(stage_runs.runs) == 1
+    run_row = stage_runs.runs[0]
+    assert run_row["stage"] == "EXTRACT"
+    assert run_row["status"] == "SUCCEEDED"
+    assert run_row["model_version"] == "di=rsbc-ocr-dmer-v9;prompt=v-test"
+    assert run_row["output_blob_url"] == json.loads(_sb_body(sender.sent[0]))["blobUrl"]
+
+
+def test_stage_run_failed_on_dead_letter_path():
+    """GIVEN the source document is missing WHEN the service runs THEN the stage
+    run is recorded FAILED with the error type."""
+    receiver = FakeSbReceiver(
+        [_SbMessage(_envelope("https://acct.blob.core.windows.net/raw/missing.pdf"))]
+    )
+    stage_runs = InMemoryStageRunRepository()
+    app = _build_app(
+        receiver=receiver,
+        blob_service=FakeBlobService(),
+        repo=InMemoryRepository(),
+        sender=FakeSbSender(),
+        stage_run_repo=stage_runs,
+    )
+    run(app)
+
+    assert [r["status"] for r in stage_runs.runs] == ["FAILED"]
+    assert stage_runs.runs[0]["error_code"] == "SOURCE_DOWNLOAD_FAILED"
+    assert stage_runs.runs[0]["error_detail"] == "error=KeyError"
+    # the same code is the Service Bus dead-letter reason
+    assert [reason for _msg, reason in receiver.dead_lettered] == [
+        "SOURCE_DOWNLOAD_FAILED"
+    ]

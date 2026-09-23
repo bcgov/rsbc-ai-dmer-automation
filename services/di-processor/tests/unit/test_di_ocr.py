@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from di_processor.extraction.di_ocr import di_lines, ocr_tiles, tiles_to_rows
 from di_processor.extraction.splitter import Tile
 from dmer_common.doc_intelligence import DIResult
@@ -137,3 +138,27 @@ def test_ocr_tiles_skips_failed_tile():
     ]
     assert "" in all_text  # failed tile produced no lines
     assert client.calls == 3
+
+
+def test_ocr_tiles_all_tiles_failed_is_ocr_failed():
+    # GIVEN every tile's OCR call fails
+    from di_processor.failures import FailureCode, PipelineFailure
+
+    class _AllFail:
+        def analyze(self, *_a, **_k):
+            raise RuntimeError("DI throttled")
+
+    # WHEN tiling THEN OCR_FAILED, counting the tiles (option a)
+    with pytest.raises(PipelineFailure) as info:
+        ocr_tiles(
+            _AllFail(), _tiles(3), page_number=1, page_width=800, page_height=1000
+        )
+    assert info.value.code is FailureCode.OCR_FAILED
+    assert "failed_tiles=3" in info.value.safe_detail
+    assert "tiles=3" in info.value.safe_detail
+
+
+def test_ocr_tiles_no_tiles_is_not_a_failure():
+    # GIVEN no tiles at all (nothing attempted) THEN not an OCR failure
+    result = ocr_tiles(_FakeClient(), [], page_number=1, page_width=10, page_height=10)
+    assert result["pages"][0]["rows"] == []

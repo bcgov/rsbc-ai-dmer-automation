@@ -56,4 +56,5 @@ def merge(
         processed_at=processed_at or datetime.now(UTC),
         fields=fields,
         uncertain_fields=list(handwritten.uncertain_fields),
+        cutoff=top_level.cutoff,
     )

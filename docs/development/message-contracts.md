@@ -50,7 +50,7 @@ One shape for all four queues — pointers only, never extracted/normalized cont
   "document_id":    "8f3c1b2a-...",
   "document_guid":  "123e4567-e89b-...",
   "driver_key":     "a91b77e4-...",
-  "blob_url":       "https://.../extracted-dmer/8f3c1b2a.json",
+  "blob_url":       "https://.../extracted-dmer/8f3c1b2a/combined.json",
   "correlation_id": "5d10...",
   "attempt":        1,
   "enqueued_at":    "2026-09-18T12:00:00Z"
@@ -61,7 +61,7 @@ One shape for all four queues — pointers only, never extracted/normalized cont
 |---|---|
 | `document_id` | Internal `dmer_document.id` (uuid) — not `document_guid`. Use this for every DB join and log line. |
 | `document_guid` | Mercury's identifier. Carried for traceability; **do not** use it as a business key downstream of Ingest (see `data-model.md#document_guid-is-not-a-content-key`). |
-| `driver_key` | Null until Extraction resolves it (or Mercury supplied it at Ingest). Required on `driver-decision`. |
+| `driver_key` | Set only when Mercury supplied it at Ingest; otherwise resolved by [Document Orchestration's Resolve Driver activity](stages/03-document-orchestration.md#activity-resolve-driver) before `driver-decision` is published; Extraction forwards it as received. Required on `driver-decision`. |
 | `blob_url` | Points at the artifact the *next* stage needs — `raw-dmer` for `dmer-ingest`→Ingest's own read, `extracted-dmer` for `dmer-extracted`, etc. Never an extraction/normalization payload inline. |
 | `attempt` | Incremented on republish (sweeper re-signal, DLQ Drain fallback requeue). |
 
@@ -90,7 +90,7 @@ See [Post-Processing](stages/08-post-processing.md) for how these rows are writt
 |---|---|
 | Delivery count exceeded | Handler throws/abandons/crashes, or a lock expires mid-processing (counts as a delivery) — redelivered until `MaxDeliveryCount` (5) is reached. |
 | Time-to-live expiry | Only when `EnableDeadLetteringOnMessageExpiration` is set (it is, on all four queues). |
-| Explicit dead-lettering | Handler calls `DeadLetterMessageAsync(reason, description)` — the only path that records *why*. Always prefer this for known-bad input. |
+| Explicit dead-lettering | Handler calls `DeadLetterMessageAsync(reason, description)` — the only path that records *why*. Always prefer this for known-bad input. The shared `dmer_common.messaging.ServiceBusConsumer` does this on any handler exception: `reason`/`description` come from the exception's `dead_letter_reason`/`safe_detail` attributes when present (e.g. extraction's failure codes), otherwise `HandlerError` and the exception type. It never logs or sends the exception message (PII risk). |
 
 Classify every failure explicitly:
 

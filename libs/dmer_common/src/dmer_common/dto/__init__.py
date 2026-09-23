@@ -1,19 +1,22 @@
-"""Shared Pydantic message/data-transfer objects (queue envelopes, document metadata,
-normalization results, rule decisions) — the single source of truth for schemas
-referenced in docs/contracts/queues/."""
+"""Shared Pydantic message/data-transfer objects (the single source of truth for
+the queue message shapes documented in docs/development/message-contracts.md).
+
+Under the revised architecture one envelope shape covers all four pipeline queues;
+``RawMessage`` (``dmer-raw``) and ``ExtractedMessage`` (``dmer-extracted``) are the
+two di-processor cares about."""
 
 from .envelope import Envelope
 from .messages import (
-    EXTRACTED_DMER_SCHEMA_VERSION,
-    RAW_DMER_SCHEMA_VERSION,
-    ExtractedDmerMessage,
-    RawDmerMessage,
+    PIPELINE_SCHEMA_VERSION,
+    ExtractedMessage,
+    PipelineMessage,
+    RawMessage,
 )
 
 __all__ = [
-    "EXTRACTED_DMER_SCHEMA_VERSION",
-    "RAW_DMER_SCHEMA_VERSION",
+    "PIPELINE_SCHEMA_VERSION",
     "Envelope",
-    "ExtractedDmerMessage",
-    "RawDmerMessage",
+    "ExtractedMessage",
+    "PipelineMessage",
+    "RawMessage",
 ]

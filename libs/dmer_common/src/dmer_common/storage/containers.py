@@ -1,12 +1,13 @@
-"""Blob container names used by the di-processor extraction stage.
+"""Blob container name for the di-processor extraction stage.
 
-Names are configurable via environment variables (sourced from App Configuration
-in Azure) so they can be changed without a code change; the defaults match the
-containers provisioned for di-processor (see ``.kiro/specs/di-processor/design.md``).
+Under the revised architecture (see ``docs/development/stages/02-extraction.md``)
+extraction writes to a **single** container, ``extracted-dmer``. All four
+per-document artifacts (top-level, OCR, handwritten, combined) live under this one
+container, namespaced by document id (see :mod:`dmer_common.storage.paths`).
 
-Environment variables:
-- ``EXTRACTED_DMER_CONTAINER``          (default ``extracted-dmer``)
-- ``COMBINED_EXTRACTED_DMER_CONTAINER`` (default ``combined-extracted-dmer``)
+The name is configurable via ``EXTRACTED_DMER_CONTAINER`` (sourced from App
+Configuration in Azure) so it can change without a code change; the default
+matches the provisioned container.
 """
 
 from __future__ import annotations
@@ -15,16 +16,8 @@ import os
 from typing import Final
 
 DEFAULT_EXTRACTED_DMER: Final = "extracted-dmer"
-DEFAULT_COMBINED_EXTRACTED_DMER: Final = "combined-extracted-dmer"
 
 
 def extracted_dmer() -> str:
-    """Container for per-stage extraction artifacts (top_level/ocr/handwritten)."""
+    """Container for all extraction artifacts (top_level/ocr/handwritten/combined)."""
     return os.getenv("EXTRACTED_DMER_CONTAINER", DEFAULT_EXTRACTED_DMER)
-
-
-def combined_extracted_dmer() -> str:
-    """Container for the final unified combined extraction JSON."""
-    return os.getenv(
-        "COMBINED_EXTRACTED_DMER_CONTAINER", DEFAULT_COMBINED_EXTRACTED_DMER
-    )

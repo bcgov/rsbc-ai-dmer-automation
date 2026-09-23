@@ -66,3 +66,35 @@ def test_extract_top_level_no_documents_returns_empty():
     client = _FakeClient(DIResult(content="", documents=[]))
     extraction = extract_top_level(client, "dmer-custom-v1", b"%PDF-fake")
     assert extraction.fields == {}
+    # no page layout -> cut-off undeterminable
+    assert extraction.cutoff.is_cutoff is None
+
+
+def test_extract_top_level_computes_cutoff_from_same_call():
+    # GIVEN a custom-model result whose page has the header but no signature band
+    def line(content, y):
+        return {"content": content, "polygon": [0, y, 1, y, 1, y + 0.1, 0, y + 0.1]}
+
+    result = DIResult(
+        content="",
+        pages=[
+            {
+                "height": 11.0,
+                "lines": [
+                    line("RoadSafetyBC", 0.4),
+                    line("DRIVER'S MEDICAL EXAMINATION", 0.6),
+                    line("E. RECOMMENDATION(S)", 10.0),
+                ],
+            }
+        ],
+        documents=[{"fields": {"dl_number": {"valueString": "1", "confidence": 1}}}],
+    )
+    client = _FakeClient(result)
+
+    # WHEN extracting top-level fields
+    extraction = extract_top_level(client, "dmer-custom-v1", b"%PDF-fake")
+
+    # THEN the flags come from that call's layout (no second DI call)
+    assert extraction.cutoff.has_header is True
+    assert extraction.cutoff.has_signature is False
+    assert extraction.cutoff.is_cutoff is True

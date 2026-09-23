@@ -11,7 +11,7 @@ import json
 from datetime import UTC, datetime
 
 import pytest
-from dmer_common.dto import ExtractedDmerMessage
+from dmer_common.dto import ExtractedMessage
 from dmer_common.messaging import (
     InMemoryIdempotencyStore,
     ServiceBusConsumer,
@@ -133,14 +133,14 @@ def test_publisher_serializes_envelope_and_sets_broker_ids():
         return {"body": body}
 
     publisher = ServiceBusPublisher(sender, message_factory=factory)
-    msg = ExtractedDmerMessage(
+    msg = ExtractedMessage(
         message_id="m-9",
         correlation_id="case-9",
         document_id="doc-1",
-        mercury_case_id="case-9",
-        sha256_hash="abc",
-        combined_result_uri="combined-extracted-dmer/doc-1/combined.json",
-        processed_at=datetime(2026, 8, 5, tzinfo=UTC),
+        document_guid="123e4567-e89b-12d3-a456-426614174000",
+        driver_key="a91b77e4-0000-0000-0000-000000000000",
+        blob_url="https://example/extracted-dmer/doc-1/combined.json",
+        enqueued_at=datetime(2026, 8, 5, tzinfo=UTC),
     )
     # WHEN published
     publisher.publish(msg)
@@ -148,6 +148,62 @@ def test_publisher_serializes_envelope_and_sets_broker_ids():
     assert len(sender.sent) == 1
     body = json.loads(captured["body"])
     assert body["messageId"] == "m-9"
-    assert body["combinedResultUri"].endswith("combined.json")
+    assert body["blobUrl"].endswith("combined.json")
     assert captured["message_id"] == "m-9"
     assert captured["correlation_id"] == "case-9"
+
+
+class _ClassifiedError(Exception):
+    """A handler error that supplies its own dead-letter reason + safe detail."""
+
+    dead_letter_reason = "SOURCE_DOWNLOAD_FAILED"
+    safe_detail = "error=ResourceNotFoundError; http_status=404"
+
+
+def test_consumer_uses_handler_supplied_dead_letter_reason():
+    # GIVEN a handler raising a classified error
+    receiver = FakeReceiver()
+    consumer = ServiceBusConsumer(receiver)
+
+    def handler(_env: dict) -> None:
+        raise _ClassifiedError("licence 01234567")
+
+    with pytest.raises(_ClassifiedError):
+        consumer.handle(_raw(), handler)
+
+    # THEN its code and safe detail become the dead-letter reason/description
+    _msg, reason, description = receiver.dead_lettered[0]
+    assert reason == "SOURCE_DOWNLOAD_FAILED"
+    assert description == "error=ResourceNotFoundError; http_status=404"
+
+
+def test_consumer_falls_back_to_handler_error_for_plain_exceptions():
+    receiver = FakeReceiver()
+    consumer = ServiceBusConsumer(receiver)
+
+    def handler(_env: dict) -> None:
+        raise ValueError("anything")
+
+    with pytest.raises(ValueError):
+        consumer.handle(_raw(), handler)
+
+    _msg, reason, description = receiver.dead_lettered[0]
+    assert (reason, description) == ("HandlerError", "ValueError")
+
+
+def test_consumer_never_logs_or_sends_the_exception_message(caplog):
+    # GIVEN a handler error whose message carries extracted values
+    receiver = FakeReceiver()
+    consumer = ServiceBusConsumer(receiver)
+
+    def handler(_env: dict) -> None:
+        raise RuntimeError("licence 01234567; dx: epilepsy")
+
+    with caplog.at_level("DEBUG"), pytest.raises(RuntimeError):
+        consumer.handle(_raw(), handler)
+
+    # THEN the text is in neither the log nor the dead-letter fields
+    assert "01234567" not in caplog.text
+    assert "epilepsy" not in caplog.text
+    _msg, reason, description = receiver.dead_lettered[0]
+    assert "01234567" not in f"{reason} {description}"
