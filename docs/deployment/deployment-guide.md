@@ -634,8 +634,8 @@ docker push <registry>.azurecr.io/di-processor:<tag>
   - Revisions: the latest revision is **Running** and healthy
     (liveness/readiness probes passing).
   - Identity: user assigned = `id-rsbc-dmer-di-processor-<env>-<instance>`.
-  - Secrets: `azure-openai-api-key` shows as a **Key Vault reference**, not
-    a value.
+  - Secrets blade — the OpenAI key entry is listed as a **Key Vault
+    reference** (never a stored value).
   - Scale: rule on `dmer-raw`; replica count 0 at idle outside PROD.
 - Log stream / Log Analytics: `di-processor started; consuming` on startup.
   A failed document logs `pipeline failed` with an `error_code`
