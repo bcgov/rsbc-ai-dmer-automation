@@ -78,10 +78,10 @@ resource server 'Microsoft.DBforPostgreSQL/flexibleServers@2024-08-01' = {
   properties: {
     version: postgresVersion
     administratorLogin: administratorLogin
-    administratorLoginPassword: administratorLoginPassword
+    administratorLoginPassword: administratorLoginPassword // pragma: allowlist secret
     authConfig: {
       activeDirectoryAuth: 'Enabled'
-      passwordAuth: 'Enabled'
+      passwordAuth: 'Enabled' // pragma: allowlist secret
     }
     storage: {
       storageSizeGB: storageSizeGB

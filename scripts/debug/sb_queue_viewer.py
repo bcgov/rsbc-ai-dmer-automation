@@ -149,7 +149,9 @@ class QueueViewer(tk.Tk):
 
         ttk.Label(top, text="Max messages:").pack(side="left")
         self.count_var = tk.StringVar(value="50")
-        ttk.Entry(top, textvariable=self.count_var, width=6).pack(side="left", padx=(4, 12))
+        ttk.Entry(top, textvariable=self.count_var, width=6).pack(
+            side="left", padx=(4, 12)
+        )
 
         self.peek_btn = ttk.Button(top, text="Peek", command=self._on_peek)
         self.peek_btn.pack(side="left")
@@ -208,7 +210,11 @@ class QueueViewer(tk.Tk):
         # selectmode="extended" -- ctrl/shift-click to select several rows
         # at once; Complete/Abandon/Dead-letter act on all of them together.
         self.tree = ttk.Treeview(
-            tree_frame, columns=columns, show="headings", height=14, selectmode="extended"
+            tree_frame,
+            columns=columns,
+            show="headings",
+            height=14,
+            selectmode="extended",
         )
         for col, width in zip(columns, widths):
             self.tree.heading(col, text=col)
@@ -264,9 +270,11 @@ class QueueViewer(tk.Tk):
             max_count = int(self.count_var.get() or "50")
             sub_queue = ServiceBusSubQueue.DEAD_LETTER if self.dlq_var.get() else None
 
-            with ServiceBusClient(NAMESPACE_FQDN, self._credential) as client:
-                with client.get_queue_receiver(queue_name, sub_queue=sub_queue) as receiver:
-                    messages = receiver.peek_messages(max_message_count=max_count)
+            with (
+                ServiceBusClient(NAMESPACE_FQDN, self._credential) as client,
+                client.get_queue_receiver(queue_name, sub_queue=sub_queue) as receiver,
+            ):
+                messages = receiver.peek_messages(max_message_count=max_count)
 
             self.after(0, self._populate, messages, "Peeked", False)
         except Exception as exc:  # noqa: BLE001 -- shown to the user, not swallowed
@@ -320,13 +328,15 @@ class QueueViewer(tk.Tk):
                 )
                 self.after(0, self._populate, messages, "Received (locked)", True)
             else:
-                with ServiceBusClient(NAMESPACE_FQDN, self._credential) as client:
-                    with client.get_queue_receiver(
+                with (
+                    ServiceBusClient(NAMESPACE_FQDN, self._credential) as client,
+                    client.get_queue_receiver(
                         queue_name, sub_queue=sub_queue, receive_mode=receive_mode
-                    ) as receiver:
-                        messages = receiver.receive_messages(
-                            max_message_count=max_count, max_wait_time=5
-                        )
+                    ) as receiver,
+                ):
+                    messages = receiver.receive_messages(
+                        max_message_count=max_count, max_wait_time=5
+                    )
                 self.after(0, self._populate, messages, "Received & deleted", False)
         except Exception as exc:  # noqa: BLE001 -- shown to the user, not swallowed
             self.after(0, self._show_error, exc)
@@ -336,13 +346,15 @@ class QueueViewer(tk.Tk):
         if self._receiver is not None:
             try:
                 self._receiver.close()
-            except Exception:
+            except Exception:  # noqa: BLE001, S110 -- best-effort close, we're
+                # discarding this receiver either way and there's no user-facing
+                # action to take on a close failure.
                 pass
             self._receiver = None
         if self._client is not None:
             try:
                 self._client.close()
-            except Exception:
+            except Exception:  # noqa: BLE001, S110 -- same reasoning as above.
                 pass
             self._client = None
         self._locked_rows.clear()
@@ -354,7 +366,7 @@ class QueueViewer(tk.Tk):
         for msg in messages:
             try:
                 body = json.loads(_extract_body_bytes(msg.body))
-            except Exception:
+            except (json.JSONDecodeError, UnicodeDecodeError):
                 body = {"_raw": _extract_body_bytes(msg.body).decode(errors="replace")}
             iid = str(msg.sequence_number)
             self.tree.insert(
@@ -428,7 +440,9 @@ class QueueViewer(tk.Tk):
         locked_iids = [iid for iid in selected if iid in self._locked_rows]
         if not locked_iids:
             return
-        if not messagebox.askyesno("Confirm", confirm_template.format(n=len(locked_iids))):
+        if not messagebox.askyesno(
+            "Confirm", confirm_template.format(n=len(locked_iids))
+        ):
             return
         self._set_controls_state("disabled")
         self.complete_btn.config(state="disabled")
@@ -437,7 +451,9 @@ class QueueViewer(tk.Tk):
         self.status_var.set(f"{verb}...")
         msgs = [(iid, self._locked_rows[iid]) for iid in locked_iids]
         threading.Thread(
-            target=self._act_worker, args=(receiver_method_name, verb, msgs), daemon=True
+            target=self._act_worker,
+            args=(receiver_method_name, verb, msgs),
+            daemon=True,
         ).start()
 
     def _act_worker(self, receiver_method_name, verb, msgs):
@@ -462,7 +478,9 @@ class QueueViewer(tk.Tk):
                 self.tree.delete(iid)
         self.raw_text.delete("1.0", "end")
         if errors:
-            self.status_var.set(f"{verb} {len(succeeded)} message(s); {len(errors)} failed.")
+            self.status_var.set(
+                f"{verb} {len(succeeded)} message(s); {len(errors)} failed."
+            )
             messagebox.showerror(
                 "Some operations failed",
                 "\n".join(f"seq {iid}: {exc}" for iid, exc in errors),

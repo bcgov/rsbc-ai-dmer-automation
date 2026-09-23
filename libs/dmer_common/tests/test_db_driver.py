@@ -10,6 +10,7 @@ def test_normalize_uppercases():
 
 
 def test_normalize_strips_punctuation_and_whitespace():
+    # pragma: allowlist nextline secret -- test fixture, not a real credential
     assert normalize_licence_number("abc-123 456") == "ABC123456"
 
 

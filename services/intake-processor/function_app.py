@@ -48,11 +48,6 @@ import azure.functions as func
 from azure.identity import DefaultAzureCredential
 from azure.servicebus import ServiceBusClient, ServiceBusMessage
 from azure.storage.blob import BlobServiceClient
-from sqlalchemy import text
-from sqlalchemy.engine import URL
-from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
-from sqlalchemy.pool import NullPool
-
 from dmer_common.db import (
     DmerDocumentRepository,
     DmerStageRunRepository,
@@ -61,6 +56,10 @@ from dmer_common.db import (
 )
 from dmer_common.mercury_client import MercuryClient
 from dmer_common.telemetry import document_id_context, get_logger
+from sqlalchemy import text
+from sqlalchemy.engine import URL
+from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy.pool import NullPool
 
 app = func.FunctionApp()
 
@@ -149,14 +148,13 @@ def _mercury_auth_headers() -> dict[str, str]:
 def _download_source_pdf(document_url: str) -> bytes:
     """Blocking download of the source PDF from Mercury's pre-signed URL."""
     request = urllib.request.Request(document_url, method="GET")
-    try:
-        with urllib.request.urlopen(request, timeout=60) as response:  # noqa: S310
-            return response.read()
-    except urllib.error.HTTPError:
-        raise
+    with urllib.request.urlopen(request, timeout=60) as response:
+        return response.read()
 
 
-def _upload_raw_dmer_blob(content: bytes, document_guid: str, container_name: str) -> str:
+def _upload_raw_dmer_blob(
+    content: bytes, document_guid: str, container_name: str
+) -> str:
     """Uploads to the deterministic path raw-dmer/{yyyy}/{MM}/{document_guid}.pdf
     (see 01-ingest.md) -- a retry overwrites the same blob rather than
     creating a second copy. Returns the blob's full HTTPS URL.
@@ -196,9 +194,7 @@ def _publish_message(queue_name: str, message_id: str, body: dict) -> None:
     with ServiceBusClient(
         fully_qualified_namespace, DefaultAzureCredential()
     ) as client, client.get_queue_sender(queue_name) as sender:
-        sender.send_messages(
-            ServiceBusMessage(json.dumps(body), message_id=message_id)
-        )
+        sender.send_messages(ServiceBusMessage(json.dumps(body), message_id=message_id))
 
 
 def _envelope(
@@ -424,8 +420,8 @@ async def dmer_ingest(msg: func.ServiceBusMessage) -> None:
             # must not re-publish (01-ingest.md).
             if row.pipeline_status not in ("RECEIVED",):
                 _log.info(
-                    "dmer_ingest: already past DOWNLOADED (pipeline_status=%s); "
-                    "no-op" % row.pipeline_status
+                    "dmer_ingest: already past DOWNLOADED; no-op",
+                    extra={"pipeline_status": row.pipeline_status},
                 )
                 return
             if not row.document_url:
@@ -434,7 +430,9 @@ async def dmer_ingest(msg: func.ServiceBusMessage) -> None:
 
             now = datetime.now(UTC)
             run_id = await stage_run_repo.start(
-                document_id=document_id, stage="INGEST", attempt_no=row.attempt_count + 1,
+                document_id=document_id,
+                stage="INGEST",
+                attempt_no=row.attempt_count + 1,
                 started_at=now,
             )
 
@@ -463,7 +461,9 @@ async def dmer_ingest(msg: func.ServiceBusMessage) -> None:
                 await stage_run_repo.succeed(
                     run_id, ended_at=datetime.now(UTC), output_blob_url=raw_blob_url
                 )
-                _log.info("dmer_ingest: succeeded", extra={"raw_blob_url": raw_blob_url})
+                _log.info(
+                    "dmer_ingest: succeeded", extra={"raw_blob_url": raw_blob_url}
+                )
             except Exception as exc:
                 await stage_run_repo.fail(
                     run_id,
@@ -485,7 +485,9 @@ async def dmer_ingest(msg: func.ServiceBusMessage) -> None:
 # ---------------------------------------------------------------------------
 
 
-@app.route(route="mercury/webhook", methods=["POST"], auth_level=func.AuthLevel.FUNCTION)
+@app.route(
+    route="mercury/webhook", methods=["POST"], auth_level=func.AuthLevel.FUNCTION
+)
 def dmer_webhook(req: func.HttpRequest) -> func.HttpResponse:
     """Scaffold only -- see module docstring. Mercury has no event source to
     call this yet, so it deliberately does nothing but report that.

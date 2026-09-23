@@ -11,7 +11,6 @@ import json
 import logging
 
 import pytest
-
 from dmer_common import mercury_client as client_module
 from dmer_common.config import MercurySettings
 from dmer_common.mercury_client import MercuryApiError, MercuryClient
