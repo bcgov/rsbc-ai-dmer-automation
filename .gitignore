@@ -9,6 +9,8 @@ venv/
 .ruff_cache/
 coverage.xml
 htmlcov/
+.coverage
+.coverage.*
 
 # Azure Functions
 local.settings.json
@@ -33,6 +35,9 @@ infrastructure/bicep/*.json
 # Build artifacts
 dist/
 build/
+
+# Local commit-message drafts (git commit -F commit-msg.txt)
+/commit-msg.txt
 
 # Temporary POC staging (di-processor) - being ported into services/di-processor + libs/dmer_common
 services/diocr-poc/
