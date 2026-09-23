@@ -34,3 +34,21 @@
 Using a topic (rather than a direct call from the orchestrator) lets `post-processing` and
 `audit-service` — and any future subscriber, e.g. a notification service — consume the same
 lifecycle event independently.
+
+## Failed-event semantics (aligns with the categorized-failure model)
+
+Even though this topic is superseded, if it is ever revived its `failed` event must respect the same
+safety rule the revised [DLQ Drain](../../development/stages/10-dlq-drain.md#failure-categorization-the-first-thing-the-drain-does)
+enforces: **a `failed` event is a notification, not a decision.** Specifically:
+
+- A `failed` event carries `decision: null`. It must **never** be interpreted by any subscriber as a
+  business outcome (e.g. it does not mean the DMER is `IN`).
+- Add a `failureCategory` field (`PERMANENT_BUSINESS | TRANSIENT | PROCESSING | UNKNOWN`) and use
+  `reasonCodes` for the stable reason codes defined in
+  [DLQ Drain §Reason codes](../../development/stages/10-dlq-drain.md#reason-codes), so a subscriber
+  can distinguish a permanent-business failure from a transient/infrastructure one without parsing
+  free text.
+- Only the DLQ Drain (for a `PERMANENT_BUSINESS` failure, under the explicit business rule) may turn
+  a failure into a fallback `IN` decision. No subscriber to this topic may synthesize a business
+  decision from a `failed` event — doing so would let a transient fault masquerade as a considered
+  outcome, the exact failure the revised design prevents.
