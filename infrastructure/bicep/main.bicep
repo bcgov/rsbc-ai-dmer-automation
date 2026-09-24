@@ -179,19 +179,16 @@ var storageAccountNameValue = storageAccountName(environment, location, instance
 var diProcessorIdentityName = resourceName('id', 'di-processor', environment, instance)
 var serviceBusNamespaceName = resourceName('sb', 'shared', environment, instance)
 var postgresServerName = resourceName('psql', 'shared', environment, instance)
-var extractedDmerQueueName = 'extracted-dmer-queue'
-// Revised architecture (docs/development/message-contracts.md) -- the
-// Ingest stage's two queues. extracted-dmer-queue (original architecture)
-// stays live for di-processor, which still produces to it and hasn't been
-// rebuilt for the revised architecture yet. raw-dmer-queue (the original
-// architecture's other queue, intake-processor's old output) was removed --
-// intake-processor now publishes to dmer-raw instead; di-processor's own
-// consumer still reads raw-dmer-queue by name in its current code, so it
-// needs migrating to dmer-raw separately (not done here). dmer-extracted
-// and driver-decision belong to later stages not built yet -- not declared
-// here until they are.
+// Revised architecture queues (docs/development/message-contracts.md):
+// dmer-ingest and dmer-raw (Ingest stage), dmer-extracted (di-processor's
+// output). The original architecture's raw-dmer-queue and
+// extracted-dmer-queue are retired: intake-processor publishes to dmer-raw,
+// and di-processor consumes dmer-raw and publishes to dmer-extracted.
+// driver-decision belongs to a later stage not built yet -- not declared
+// here until it is.
 var dmerIngestQueueName = 'dmer-ingest'
 var dmerRawQueueName = 'dmer-raw'
+var dmerExtractedQueueName = 'dmer-extracted'
 var diProcessorContainerAppName = resourceName('ca', 'di-processor', environment, instance)
 var deployDiProcessorContainerApp = !empty(containerAppsEnvironmentId)
 
@@ -392,16 +389,13 @@ module diProcessorContainerApp 'modules/compute/container-app.bicep' = if (deplo
 // ---------------------------------------------------------------------------
 // 6. Service Bus
 //
-// One namespace, three queues so far: extracted-dmer-queue
-// (docs/contracts/queues/*.md, original architecture — still live for
-// di-processor, not yet rebuilt) and dmer-ingest/dmer-raw
-// (docs/development/message-contracts.md, revised architecture — the
-// Ingest stage). raw-dmer-queue (the original architecture's other queue)
-// was removed once intake-processor's own rebuild stopped publishing to it
-// — see the note above dmerIngestQueueName's declaration; di-processor's
-// consumer code still needs migrating off it separately. dmer-extracted
-// and driver-decision (the revised architecture's remaining two queues)
-// aren't declared yet — later stages, not built. No topics: PaddleOCR isn't
+// One namespace, three queues so far, all from the revised architecture
+// (docs/development/message-contracts.md): dmer-ingest and dmer-raw (the
+// Ingest stage) and dmer-extracted (di-processor's output). The original
+// architecture's raw-dmer-queue and extracted-dmer-queue are retired — see
+// the note above dmerIngestQueueName's declaration. driver-decision (the
+// revised architecture's remaining queue) isn't declared yet — a later
+// stage, not built. No topics: PaddleOCR isn't
 // a Service Bus consumer (it's a separately-deployed Container App,
 // `paddleocr-gpu-app` in this same resource group, called directly over
 // HTTP by di-processor rather than via pub/sub).
@@ -431,15 +425,17 @@ module serviceBusPrivateEndpoint 'modules/networking/private-endpoint.bicep' = {
   }
 }
 
-module extractedDmerQueue 'modules/servicebus/queue.bicep' = {
-  name: '${deployment().name}-sb-extracted-dmer-queue'
+module dmerExtractedQueue 'modules/servicebus/queue.bicep' = {
+  name: '${deployment().name}-sb-dmer-extracted-queue'
   params: {
     namespaceName: serviceBusNamespace.outputs.name
-    name: extractedDmerQueueName
+    name: dmerExtractedQueueName
     maxDeliveryCount: 5
     lockDuration: 'PT5M'
-    // No duplicate-detection window in extracted-dmer-queue.md's contract —
-    // left disabled rather than assuming a value the contract doesn't specify.
+    // message-contracts.md specifies only MaxDeliveryCount 5 for
+    // dmer-extracted — no duplicate-detection window, so it's left disabled
+    // rather than assuming a value. (di-processor's message_id is
+    // deterministic per document, so enabling one later would be effective.)
   }
 }
 
@@ -468,7 +464,7 @@ module dmerRawQueue 'modules/servicebus/queue.bicep' = {
     // to configure here for it.
     lockDuration: 'PT5M'
     // No duplicate-detection window specified for dmer-raw in
-    // message-contracts.md -- left disabled, same reasoning as extracted-dmer-queue.
+    // message-contracts.md -- left disabled, same reasoning as dmer-extracted.
   }
 }
 
@@ -524,23 +520,37 @@ module postgresPrivateEndpoint 'modules/networking/private-endpoint.bicep' = {
 // 8. Service Bus RBAC role assignments
 // ---------------------------------------------------------------------------
 var serviceBusDataSenderRoleId = '69a216fc-b8fb-44d8-bc22-1f3c2cd27a39'
+var serviceBusDataReceiverRoleId = '4f6d3b9b-027b-4f4c-9142-0e5a2a2247e0'
 
-resource extractedDmerQueueExisting 'Microsoft.ServiceBus/namespaces/queues@2024-01-01' existing = {
-  name: '${serviceBusNamespaceName}/${extractedDmerQueueName}'
+resource dmerRawQueueExisting 'Microsoft.ServiceBus/namespaces/queues@2024-01-01' existing = {
+  name: '${serviceBusNamespaceName}/${dmerRawQueueName}'
   dependsOn: [
-    extractedDmerQueue
+    dmerRawQueue
   ]
 }
 
-// di-processor's raw-dmer-queue receiver grant was removed along with the
-// queue itself -- its consumer code still reads that queue name today, so
-// it will fail to open a receiver until it's migrated to dmer-raw (not done
-// here; see the comment above dmerIngestQueueName's declaration).
+resource dmerExtractedQueueExisting 'Microsoft.ServiceBus/namespaces/queues@2024-01-01' existing = {
+  name: '${serviceBusNamespaceName}/${dmerExtractedQueueName}'
+  dependsOn: [
+    dmerExtractedQueue
+  ]
+}
 
-@description('Lets id-rsbc-dmer-di-processor publish its result to extracted-dmer-queue.')
-resource diProcessorExtractedDmerSender 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(extractedDmerQueueExisting.id, diProcessorIdentityName, serviceBusDataSenderRoleId)
-  scope: extractedDmerQueueExisting
+@description('Lets id-rsbc-dmer-di-processor consume documents awaiting extraction from dmer-raw (queue-scoped).')
+resource diProcessorDmerRawReceiver 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(dmerRawQueueExisting.id, diProcessorIdentityName, serviceBusDataReceiverRoleId)
+  scope: dmerRawQueueExisting
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', serviceBusDataReceiverRoleId)
+    principalId: diProcessorIdentity.outputs.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+@description('Lets id-rsbc-dmer-di-processor publish its result to dmer-extracted (queue-scoped).')
+resource diProcessorDmerExtractedSender 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(dmerExtractedQueueExisting.id, diProcessorIdentityName, serviceBusDataSenderRoleId)
+  scope: dmerExtractedQueueExisting
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', serviceBusDataSenderRoleId)
     principalId: diProcessorIdentity.outputs.principalId
@@ -564,7 +574,7 @@ output storageBlobEndpoint string = storage.outputs.blobEndpoint
 output diProcessorManagedIdentityClientId string = diProcessorIdentity.outputs.clientId
 output serviceBusNamespaceName string = serviceBusNamespace.outputs.name
 output serviceBusEndpoint string = serviceBusNamespace.outputs.serviceBusEndpoint
-output extractedDmerQueueName string = extractedDmerQueue.outputs.name
+output dmerExtractedQueueName string = dmerExtractedQueue.outputs.name
 output dmerIngestQueueName string = dmerIngestQueue.outputs.name
 output dmerRawQueueName string = dmerRawQueue.outputs.name
 output postgresServerName string = postgresServer.outputs.name

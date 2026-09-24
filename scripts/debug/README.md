@@ -7,7 +7,7 @@ code, and not exercised by any service's own build/test/deploy pipeline —
 these are ops/debug tooling, not application code.
 
 - `sb_queue_viewer.py` -- desktop GUI for peeking/receiving Service Bus
-  queue messages (`raw-dmer-queue`, `extracted-dmer-queue`) on the private,
+  queue messages (`dmer-ingest`, `dmer-raw`, `dmer-extracted`) on the private,
   publicNetworkAccess=Disabled namespace, since the Azure Portal's own
   Service Bus Explorer refuses to operate against it at all regardless of
   network path. See the script's own docstring for its Peek vs. Receive
