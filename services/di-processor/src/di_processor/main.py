@@ -21,7 +21,12 @@ from dmer_common.db import (
     StageRunRepository,
 )
 from dmer_common.doc_intelligence import DocumentIntelligenceClient
-from dmer_common.messaging import ServiceBusConsumer, ServiceBusPublisher
+from dmer_common.messaging import (
+    IdempotencyStore,
+    PostgresIdempotencyStore,
+    ServiceBusConsumer,
+    ServiceBusPublisher,
+)
 from dmer_common.openai_client import OpenAIClient
 from dmer_common.storage import BlobClient
 from dmer_common.telemetry import get_logger
@@ -57,6 +62,7 @@ def build_application(
     stage_run_repository: StageRunRepository,
     publisher: ServiceBusPublisher,
     receiver: Any,
+    idempotency_store: IdempotencyStore,
 ) -> Application:
     """Assemble the pipeline and consumer from pre-built clients.
 
@@ -78,7 +84,9 @@ def build_application(
         publisher=publisher,
     )
     consumer = ServiceBusConsumer(
-        receiver, idempotency_scope=idempotency_scope(settings.dmer_raw_queue)
+        receiver,
+        idempotency_scope=idempotency_scope(settings.dmer_raw_queue),
+        idempotency_store=idempotency_store,
     )
     return Application(
         settings=settings,
@@ -129,6 +137,7 @@ def main() -> None:  # pragma: no cover - thin production wiring
     from azure.identity import DefaultAzureCredential
     from azure.servicebus import ServiceBusClient
     from sqlalchemy.ext.asyncio import create_async_engine
+    from sqlalchemy.pool import NullPool
 
     settings = load_settings()
     credential = DefaultAzureCredential()
@@ -137,8 +146,12 @@ def main() -> None:  # pragma: no cover - thin production wiring
     receiver = sb_client.get_queue_receiver(settings.dmer_raw_queue)
     sender = sb_client.get_queue_sender(settings.dmer_extracted_queue)
 
+    # NullPool: each message runs in its own event loop (asyncio.run), and pooled
+    # asyncpg connections are bound to the loop that created them — reusing one
+    # from the next message fails. A fresh connection per operation avoids that
+    # (and suits per-connection Managed Identity tokens, still to be added).
     engine = create_async_engine(
-        f"postgresql+asyncpg://{settings.postgres_host}/postgres"
+        f"postgresql+asyncpg://{settings.postgres_host}/postgres", poolclass=NullPool
     )
 
     app = build_application(
@@ -156,6 +169,7 @@ def main() -> None:  # pragma: no cover - thin production wiring
         stage_run_repository=StageRunRepository(engine),
         publisher=ServiceBusPublisher(sender),
         receiver=receiver,
+        idempotency_store=PostgresIdempotencyStore(engine),
     )
     run(app)
 

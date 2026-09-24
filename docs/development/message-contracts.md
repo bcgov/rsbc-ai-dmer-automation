@@ -86,6 +86,57 @@ because it's the other message-shaped contract in the system:
 See [Post-Processing](stages/08-post-processing.md) for how these rows are written and
 `azure-service-bus.md`/`reliability-components.md` for how they're drained.
 
+## Message idempotency (consumer side)
+
+Every consumer uses `dmer_common.messaging.ServiceBusConsumer` with a **durable** idempotency store
+(`PostgresIdempotencyStore`, table [`message_idempotency`](data-model.md#message_idempotency)).
+There is no in-memory default: `InMemoryIdempotencyStore` exists for unit tests only, because it
+forgets everything on restart and is invisible to other replicas.
+
+The decision to run a handler is **one atomic claim**, never `is_processed()` → handler →
+`mark_processed()` (which lets two workers both see "not processed" and both run):
+
+1. **Claim** — `INSERT ... ON CONFLICT (scope, message_id) DO UPDATE ... WHERE status =
+   'PROCESSING' AND lease_expires_at < now()`. The primary key `(scope, message_id)` guarantees
+   exactly one worker gets the claim (a fresh one, or a takeover of an expired one).
+2. **Only the claimer runs the handler.**
+3. **Success** → the claim becomes `COMPLETED` (`processed_at` set), then the message is completed.
+   A message is never marked completed before its handler succeeds.
+4. **Failure** → the claim is released (deleted), then the message is dead-lettered, so it stays
+   eligible for retry / redrive.
+
+| Claim outcome | Consumer action |
+|---|---|
+| `CLAIMED` | Run the handler (then complete, or release + dead-letter) |
+| `DUPLICATE` — already `COMPLETED` | Complete the message without running the handler |
+| `IN_PROGRESS` — another worker holds a live claim | **Abandon** the message so Service Bus redelivers it later. Never complete it: if that worker has crashed, completing would lose the message |
+| The claim itself fails (store unavailable) | Leave the message unsettled; its lock expires and it is redelivered |
+
+Only the claim's holder can complete or release it (a per-claim `claim_token`), so a worker whose
+claim was taken over can't overwrite the new holder. `scope` names the consumer (e.g.
+`di-processor/dmer-raw`), so one consumer's completed ID never suppresses another's.
+
+**Lease:** 5 minutes by default, matching the `dmer-raw` lock duration — by the time Service Bus
+redelivers after a lost lock, a crashed worker's claim is also takeable. Lease times use the
+database clock.
+
+Behaviour under failure:
+
+| Situation | Outcome |
+|---|---|
+| Crash before the handler (claim taken) | The claim stays `PROCESSING` until its lease expires; the redelivery then takes it over and runs the handler |
+| Crash during the handler | Same. Partial work is safe to redo (status compare-and-set, overwritable blob paths, deterministic outbound message IDs) |
+| Crash after the handler, before the claim is marked `COMPLETED` | Reprocessed after the lease expires; the handler's own idempotency makes the rerun a no-op or a re-publish of the **same** event ID |
+| Crash after `COMPLETED`, before the message is completed | The redelivery sees `DUPLICATE` and completes it without running the handler |
+| Duplicate Service Bus delivery | `DUPLICATE` — suppressed durably, across restarts and replicas |
+| Two replicas receive the same message | Only after a lock expiry; exactly one claims it, the other abandons it |
+| A long run outlives its lease (no lock renewal yet) | A second worker can take the claim over and run concurrently; the status compare-and-set lets exactly one finish, at the cost of repeated DI/LLM calls. Renewing the lease with the lock would remove this |
+
+**Guarantee:** at-least-once handling with **effectively-once side effects** where the handler is
+idempotent. This is **not** exactly-once: a handler can still run twice in the rows above, so
+every handler must stay idempotent. The store makes duplicate runs rare and suppresses every
+duplicate delivery of a completed message.
+
 ## Dead-letter handling
 
 | Cause | How it happens |

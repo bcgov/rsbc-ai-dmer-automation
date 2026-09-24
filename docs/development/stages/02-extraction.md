@@ -194,6 +194,12 @@ Service Bus redelivery running alongside the original — can therefore never mo
 backwards or have one's failure (`MANUAL_REVIEW`) overwrite the other's success; the loser gets
 `StaleStatusError` and stops. `EXTRACTING -> EXTRACTING` re-entry is still allowed.
 
+Message-level idempotency is the consumer's durable claim in `message_idempotency` (scope
+`di-processor/dmer-raw`) — see
+[message-contracts.md §Message idempotency](../message-contracts.md#message-idempotency-consumer-side).
+It suppresses duplicate deliveries across restarts and replicas but is not exactly-once, so the
+pipeline's own guards below still apply.
+
 Replay guard on `pipeline_status >= EXTRACTED` (step 1). Re-running extraction for an already
 `EXTRACTED` document (e.g. a redelivered message after a lock-renewal failure) must not create a
 duplicate `dmer_extraction` row — use `document_id` as the natural upsert key on `dmer_extraction`.

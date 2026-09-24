@@ -235,6 +235,27 @@ Where the poller got to, per source (`BACKLOG` or `REALTIME`).
 | `last_received_date` | timestamptz | |
 | `last_run_at` | timestamptz | |
 
+### `message_idempotency`
+
+Durable consumer-side message idempotency (`dmer_common.messaging.PostgresIdempotencyStore`). One
+row per consumer per message. Semantics and crash behaviour:
+[message-contracts.md §Message idempotency](message-contracts.md#message-idempotency-consumer-side).
+
+| Column | Type | Notes |
+|---|---|---|
+| `scope` | text | The consumer, e.g. `di-processor/dmer-raw`. |
+| `message_id` | text | Service Bus `messageId`. |
+| `status` | text | `PROCESSING` (claimed) or `COMPLETED`. |
+| `claim_token` | text | Random per claim; only its holder may complete or release it. |
+| `claimed_at` / `lease_expires_at` | timestamptz | A `PROCESSING` claim past `lease_expires_at` may be taken over. |
+| `processed_at` | timestamptz, nullable | Set when `COMPLETED`. |
+| `attempts` | int | Number of claims, for diagnostics. |
+
+**Primary key `(scope, message_id)`** — the uniqueness that makes the claim atomic. Rows are never
+updated to `COMPLETED` before the handler succeeds; a failed handler deletes its claim. No
+retention/cleanup job exists yet: completed rows accumulate (one per message per consumer) — add a
+purge older than the Service Bus duplicate/replay horizon when the migration tool is chosen.
+
 ## Status modelling
 
 Two orthogonal fields on `dmer_document`, not one 20-value enum — `current_stage` says *where* a

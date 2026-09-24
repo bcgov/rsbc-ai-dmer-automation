@@ -51,9 +51,9 @@ def make_consumer(
     """Build the shared consumer plus the pipeline-bound handler.
 
     ``receiver`` is an Azure ``ServiceBusReceiver`` for ``queue``; ``kwargs``
-    are forwarded to :class:`ServiceBusConsumer` (e.g. a durable
-    ``idempotency_store``). Returns the consumer and the handler to pass to
-    :meth:`ServiceBusConsumer.handle` per message.
+    are forwarded to :class:`ServiceBusConsumer` and must include the durable
+    ``idempotency_store`` (it has no default). Returns the consumer and the
+    handler to pass to :meth:`ServiceBusConsumer.handle` per message.
     """
     consumer = ServiceBusConsumer(
         receiver, idempotency_scope=idempotency_scope(queue), **kwargs

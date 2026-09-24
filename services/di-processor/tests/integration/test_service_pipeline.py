@@ -26,7 +26,7 @@ from di_processor.main import build_application, run
 from dmer_common.db import DmerDocumentRepository, PipelineStatus
 from dmer_common.db.dmer_document import StaleStatusError, _validated_status
 from dmer_common.doc_intelligence import DocumentIntelligenceClient
-from dmer_common.messaging import ServiceBusPublisher
+from dmer_common.messaging import InMemoryIdempotencyStore, ServiceBusPublisher
 from dmer_common.openai_client import OpenAIClient
 from dmer_common.storage import BlobClient
 
@@ -107,12 +107,16 @@ class FakeSbReceiver:
         self._messages = messages
         self.completed: list[Any] = []
         self.dead_lettered: list[tuple[Any, str | None]] = []
+        self.abandoned: list[Any] = []
 
     def __iter__(self):
         return iter(self._messages)
 
     def complete_message(self, message: Any) -> None:
         self.completed.append(message)
+
+    def abandon_message(self, message: Any) -> None:
+        self.abandoned.append(message)
 
     def dead_letter_message(
         self, message: Any, *, reason=None, error_description=None
@@ -344,6 +348,7 @@ def _build_app(
     fail_download=False,
     extraction_repo=None,
     stage_run_repo=None,
+    idempotency_store=None,
 ):
     from di_processor.extraction.sanitize import load_field_keys
 
@@ -377,6 +382,7 @@ def _build_app(
         repository=repo,
         extraction_repository=extraction_repo or InMemoryExtractionRepository(),
         stage_run_repository=stage_run_repo or InMemoryStageRunRepository(),
+        idempotency_store=idempotency_store or InMemoryIdempotencyStore(),
         publisher=ServiceBusPublisher(sender),
         receiver=receiver,
     )
@@ -637,3 +643,32 @@ def test_stage_run_failed_on_dead_letter_path():
     assert [reason for _msg, reason in receiver.dead_lettered] == [
         "SOURCE_DOWNLOAD_FAILED"
     ]
+
+
+def test_duplicate_delivery_across_service_instances_runs_once():
+    """GIVEN two separately built service instances (e.g. two replicas) sharing a
+    durable idempotency store WHEN the same dmer-raw message reaches both THEN
+    the pipeline runs once and the second delivery is completed as a duplicate."""
+    store = InMemoryIdempotencyStore()  # stands in for the shared PostgreSQL table
+    blob_service = FakeBlobService()
+    doc_uri = blob_service.seed(
+        "https://acct.blob.core.windows.net", "raw", "doc-1.pdf", _make_pdf()
+    )
+    sender = FakeSbSender()
+    first_rx = FakeSbReceiver([_SbMessage(_envelope(doc_uri))])
+    second_rx = FakeSbReceiver([_SbMessage(_envelope(doc_uri))])
+
+    for rx in (first_rx, second_rx):
+        run(
+            _build_app(
+                receiver=rx,
+                blob_service=blob_service,
+                repo=InMemoryRepository(),
+                sender=sender,
+                idempotency_store=store,
+            )
+        )
+
+    assert len(sender.sent) == 1  # published once
+    assert len(first_rx.completed) == 1
+    assert len(second_rx.completed) == 1  # duplicate settled, not reprocessed
