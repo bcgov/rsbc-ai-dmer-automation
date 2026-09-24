@@ -144,6 +144,7 @@ document still goes to `MANUAL_REVIEW` and the message is dead-lettered.
 | `DB_READ_FAILED` | Reading the document's status or stored pointer |
 | `DB_WRITE_FAILED` | Status writes, stage-run start, `dmer_extraction` write |
 | `INVALID_STATUS_TRANSITION` | A status change the state machine forbids (e.g. a `MANUAL_REVIEW` document redelivered) |
+| `STALE_STATUS` | **Not a document failure.** Another worker changed the status first (a compare-and-set write lost the race — see [Idempotency requirements](#idempotency-requirements)). The run stops quietly: no `MANUAL_REVIEW`, no dead-letter; only its stage run is closed with this code |
 | `SOURCE_DOWNLOAD_FAILED` | Downloading the source PDF |
 | `PDF_UNREADABLE` | Rendering page 1 (missing page, corrupt PDF) |
 | `DI_CUSTOM_MODEL_FAILED` | Custom-model analyze (Stage A) |
@@ -185,6 +186,13 @@ Azure OpenAI is the one documented exception — key-based auth via Key Vault se
 GPT-5.1 deployment is hosted in a separate AI Hub subscription (see `../services/azure-openai.md`).
 
 ## Idempotency requirements
+
+Every `dmer_document.pipeline_status` write is an **atomic compare-and-set**: the caller passes the
+status it last saw (`expected`) and the write applies only if the row is still in it
+(`UPDATE ... WHERE id = :id AND pipeline_status = :expected`). Two workers on one document — e.g. a
+Service Bus redelivery running alongside the original — can therefore never move the status
+backwards or have one's failure (`MANUAL_REVIEW`) overwrite the other's success; the loser gets
+`StaleStatusError` and stops. `EXTRACTING -> EXTRACTING` re-entry is still allowed.
 
 Replay guard on `pipeline_status >= EXTRACTED` (step 1). Re-running extraction for an already
 `EXTRACTED` document (e.g. a redelivered message after a lock-renewal failure) must not create a

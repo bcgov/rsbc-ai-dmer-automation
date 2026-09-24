@@ -90,35 +90,34 @@ class _StubEngine:
 
 
 def test_repository_rejects_illegal_transition_before_sql(monkeypatch):
-    # GIVEN a repository whose current status is 'RECEIVED'
+    # GIVEN a caller that expects the row to be at 'RECEIVED'
     repo = DmerDocumentRepository(_StubEngine())
 
-    async def fake_get_status(_doc_id):
-        return PipelineStatus.RECEIVED
-
-    monkeypatch.setattr(repo, "get_status", fake_get_status)
-
-    # WHEN upserting a status that skips stages THEN it raises before any SQL
+    # WHEN it asks for a move that skips stages THEN it raises before any SQL
     async def run():
-        await repo.upsert_status("doc-1", "case-1", PipelineStatus.EXTRACTED)
+        await repo.upsert_status(
+            "doc-1",
+            "case-1",
+            PipelineStatus.EXTRACTED,
+            expected=PipelineStatus.RECEIVED,
+        )
 
     with pytest.raises(InvalidStatusTransition):
         asyncio.run(run())
 
 
 def test_repository_requires_document_guid_on_initial_insert(monkeypatch):
-    # GIVEN a repository with no existing row
+    # GIVEN an initial insert (expected=None)
     repo = DmerDocumentRepository(_StubEngine())
-
-    async def fake_get_status(_doc_id):
-        return None
-
-    monkeypatch.setattr(repo, "get_status", fake_get_status)
 
     # WHEN inserting RECEIVED without a document_guid THEN it raises
     async def run():
         await repo.upsert_status(
-            "doc-1", "case-1", PipelineStatus.RECEIVED, stage=PipelineStage.INGEST
+            "doc-1",
+            "case-1",
+            PipelineStatus.RECEIVED,
+            expected=None,
+            stage=PipelineStage.INGEST,
         )
 
     with pytest.raises(ValueError, match="document_guid"):
@@ -126,18 +125,17 @@ def test_repository_requires_document_guid_on_initial_insert(monkeypatch):
 
 
 def test_repository_requires_stage_on_initial_insert(monkeypatch):
-    # GIVEN a repository with no existing row
+    # GIVEN an initial insert (expected=None)
     repo = DmerDocumentRepository(_StubEngine())
-
-    async def fake_get_status(_doc_id):
-        return None
-
-    monkeypatch.setattr(repo, "get_status", fake_get_status)
 
     # WHEN inserting RECEIVED without a stage THEN it raises before any SQL
     async def run():
         await repo.upsert_status(
-            "doc-1", "case-1", PipelineStatus.RECEIVED, document_guid="g-1"
+            "doc-1",
+            "case-1",
+            PipelineStatus.RECEIVED,
+            expected=None,
+            document_guid="g-1",
         )
 
     with pytest.raises(ValueError, match="stage"):

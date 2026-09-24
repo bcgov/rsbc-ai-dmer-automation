@@ -5,10 +5,15 @@ last received plus two denormalized pointers for cheap current-state queries:
 ``current_stage`` (where the document is) and ``pipeline_status`` (how it is
 doing). See ``docs/development/data-model.md`` §``dmer_document``.
 
-``pipeline_status`` changes are validated against the state machine in
-:mod:`dmer_common.db.status` before being persisted, so an illegal transition is
-rejected in code (and covered by unit tests) rather than silently written. The
-pure transition logic (``_validated_status``) is testable without a database.
+``pipeline_status`` changes are **atomic compare-and-set** writes. The caller
+passes the status it ``expected`` the row to be in; the write succeeds only if the
+row is still in that status (``UPDATE ... WHERE id = :id AND pipeline_status =
+:expected``), and the ``expected -> target`` move is validated against the state
+machine in :mod:`dmer_common.db.status` first. Two workers on the same document
+(e.g. a Service Bus redelivery while the first is still running) therefore cannot
+move a status backwards or overwrite each other: the loser gets
+:class:`StaleStatusError` and must stop. The pure transition logic
+(``_validated_status``) is testable without a database.
 
 Scope note: this repository exposes the surface di-processor needs (upsert the
 extraction stage's status + the combined-extraction blob URL, read the current
@@ -74,6 +79,31 @@ class InvalidStatusTransition(RuntimeError):
     """Raised when a ``pipeline_status`` update violates the state machine."""
 
 
+class StaleStatusError(RuntimeError):
+    """Raised when the row is no longer in the status the caller expected.
+
+    Another worker changed (or created) the row between the caller's read and its
+    write. The caller has lost the race and must stop without overwriting the
+    winner's result. ``actual`` is the status found afterwards (``None`` if the
+    row is absent).
+    """
+
+    def __init__(
+        self,
+        document_id: str,
+        expected: PipelineStatus | None,
+        actual: PipelineStatus | None,
+    ) -> None:
+        self.document_id = document_id
+        self.expected = expected
+        self.actual = actual
+        super().__init__(
+            f"document {document_id}: expected status "
+            f"{expected.value if expected else None!r}, "
+            f"found {actual.value if actual else None!r}"
+        )
+
+
 def _validated_status(
     current: PipelineStatus | None, target: PipelineStatus
 ) -> PipelineStatus:
@@ -132,31 +162,32 @@ class DmerDocumentRepository:
         correlation_id: str,
         status: PipelineStatus,
         *,
+        expected: PipelineStatus | None,
         document_guid: str | None = None,
         stage: PipelineStage | None = None,
         extracted_blob_url: str | None = None,
     ) -> None:
-        """Insert or update a document row, validating the status transition.
+        """Atomically move a document from ``expected`` to ``status``.
 
-        The transition is validated against the row's existing status (if any)
-        before writing; an illegal transition raises before any SQL executes.
+        Compare-and-set: the write applies only if the row is still in
+        ``expected``; otherwise :class:`StaleStatusError` is raised and nothing is
+        written. ``expected=None`` means "the row must not exist yet" (the
+        initial insert). ``expected -> status`` is validated against the state
+        machine first, so an illegal move raises :class:`InvalidStatusTransition`
+        before any SQL runs. ``expected == status`` is an idempotent re-entry
+        (e.g. ``EXTRACTING`` again on redelivery) and succeeds while the row is
+        still there.
+
         On the initial insert ``document_guid`` and ``stage`` are required (both
         columns are ``NOT NULL``); on subsequent updates they are optional.
+        ``stage`` (``current_stage``) is written only when given, so a
+        status-only write such as ``MANUAL_REVIEW`` leaves the position alone.
 
-        ``stage`` (``current_stage``) is written only when given — ``None`` leaves
-        it unchanged. A stage that finishes passes the *next* stage (Extraction
-        sets ``NORMALIZE`` with ``EXTRACTED``); a status-only write (e.g.
-        ``MANUAL_REVIEW``) must not move the document's position.
-
-        An existing row is changed with a plain ``UPDATE``, never ``INSERT ... ON
-        CONFLICT``: PostgreSQL checks ``NOT NULL`` on the proposed insert row
-        before resolving the conflict, so an upsert that omits ``document_guid``
-        fails even though the row exists. A plain ``UPDATE`` also applies the
-        ``updated_at`` ``onupdate`` (``ON CONFLICT ... SET`` does not), which the
-        reconciliation sweeper's stall detection depends on.
+        An existing row is changed with a plain ``UPDATE`` (which also applies
+        the ``updated_at`` ``onupdate`` the reconciliation sweeper relies on),
+        never ``INSERT ... ON CONFLICT ... DO UPDATE``.
         """
-        current = await self.get_status(document_id)
-        target = _validated_status(current, status)
+        target = _validated_status(expected, status)
 
         values: dict[str, object] = {
             "correlation_id": correlation_id,
@@ -169,21 +200,32 @@ class DmerDocumentRepository:
         if extracted_blob_url is not None:
             values["extracted_blob_url"] = extracted_blob_url
 
-        if current is None:
+        if expected is None:
             if not document_guid:
                 raise ValueError("document_guid is required on the initial insert")
             if stage is None:
                 raise ValueError("stage is required on the initial insert")
+            # Conflict only on id: a clash on document_guid (a different id for
+            # the same Mercury document) is a real error and still raises.
             stmt = (
                 pg_insert(dmer_document)
                 .values(id=document_id, **values)
-                .on_conflict_do_update(index_elements=[dmer_document.c.id], set_=values)
+                .on_conflict_do_nothing(index_elements=[dmer_document.c.id])
+                .returning(dmer_document.c.id)
             )
         else:
             stmt = (
                 update(dmer_document)
-                .where(dmer_document.c.id == document_id)
+                .where(
+                    (dmer_document.c.id == document_id)
+                    & (dmer_document.c.pipeline_status == expected.value)
+                )
                 .values(**values)
+                .returning(dmer_document.c.id)
             )
         async with self._engine.begin() as conn:
-            await conn.execute(stmt)
+            applied = (await conn.execute(stmt)).first() is not None
+        if not applied:
+            raise StaleStatusError(
+                document_id, expected, await self.get_status(document_id)
+            )

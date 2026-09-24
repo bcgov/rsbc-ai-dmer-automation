@@ -55,6 +55,11 @@ document's current position in the pipeline.
 | `correlation_id` | uuid | Generated once at ingest; constant for the document's life; propagate on every log line and queue message. |
 | `first_seen_at` / `updated_at` | timestamptz | `updated_at` is set on **every** write to this row, by every stage — it is what the reconciliation sweeper's stall-detection query scans. |
 
+`pipeline_status` changes are **atomic compare-and-set** writes (`UPDATE ... WHERE id = :id AND
+pipeline_status = :expected`, validated against the state machine first) — never read, check in
+code, then write. A caller whose expected status is stale gets `StaleStatusError` and must stop
+without overwriting the other writer's result (`dmer_common.db.DmerDocumentRepository.upsert_status`).
+
 Unique on `document_guid` — this is what makes re-polling and webhook overlap safe (idempotent
 upsert; see [Ingest](stages/01-ingest.md)).
 

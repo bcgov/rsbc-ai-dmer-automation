@@ -24,7 +24,7 @@ import pytest
 from di_processor.config import Settings
 from di_processor.main import build_application, run
 from dmer_common.db import DmerDocumentRepository, PipelineStatus
-from dmer_common.db.dmer_document import _validated_status
+from dmer_common.db.dmer_document import StaleStatusError, _validated_status
 from dmer_common.doc_intelligence import DocumentIntelligenceClient
 from dmer_common.messaging import ServiceBusPublisher
 from dmer_common.openai_client import OpenAIClient
@@ -172,16 +172,19 @@ class InMemoryRepository(DmerDocumentRepository):
         correlation_id: str,
         status: PipelineStatus,
         *,
+        expected: PipelineStatus | None,
         document_guid: str | None = None,
         stage: Any = None,
         extracted_blob_url: str | None = None,
     ) -> None:
-        current = await self.get_status(document_id)
-        target = _validated_status(current, status)
-        if current is None and not document_guid:
+        target = _validated_status(expected, status)
+        if expected is None and not document_guid:
             raise ValueError("document_guid is required on the initial insert")
-        if current is None and stage is None:
+        if expected is None and stage is None:
             raise ValueError("stage is required on the initial insert")
+        current = await self.get_status(document_id)
+        if expected != current:  # compare-and-set, like the real repository
+            raise StaleStatusError(document_id, expected, current)
         row = self._rows.setdefault(document_id, {})
         row.update(
             id=document_id,

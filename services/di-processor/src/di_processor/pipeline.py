@@ -26,6 +26,13 @@ If Ingest has not written the row (no Ingest upstream yet) or stopped at
 steps itself. On any unrecoverable error the document is routed to
 ``MANUAL_REVIEW`` and the error re-raised so the consumer dead-letters the message.
 
+Concurrency: every status write is a compare-and-set against the status this
+run last saw or wrote (``expected``). If another worker changed it first — e.g. a
+Service Bus redelivery running alongside the original — the write raises
+``StaleStatusError`` and this run **stops quietly**: no ``MANUAL_REVIEW``, no
+dead-letter, message completed; the winner owns the document. The stage run is
+closed ``FAILED`` / ``STALE_STATUS`` for the audit trail.
+
 Idempotency / replay (redelivery after a crash or lock-renewal failure):
   - ``EXTRACTING``: a previous attempt died mid-run; reprocess (artifact writes
     overwrite the same blob paths).
@@ -64,6 +71,7 @@ from dmer_common.db import (
     PipelineStage,
     PipelineStatus,
     StageRunRepository,
+    StaleStatusError,
 )
 from dmer_common.doc_intelligence import DocumentIntelligenceClient
 from dmer_common.dto import (
@@ -175,24 +183,32 @@ class Pipeline:
             except Exception as exc:
                 failure = as_failure(exc, FailureCode.UNEXPECTED)
                 self._log_failure("re-publish failed", doc_id, failure)
-                await self._route_to_manual_review(doc_id, correlation_id)
+                if not await self._route_to_manual_review(
+                    doc_id, correlation_id, expected=PipelineStatus.EXTRACTED
+                ):
+                    return  # another worker moved the document on
                 if failure is exc:
                     raise
                 raise failure from exc
             return
 
         run_id: int | None = None
+        # The status this run last saw or wrote: the ``expected`` value for its
+        # next compare-and-set write.
+        status = current
         try:
-            if current is None:
+            if status is None:
                 # No Ingest-written row: bootstrap it (requires document_guid).
                 with failure_step(FailureCode.DB_WRITE_FAILED):
                     await self._repo.upsert_status(
                         doc_id,
                         correlation_id,
                         PipelineStatus.RECEIVED,
+                        expected=None,
                         document_guid=message.document_guid,
                         stage=PipelineStage.EXTRACT,
                     )
+                status = PipelineStatus.RECEIVED
 
             # Audit trail: open this attempt's stage run (needs the document row).
             with failure_step(FailureCode.DB_WRITE_FAILED):
@@ -205,21 +221,25 @@ class Pipeline:
             _ = hashlib.sha256(pdf_bytes).hexdigest()  # source-doc hash (reserved)
 
             with failure_step(FailureCode.DB_WRITE_FAILED):
-                if current in (None, PipelineStatus.RECEIVED):
+                if status is PipelineStatus.RECEIVED:
                     await self._repo.upsert_status(
                         doc_id,
                         correlation_id,
                         PipelineStatus.DOWNLOADED,
+                        expected=status,
                         stage=PipelineStage.EXTRACT,
                     )
+                    status = PipelineStatus.DOWNLOADED
                 # From DOWNLOADED this advances; from EXTRACTING (mid-run
                 # redelivery) it is an idempotent re-entry.
                 await self._repo.upsert_status(
                     doc_id,
                     correlation_id,
                     PipelineStatus.EXTRACTING,
+                    expected=status,
                     stage=PipelineStage.EXTRACT,
                 )
+                status = PipelineStatus.EXTRACTING
 
             # Stage A: custom-model top-level extraction (+ cut-off flags).
             with failure_step(FailureCode.DI_CUSTOM_MODEL_FAILED):
@@ -300,9 +320,11 @@ class Pipeline:
                     doc_id,
                     correlation_id,
                     PipelineStatus.EXTRACTED,
+                    expected=status,
                     stage=PipelineStage.NORMALIZE,
                     extracted_blob_url=combined_uri,
                 )
+                status = PipelineStatus.EXTRACTED
 
             # Stage E: publish downstream (pointer to the combined extraction).
             with failure_step(FailureCode.PUBLISH_FAILED):
@@ -313,9 +335,27 @@ class Pipeline:
             # Anything not raised inside a failure_step (merge, tiling, ...) is a
             # bug: UNEXPECTED.
             failure = as_failure(exc, FailureCode.UNEXPECTED)
-            self._log_failure("pipeline failed", doc_id, failure)
             await self._fail_stage_run(run_id, doc_id, failure)
-            await self._route_to_manual_review(doc_id, correlation_id)
+            if failure.code is FailureCode.STALE_STATUS:
+                # Lost a compare-and-set race: another worker owns the document.
+                # Stop without MANUAL_REVIEW or dead-lettering (the message is
+                # completed); the winner's result stands.
+                _log.warning(
+                    "status changed by another worker; stopping",
+                    extra={
+                        "document_id": doc_id,
+                        "error_code": failure.code.value,
+                        "error_detail": failure.safe_detail,
+                    },
+                )
+                return
+            self._log_failure("pipeline failed", doc_id, failure)
+            if not await self._route_to_manual_review(
+                doc_id, correlation_id, expected=status
+            ):
+                # Another worker moved the document on meanwhile: its result
+                # stands, so don't dead-letter this (duplicate) delivery.
+                return
             if failure is exc:
                 raise
             raise failure from exc
@@ -421,14 +461,39 @@ class Pipeline:
             )
         )
 
-    async def _route_to_manual_review(self, doc_id: str, correlation_id: str) -> None:
-        """Best-effort ``MANUAL_REVIEW`` write (never masks the original error)."""
+    async def _route_to_manual_review(
+        self,
+        doc_id: str,
+        correlation_id: str,
+        *,
+        expected: PipelineStatus | None,
+    ) -> bool:
+        """Best-effort ``MANUAL_REVIEW`` write (never masks the original error).
+
+        Compare-and-set against the status this run last saw: if another worker
+        has moved the document on (e.g. completed it), this run's failure must
+        not override that result. Returns False in that case (the run lost the
+        race and should stop quietly), True otherwise.
+        """
+        if expected is None:
+            return True  # failed before the row existed: nothing to route
         try:
             await self._repo.upsert_status(
-                doc_id, correlation_id, PipelineStatus.MANUAL_REVIEW
+                doc_id, correlation_id, PipelineStatus.MANUAL_REVIEW, expected=expected
             )
+        except StaleStatusError as exc:
+            _log.warning(
+                "not routing to MANUAL_REVIEW: status changed by another worker",
+                extra={
+                    "document_id": doc_id,
+                    "expected": exc.expected.value if exc.expected else None,
+                    "actual": exc.actual.value if exc.actual else None,
+                },
+            )
+            return False
         except Exception:  # noqa: BLE001 - don't mask the original failure
             _log.error(
                 "failed to record MANUAL_REVIEW status",
                 extra={"document_id": doc_id},
             )
+        return True

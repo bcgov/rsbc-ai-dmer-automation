@@ -15,6 +15,7 @@ from .dmer_document import (
     DmerDocumentRecord,
     DmerDocumentRepository,
     InvalidStatusTransition,
+    StaleStatusError,
 )
 from .dmer_extraction import ExtractionRecord, ExtractionRepository
 from .stage_run import StageRunRepository, StageRunStatus
@@ -35,6 +36,7 @@ __all__ = [
     "PipelineStatus",
     "StageRunRepository",
     "StageRunStatus",
+    "StaleStatusError",
     "is_valid_transition",
     "next_statuses",
 ]

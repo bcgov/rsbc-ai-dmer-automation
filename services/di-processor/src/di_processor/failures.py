@@ -20,7 +20,7 @@ import enum
 from collections.abc import Iterator
 from contextlib import contextmanager
 
-from dmer_common.db import InvalidStatusTransition
+from dmer_common.db import InvalidStatusTransition, StaleStatusError
 from dmer_common.retry import CircuitOpenError
 
 
@@ -30,6 +30,9 @@ class FailureCode(str, enum.Enum):
     DB_READ_FAILED = "DB_READ_FAILED"
     DB_WRITE_FAILED = "DB_WRITE_FAILED"
     INVALID_STATUS_TRANSITION = "INVALID_STATUS_TRANSITION"
+    # Not a document failure: another worker changed the status first (lost a
+    # compare-and-set race). The pipeline stops quietly on it.
+    STALE_STATUS = "STALE_STATUS"
     SOURCE_DOWNLOAD_FAILED = "SOURCE_DOWNLOAD_FAILED"
     PDF_UNREADABLE = "PDF_UNREADABLE"
     DI_CUSTOM_MODEL_FAILED = "DI_CUSTOM_MODEL_FAILED"
@@ -77,12 +80,21 @@ def as_failure(exc: BaseException, code: FailureCode) -> PipelineFailure:
     """Classify ``exc`` as a :class:`PipelineFailure` under ``code``.
 
     An already-classified failure passes through unchanged (the innermost step
-    wins), and an illegal status transition is always reported as such.
+    wins), and an illegal status transition or a lost compare-and-set race is
+    always reported as such.
     """
     if isinstance(exc, PipelineFailure):
         return exc
     if isinstance(exc, InvalidStatusTransition):
         code = FailureCode.INVALID_STATUS_TRANSITION
+    if isinstance(exc, StaleStatusError):
+        # Status names are safe (not PII), and say who won the race.
+        expected = exc.expected.value if exc.expected else "none"
+        actual = exc.actual.value if exc.actual else "none"
+        return PipelineFailure(
+            FailureCode.STALE_STATUS,
+            safe_detail(exc, expected=expected, actual=actual),
+        )
     return PipelineFailure(code, safe_detail(exc))
 
 

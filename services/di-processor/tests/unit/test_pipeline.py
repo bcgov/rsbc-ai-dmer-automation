@@ -16,7 +16,7 @@ import pytest
 from di_processor.failures import FailureCode, PipelineFailure
 from di_processor.pipeline import Pipeline, PipelineConfig
 from dmer_common.db import PipelineStage, PipelineStatus
-from dmer_common.db.dmer_document import _validated_status
+from dmer_common.db.dmer_document import StaleStatusError, _validated_status
 from dmer_common.dto import EXTRACTED_EVENT, RawMessage, event_message_id
 from PIL import Image
 
@@ -29,9 +29,17 @@ FIXTURES = Path(__file__).parent.parent / "fixtures"
 
 
 class FakeRepo:
-    """In-memory repo that enforces the real state machine on every write."""
+    """In-memory repo with the real compare-and-set + state-machine rules.
 
-    def __init__(self, initial=None, extracted_blob_url=None, stage=None):
+    ``interleave`` simulates another worker: ``{target: status}`` sets the row to
+    ``status`` just before this run writes ``target``, as if a concurrent
+    worker had written first.
+    """
+
+    def __init__(
+        self, initial=None, extracted_blob_url=None, stage=None, interleave=None
+    ):
+        self._interleave = dict(interleave or {})
         self._status = initial
         self._extracted_blob_url = extracted_blob_url
         self.stage = stage  # current_stage; only changed when a write passes one
@@ -51,13 +59,18 @@ class FakeRepo:
         correlation_id,
         status,
         *,
+        expected,
         document_guid=None,
         stage=None,
         extracted_blob_url=None,
     ):
-        _validated_status(self._status, status)
-        if self._status is None and stage is None:
+        if status in self._interleave:  # another worker writes first
+            self._status = self._interleave.pop(status)
+        _validated_status(expected, status)
+        if expected is None and stage is None:
             raise ValueError("stage is required on the initial insert")
+        if expected != self._status:  # compare-and-set
+            raise StaleStatusError(document_id, expected, self._status)
         self.transitions.append(status)
         self.stage_writes.append((status, stage))
         if stage is not None:
@@ -776,3 +789,93 @@ async def test_extracted_message_id_is_stable_across_upstream_redeliveries(
     # THEN both publishes carry the same extraction-event id, so downstream
     # recognizes the second as a repeat
     assert first_pub.published[0].message_id == second_pub.published[0].message_id
+
+
+# --- compare-and-set races (two workers on one document) ---------------------
+
+
+async def test_lost_race_at_extracted_stops_quietly(monkeypatch):
+    # GIVEN another worker writes EXTRACTED just before this run does
+    repo = FakeRepo(
+        initial=PipelineStatus.DOWNLOADED,
+        stage=PipelineStage.EXTRACT,
+        interleave={PipelineStatus.EXTRACTED: PipelineStatus.EXTRACTED},
+    )
+    stage_runs = FakeStageRunRepo()
+    publisher = FakePublisher()
+    pipeline = _pipeline(
+        monkeypatch, repo=repo, stage_runs=stage_runs, publisher=publisher
+    )
+
+    # WHEN this run tries to write EXTRACTED THEN it does not raise ...
+    await pipeline.run(_raw_message())
+
+    # ... does not publish, does not route to MANUAL_REVIEW, keeps the winner's
+    # status, and closes its own stage run as STALE_STATUS
+    assert publisher.published == []
+    assert PipelineStatus.MANUAL_REVIEW not in repo.transitions
+    assert repo._status is PipelineStatus.EXTRACTED
+    assert stage_runs.failed[0][1] == "STALE_STATUS"
+    assert "expected=EXTRACTING" in stage_runs.failed[0][2]
+    assert "actual=EXTRACTED" in stage_runs.failed[0][2]
+
+
+async def test_status_cannot_move_backwards_under_a_race(monkeypatch):
+    # GIVEN this run read DOWNLOADED, but another worker has since reached
+    # EXTRACTED — the old read-validate-write would have rewritten EXTRACTING
+    repo = FakeRepo(
+        initial=PipelineStatus.DOWNLOADED,
+        stage=PipelineStage.EXTRACT,
+        interleave={PipelineStatus.EXTRACTING: PipelineStatus.EXTRACTED},
+    )
+    await _pipeline(monkeypatch, repo=repo).run(_raw_message())
+
+    # THEN the EXTRACTING write is rejected and the status stays EXTRACTED
+    assert repo._status is PipelineStatus.EXTRACTED
+    assert PipelineStatus.EXTRACTING not in repo.transitions
+
+
+async def test_failure_does_not_override_another_workers_result(monkeypatch):
+    # GIVEN this run fails (download) while another worker completes the
+    # document (EXTRACTED) before this run's MANUAL_REVIEW write
+    class BoomBlob(FakeBlob):
+        def download(self, uri):
+            raise RuntimeError("blob down")
+
+    repo = FakeRepo(
+        initial=PipelineStatus.DOWNLOADED,
+        stage=PipelineStage.EXTRACT,
+        interleave={PipelineStatus.MANUAL_REVIEW: PipelineStatus.EXTRACTED},
+    )
+    # WHEN it fails THEN it stops quietly (no dead-letter of this duplicate)
+    await _pipeline(monkeypatch, repo=repo, blob=BoomBlob()).run(_raw_message())
+
+    # AND the winner's EXTRACTED is not overwritten with MANUAL_REVIEW
+    assert repo._status is PipelineStatus.EXTRACTED
+    assert PipelineStatus.MANUAL_REVIEW not in repo.transitions
+
+
+async def test_lost_race_on_bootstrap_insert_stops_quietly(monkeypatch):
+    # GIVEN no row when read, but another worker inserts it first
+    repo = FakeRepo(interleave={PipelineStatus.RECEIVED: PipelineStatus.RECEIVED})
+    stage_runs = FakeStageRunRepo()
+    publisher = FakePublisher()
+
+    await _pipeline(
+        monkeypatch, repo=repo, stage_runs=stage_runs, publisher=publisher
+    ).run(_raw_message())
+
+    # THEN nothing is published and no stage run was opened
+    assert publisher.published == []
+    assert stage_runs.started == []
+
+
+async def test_same_status_reentry_still_allowed(monkeypatch):
+    # GIVEN a redelivery finds the document mid-EXTRACTING (no concurrent write)
+    repo = FakeRepo(initial=PipelineStatus.EXTRACTING, stage=PipelineStage.EXTRACT)
+    publisher = FakePublisher()
+    await _pipeline(monkeypatch, repo=repo, publisher=publisher).run(_raw_message())
+
+    # THEN EXTRACTING -> EXTRACTING is accepted and extraction completes
+    assert repo.transitions == [PipelineStatus.EXTRACTING, PipelineStatus.EXTRACTED]
+    assert len(publisher.published) == 1

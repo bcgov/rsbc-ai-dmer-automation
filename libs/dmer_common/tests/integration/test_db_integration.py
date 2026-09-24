@@ -65,30 +65,51 @@ async def _status_lifecycle():
             doc_id,
             "case-1",
             PipelineStatus.RECEIVED,
+            expected=None,
             document_guid="guid-int-db-1",
             stage=PipelineStage.INGEST,
         )
         await repo.upsert_status(
-            doc_id, "case-1", PipelineStatus.DOWNLOADED, stage=PipelineStage.EXTRACT
+            doc_id,
+            "case-1",
+            PipelineStatus.DOWNLOADED,
+            expected=PipelineStatus.RECEIVED,
+            stage=PipelineStage.EXTRACT,
         )
-        await repo.upsert_status(doc_id, "case-1", PipelineStatus.EXTRACTING)
+        await repo.upsert_status(
+            doc_id,
+            "case-1",
+            PipelineStatus.EXTRACTING,
+            expected=PipelineStatus.DOWNLOADED,
+        )
         assert await repo.get_status(doc_id) == PipelineStatus.EXTRACTING
 
         # Illegal jump is rejected.
         with pytest.raises(InvalidStatusTransition):
-            await repo.upsert_status(doc_id, "case-1", PipelineStatus.DECIDED)
+            await repo.upsert_status(
+                doc_id,
+                "case-1",
+                PipelineStatus.DECIDED,
+                expected=PipelineStatus.EXTRACTING,
+            )
 
         await repo.upsert_status(
             doc_id,
             "case-1",
             PipelineStatus.EXTRACTED,
+            expected=PipelineStatus.EXTRACTING,
             stage=PipelineStage.NORMALIZE,
             extracted_blob_url="extracted-dmer/doc-int-db-1/combined.json",
         )
         assert await repo.get_status(doc_id) == PipelineStatus.EXTRACTED
 
         # A status-only write (no stage) leaves current_stage where it was.
-        await repo.upsert_status(doc_id, "case-1", PipelineStatus.MANUAL_REVIEW)
+        await repo.upsert_status(
+            doc_id,
+            "case-1",
+            PipelineStatus.MANUAL_REVIEW,
+            expected=PipelineStatus.EXTRACTED,
+        )
         async with engine.connect() as conn:
             stage_now = (
                 await conn.execute(
@@ -229,5 +250,91 @@ async def _extraction_upsert():
             False,
             True,
         )
+    finally:
+        await engine.dispose()
+
+
+def test_status_transitions_are_atomic_compare_and_set():
+    import asyncio
+
+    asyncio.run(_compare_and_set())
+
+
+async def _compare_and_set():
+    """GIVEN a document at EXTRACTING
+    WHEN two workers race the same EXTRACTING -> EXTRACTED write concurrently
+    THEN exactly one succeeds and the other gets StaleStatusError; a stale
+         expected status (backwards move) and a duplicate insert are rejected."""
+    import asyncio
+
+    from dmer_common.db import PipelineStage, PipelineStatus, StaleStatusError
+    from dmer_common.db.dmer_document import (
+        DmerDocumentRepository,
+        dmer_document,
+        metadata,
+    )
+    from sqlalchemy import delete
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    engine = create_async_engine(DSN, pool_size=5)
+    doc_id = "doc-int-cas-1"
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(metadata.create_all)
+            await conn.execute(
+                delete(dmer_document).where(dmer_document.c.id == doc_id)
+            )
+        repo = DmerDocumentRepository(engine)
+        await repo.upsert_status(
+            doc_id,
+            "c",
+            PipelineStatus.RECEIVED,
+            expected=None,
+            document_guid="guid-int-cas-1",
+            stage=PipelineStage.INGEST,
+        )
+        await repo.upsert_status(
+            doc_id, "c", PipelineStatus.DOWNLOADED, expected=PipelineStatus.RECEIVED
+        )
+        await repo.upsert_status(
+            doc_id, "c", PipelineStatus.EXTRACTING, expected=PipelineStatus.DOWNLOADED
+        )
+
+        async def worker():
+            try:
+                await repo.upsert_status(
+                    doc_id,
+                    "c",
+                    PipelineStatus.EXTRACTED,
+                    expected=PipelineStatus.EXTRACTING,
+                )
+                return "won"
+            except StaleStatusError as exc:
+                assert exc.actual is PipelineStatus.EXTRACTED
+                return "lost"
+
+        results = await asyncio.gather(*(worker() for _ in range(5)))
+        assert sorted(results) == ["lost"] * 4 + ["won"]
+        assert await repo.get_status(doc_id) is PipelineStatus.EXTRACTED
+
+        # A worker still holding the old read cannot move the status backwards.
+        with pytest.raises(StaleStatusError):
+            await repo.upsert_status(
+                doc_id,
+                "c",
+                PipelineStatus.EXTRACTING,
+                expected=PipelineStatus.DOWNLOADED,
+            )
+        # A second initial insert for the same id loses too.
+        with pytest.raises(StaleStatusError):
+            await repo.upsert_status(
+                doc_id,
+                "c",
+                PipelineStatus.RECEIVED,
+                expected=None,
+                document_guid="guid-int-cas-1",
+                stage=PipelineStage.INGEST,
+            )
+        assert await repo.get_status(doc_id) is PipelineStatus.EXTRACTED
     finally:
         await engine.dispose()
