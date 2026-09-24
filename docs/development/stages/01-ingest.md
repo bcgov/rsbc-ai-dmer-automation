@@ -17,7 +17,7 @@ Poller) from per-document download (Ingest Function) gives per-document retry an
 | Component | Trigger | Reads | Writes |
 |---|---|---|---|
 | **Page Poller** | Timer, ~5 min (question I-14 sets the real SLA) | `poll_checkpoint`; Mercury batch GET API, one page per invocation | `dmer_document`, `driver`, `poll_checkpoint` |
-| **Ingest Function** | Service Bus queue trigger on `dmer-ingest` | The queue message; the pre-signed URL on the message (or re-read from `dmer_document`) | `raw-dmer` blob container, `dmer_document`, `dmer_stage_run` |
+| **Ingest Function** | Service Bus queue trigger on `dmer-ingest` | The queue message (for `document_id`); `dmer_document.document_url` for the pre-signed URL itself | `raw-dmer` blob container, `dmer_document`, `dmer_stage_run` |
 | **Webhook Listener** (optional, real-time path) | HTTP trigger | Mercury's real-time payload | Same as Page Poller (shares the upsert + publish) |
 
 All three are recommended to live in one Azure Functions app (Flex Consumption or Premium plan —
@@ -26,8 +26,8 @@ isolation from the others.
 
 ## Page Poller — processing steps
 
-1. Read the `poll_checkpoint` row for this source (`BACKLOG` or `REALTIME`) to obtain `last_page`
-   and `last_received_date`.
+1. Read the `poll_checkpoint` row for this source (`BACKLOG` or `REALTIME`) to obtain
+   `last_cursor` and `last_received_date`.
 2. Call the Mercury batch `GET` API for **a single page only**. Do not loop over pages inside the
    invocation — a long-running poller is harder to retry, harder to reason about on timeout, and
    holds the checkpoint open while it works.
@@ -42,9 +42,16 @@ isolation from the others.
 5. If the entry contains a `case` object, record `mercury_case_id`.
 6. Publish one `dmer-ingest` message per document, with **Service Bus `MessageId` set to
    `document_guid`** so duplicate detection suppresses repeats within the detection window.
-7. If `has_more` is true, publish a message instructing the poller to fetch the next page. Each
-   page therefore becomes its own short, independently retryable invocation.
-8. Update `poll_checkpoint` (`last_page`, `last_received_date`, `last_run_at`).
+7. **One page per timer tick, no self-continuation.** The architecture document describes the
+   poller publishing a message to itself to fetch the next page immediately when `nextLink` is
+   present, but no such queue exists in `../message-contracts.md`'s four documented queues, and
+   adding a fifth control queue for it was judged not worth the extra infrastructure for now.
+   Deliberately chosen over looping through pages inside one invocation too (which would have kept
+   the design queue-free but broken step 2's "single page only" rule for a different reason). A
+   large backlog therefore drains at one page per ~5 min tick — revisit if backlog-drain speed
+   (~1,000,000 documents, question I-15) turns out to need it faster.
+8. Update `poll_checkpoint` (`last_cursor` — Mercury's `nextLink`, or null if this was the last
+   page — `last_received_date`, `last_run_at`).
 
 ### Why `DO NOTHING`, not `DO UPDATE`
 
@@ -60,9 +67,9 @@ orchestration's completeness call — a point where overwriting is safe — not 
 
 | Table | Operation | Fields |
 |---|---|---|
-| `dmer_document` | `INSERT ... ON CONFLICT (document_guid) DO NOTHING` | `id` (generated), `document_guid`, `document_name`, `mercury_document_status`, `document_priority`, `received_date`, `dps_date`, `queue`, `business_area`, `mercury_case_id`, `driver_key` (if supplied), `correlation_id` (generated once), `pipeline_status = RECEIVED`, `current_stage = INGEST`, `attempt_count = 0`, `first_seen_at`, `updated_at`. |
+| `dmer_document` | `INSERT ... ON CONFLICT (document_guid) DO NOTHING` | `id` (generated — this row's own id doubles as the tracing key on every log line/message; no separate `correlation_id`), `document_guid`, `document_name`, `mercury_document_status`, `document_priority`, `received_date`, `dps_date`, `queue`, `business_area`, `mercury_case_id`, `driver_key` (if supplied), `document_url` (Mercury's pre-signed URL — the Ingest Function reads it back from here, not from the queue message), `pipeline_status = RECEIVED`, `current_stage = INGEST`, `attempt_count = 0`, `first_seen_at`, `updated_at`. |
 | `driver` | `INSERT ... ON CONFLICT (licence_number) DO UPDATE` | `driver_key`, `licence_number`, `mercury_driver_id`, `first_name`, `last_name`, `last_synced_at`. Only when Mercury returned a driver object. |
-| `poll_checkpoint` | `UPDATE` | `source`, `last_page`, `last_received_date`, `last_run_at`. |
+| `poll_checkpoint` | `UPDATE` | `source`, `last_cursor`, `last_received_date`, `last_run_at`. |
 
 ### Concurrency
 
@@ -80,10 +87,11 @@ upsert absorb it.
 
 ## Ingest Function — processing steps
 
-1. Load the `dmer_document` row. **If `pipeline_status` is already `DOWNLOADED` or later, complete
-   the message and return.** This is the replay guard — a redelivered message must not re-download
-   and must not re-publish.
-2. Download the document from the pre-signed URL.
+1. Load the `dmer_document` row (by `document_id` from the message). **If `pipeline_status` is
+   already `DOWNLOADED` or later, complete the message and return.** This is the replay guard — a
+   redelivered message must not re-download and must not re-publish.
+2. Download the document from `document_url` on the row just loaded — not from the queue message,
+   which carries no such field (see [data-model.md](../data-model.md) on why).
 3. Write it to the `raw-dmer` container at a **deterministic path**:
    `raw-dmer/{yyyy}/{MM}/{document_guid}.pdf` — so a retry overwrites the same blob rather than
    creating a second copy.
@@ -155,8 +163,8 @@ auth, not managed identity, over ExpressRoute).
 
 ## Logging / auditing
 
-Structured JSON logs via `dmer_common.telemetry` (see `../services/azure-monitor.md`), correlation
-ID bound for the life of the document. **Never log the licence number or clinical content** — only
+Structured JSON logs via `dmer_common.telemetry` (see `../services/azure-monitor.md`), `document_id`
+bound for the life of the document. **Never log the licence number or clinical content** — only
 `document_id`/`document_guid`/`driver_key`.
 
 ## Implementation considerations for Claude Code

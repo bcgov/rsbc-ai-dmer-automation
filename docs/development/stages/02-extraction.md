@@ -156,7 +156,6 @@ a disputed extraction can be traced to the exact model/prompt combination that p
   "document_guid": "123e4567-e89b-...",
   "driver_key": "a91b77e4-...",
   "blob_url": "https://.../extracted-dmer/8f3c1b2a.json",
-  "correlation_id": "5d10...",
   "attempt": 1,
   "enqueued_at": "2026-09-18T12:05:00Z"
 }

@@ -247,7 +247,6 @@ placeholders these files ship with.
 │   ├── lint.yml                 # ruff/black/mypy + bicep lint
 │   ├── bicep-validate.yml       # az bicep build + what-if
 │   ├── security-scan.yml        # pip-audit, Trivy, gitleaks
-│   ├── pr-validation.yml        # aggregates required checks for branch protection
 │   ├── deploy-dev.yml           # auto-deploy on merge to main
 │   ├── deploy-test.yml          # manual promotion, 1 approver
 │   └── deploy-prod.yml          # manual promotion, 2 approvers + change window

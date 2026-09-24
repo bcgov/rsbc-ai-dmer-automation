@@ -83,3 +83,24 @@ def openai_settings() -> OpenAISettings:
         deployment=require(OPENAI_DEPLOYMENT_KEY),
         api_version=get(OPENAI_API_VERSION_KEY) or DEFAULT_OPENAI_API_VERSION,
     )
+
+
+@dataclass(frozen=True)
+class MercurySettings:
+    """Mercury batch API connection settings (see ``docs/development/stages/01-ingest.md``).
+
+    ``api_key`` originates from a Key Vault reference (Mercury is outside our
+    tenant boundary, over ExpressRoute -- key/credential auth, not Managed
+    Identity, per question M-4); it must never be logged.
+    """
+
+    base_url: str
+    api_key: str
+
+
+def mercury_settings() -> MercurySettings:
+    """Load Mercury batch API settings from configuration."""
+    return MercurySettings(
+        base_url=require("MERCURY_API_BASE_URL"),
+        api_key=require("MERCURY_API_KEY"),
+    )

@@ -13,7 +13,7 @@ pip install -e ../../libs/dmer_common
 | Module | Purpose |
 |---|---|
 | `dto` | Shared message/data-transfer objects (queue envelopes, domain models) |
-| `messaging` | Service Bus client wrapper, correlation ID + idempotency helpers |
+| `messaging` | Service Bus client wrapper, document ID (tracing) + idempotency helpers |
 | `storage` | Blob Storage client + container path builders |
 | `db` | PostgreSQL access layer, Managed Identity auth |
 | `telemetry` | Structured logging + OpenTelemetry/App Insights setup |

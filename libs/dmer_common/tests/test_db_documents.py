@@ -96,7 +96,7 @@ def test_repository_rejects_illegal_transition_before_sql(monkeypatch):
 
     # WHEN upserting a status that skips stages THEN it raises before any SQL
     async def run():
-        await repo.upsert_status("doc-1", "case-1", DocumentStatus.PUBLISHED)
+        await repo.upsert_status("doc-1", DocumentStatus.PUBLISHED)
 
     with pytest.raises(InvalidStatusTransition):
         asyncio.run(run())

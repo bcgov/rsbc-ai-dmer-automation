@@ -54,10 +54,9 @@ async def _status_lifecycle():
         repo = DocumentRepository(engine)
         doc_id = "doc-int-db-1"
 
-        await repo.upsert_status(doc_id, "case-1", DocumentStatus.RECEIVED)
+        await repo.upsert_status(doc_id, DocumentStatus.RECEIVED)
         await repo.upsert_status(
             doc_id,
-            "case-1",
             DocumentStatus.EXTRACTING,
             initial_extraction_uri="extracted-dmer/doc-int-db-1/top_level.json",
         )
@@ -65,17 +64,16 @@ async def _status_lifecycle():
 
         # Illegal jump is rejected.
         with pytest.raises(InvalidStatusTransition):
-            await repo.upsert_status(doc_id, "case-1", DocumentStatus.PUBLISHED)
+            await repo.upsert_status(doc_id, DocumentStatus.PUBLISHED)
 
         for status in (
             DocumentStatus.SECTIONING,
             DocumentStatus.COMBINING,
             DocumentStatus.COMBINED,
         ):
-            await repo.upsert_status(doc_id, "case-1", status)
+            await repo.upsert_status(doc_id, status)
         await repo.upsert_status(
             doc_id,
-            "case-1",
             DocumentStatus.PUBLISHED,
             combined_extraction_uri="combined-extracted-dmer/doc-int-db-1/combined.json",
         )

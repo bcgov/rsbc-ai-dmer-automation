@@ -66,7 +66,7 @@ One user-assigned managed identity per Function App (least-privilege RBAC only �
 
 ## Logging / auditing
 
-`dmer_common.telemetry.get_logger()` — structured JSON, correlation-ID-bound, PII-redacting (see
+`dmer_common.telemetry.get_logger()` — structured JSON, document-ID-bound, PII-redacting (see
 `azure-monitor.md`). Application Insights via the Functions host's built-in integration plus this
 structured logger.
 

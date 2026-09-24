@@ -7,8 +7,12 @@ venv/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.coverage
 coverage.xml
 htmlcov/
+
+# Office lock files
+~$*
 
 # Azure Functions
 local.settings.json
@@ -33,6 +37,9 @@ infrastructure/bicep/*.json
 # Build artifacts
 dist/
 build/
+
+# Local build/deploy artifacts
+*.zip
 
 # Temporary POC staging (di-processor) - being ported into services/di-processor + libs/dmer_common
 services/diocr-poc/

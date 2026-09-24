@@ -1,4 +1,4 @@
-"""Structured JSON logging implementation with correlation-id and PII redaction.
+"""Structured JSON logging implementation with document-id and PII redaction.
 
 Kept dependency-free (stdlib ``logging`` + ``json`` + ``contextvars``) so it is
 trivially unit-testable and adds no import weight to services.
@@ -14,10 +14,15 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from typing import Any, Final
 
-# Correlation id flows through async tasks via a context variable so it does not
-# have to be threaded through every function call.
-_correlation_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
-    "correlation_id", default=None
+# The per-document trace id flows through async tasks via a context variable
+# so it does not have to be threaded through every function call. This is
+# dmer_document.id (the internal PK, constant for the document's life) --
+# see docs/development/data-model.md. A dedicated correlation_id field was
+# considered and dropped: document_id already serves the same purpose (one
+# stable id per document, generated once, present on every message) with no
+# separate field needed.
+_document_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "document_id", default=None
 )
 
 # Field/key names treated as personal/medical information. Any log record attribute
@@ -79,29 +84,29 @@ _RESERVED_RECORD_ATTRS: Final[frozenset[str]] = frozenset(
         "thread",
         "threadName",
         "taskName",
-        "correlation_id",
+        "document_id",
     }
 )
 
 
-def bind_correlation_id(correlation_id: str | None) -> contextvars.Token[str | None]:
-    """Set the ambient correlation id; returns a token to restore the previous one."""
-    return _correlation_id.set(correlation_id)
+def bind_document_id(document_id: str | None) -> contextvars.Token[str | None]:
+    """Set the ambient document id; returns a token to restore the previous one."""
+    return _document_id.set(document_id)
 
 
-def get_correlation_id() -> str | None:
-    """Return the correlation id bound to the current context, if any."""
-    return _correlation_id.get()
+def get_document_id() -> str | None:
+    """Return the document id bound to the current context, if any."""
+    return _document_id.get()
 
 
 @contextmanager
-def correlation_context(correlation_id: str | None) -> Iterator[None]:
-    """Bind ``correlation_id`` for the duration of the ``with`` block."""
-    token = bind_correlation_id(correlation_id)
+def document_id_context(document_id: str | None) -> Iterator[None]:
+    """Bind ``document_id`` for the duration of the ``with`` block."""
+    token = bind_document_id(document_id)
     try:
         yield
     finally:
-        _correlation_id.reset(token)
+        _document_id.reset(token)
 
 
 def redact(
@@ -146,12 +151,12 @@ class PiiRedactionFilter(logging.Filter):
         return True
 
 
-class CorrelationIdFilter(logging.Filter):
-    """Injects the ambient correlation id onto every record as ``correlation_id``."""
+class DocumentIdFilter(logging.Filter):
+    """Injects the ambient document id onto every record as ``document_id``."""
 
     def filter(self, record: logging.LogRecord) -> bool:
-        if not getattr(record, "correlation_id", None):
-            record.correlation_id = get_correlation_id()
+        if not getattr(record, "document_id", None):
+            record.document_id = get_document_id()
         return True
 
 
@@ -164,7 +169,7 @@ class JsonFormatter(logging.Formatter):
             "level": record.levelname,
             "logger": record.name,
             "message": record.getMessage(),
-            "correlation_id": getattr(record, "correlation_id", None),
+            "document_id": getattr(record, "document_id", None),
         }
         for key, value in record.__dict__.items():
             if key in _RESERVED_RECORD_ATTRS or key in payload:
@@ -194,6 +199,6 @@ def get_logger(
         handler._dmer_common = True  # type: ignore[attr-defined]
         handler.setFormatter(JsonFormatter())
         handler.addFilter(PiiRedactionFilter(pii_fields))
-        handler.addFilter(CorrelationIdFilter())
+        handler.addFilter(DocumentIdFilter())
         logger.addHandler(handler)
     return logger

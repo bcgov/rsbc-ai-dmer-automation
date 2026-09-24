@@ -129,7 +129,7 @@ The current state of the codebase, verified against the placeholder folders and 
 
 - **`libs/dmer_common` is real, tested code — reuse what's architecture-agnostic, replace what
   isn't.** Reusable as-is: `messaging/{publisher,consumer,idempotency}.py` (settlement logic,
-  idempotency abstraction), `telemetry/logging.py` (structured JSON logging, correlation
+  idempotency abstraction), `telemetry/logging.py` (structured JSON logging, document-id
   propagation, PII redaction), `retry/{policies,circuit_breaker}.py`, `storage/client.py`
   (`BlobClient`), `doc_intelligence/client.py`, `openai_client/client.py`, `config/__init__.py`.
   Needs rework: `db/{documents,status}.py` (wrong table/schema — see

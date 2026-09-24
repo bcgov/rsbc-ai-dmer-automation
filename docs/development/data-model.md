@@ -39,7 +39,7 @@ document's current position in the pipeline.
 
 | Column | Type | Notes |
 |---|---|---|
-| `id` | uuid PK | Internal identifier — use this, never `document_guid`, in queue messages and joins. |
+| `id` | uuid PK | Internal identifier — use this, never `document_guid`, in queue messages, joins, and every log line. Generated once at ingest, constant for the document's life; serves as the tracing/correlation key on its own — there is no separate `correlation_id`. |
 | `document_guid` | uuid, **UNIQUE** | Mercury's identifier. See [`document_guid` is not a content key](#document_guid-is-not-a-content-key) below — this uniqueness guards against redelivery, not duplicate content. |
 | `document_name` | text | As received from Mercury. |
 | `mercury_document_status` | text | Mercury's own status field (`Uploaded`, `Rejected`, ...). Refreshed only by the driver orchestration's completeness call ([Decision Gateway](stages/07-decision-gateway.md)), never by the poller. |
@@ -48,11 +48,11 @@ document's current position in the pipeline.
 | `queue` / `business_area` | text | DPS General / DPS Unknown, etc. |
 | `mercury_case_id` | text, nullable | Set when Mercury supplied a case. |
 | `driver_key` | uuid FK → `driver.driver_key`, nullable | Null until Mercury supplies a driver object or [Extraction](stages/02-extraction.md) resolves one from the page. |
+| `document_url` | text, nullable | Mercury's pre-signed source URL, set by the Page Poller from the batch GET response. Not carried on the `dmer-ingest` message — the Ingest Function re-reads it from here (see [Ingest](stages/01-ingest.md)). Left populated after download, not nulled out, as a fallback for a DLQ replay/re-poll — pending question M-1's answer on presigned URL TTL and refresh. |
 | `raw_blob_url` | text | Set by Ingest once the source PDF lands in `raw-dmer`. |
 | `pipeline_status` | enum | Health/lifecycle state — see [Status modelling](#status-modelling). |
 | `current_stage` | enum | Position — see [Status modelling](#status-modelling). |
 | `attempt_count` | int | Incremented on republish (sweeper) or stage retry. |
-| `correlation_id` | uuid | Generated once at ingest; constant for the document's life; propagate on every log line and queue message. |
 | `first_seen_at` / `updated_at` | timestamptz | `updated_at` is set on **every** write to this row, by every stage — it is what the reconciliation sweeper's stall-detection query scans. |
 
 Unique on `document_guid` — this is what makes re-polling and webhook overlap safe (idempotent
@@ -239,7 +239,7 @@ Where the poller got to, per source (`BACKLOG` or `REALTIME`).
 | Column | Type | Notes |
 |---|---|---|
 | `source` | text PK | |
-| `last_page` | int | Or the opaque cursor from Mercury's cursor-based pagination (question M-2) — confirm the type once the poller is built; the architecture doc's ERD shows `int` but Mercury returns an opaque `cursor` string. |
+| `last_cursor` | text, nullable | Mercury's `nextLink` URL from the last page fetched, followed as-is on the next poll — not a page number. Was `last_page int` (matching the architecture doc's ERD) until the poller was actually built and that type didn't fit cursor-based pagination (question M-2: confirmed). Null between poll cycles (last page of a cycle had no `nextLink`) or on first run. |
 | `last_received_date` | timestamptz | |
 | `last_run_at` | timestamptz | |
 
