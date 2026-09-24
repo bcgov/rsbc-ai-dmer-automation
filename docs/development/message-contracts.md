@@ -62,7 +62,7 @@ One shape for all four queues — pointers only, never extracted/normalized cont
 | `document_guid` | Mercury's identifier. Carried for traceability; **do not** use it as a business key downstream of Ingest (see `data-model.md#document_guid-is-not-a-content-key`). |
 | `driver_key` | Null until Extraction resolves it (or Mercury supplied it at Ingest). Required on `driver-decision`. |
 | `blob_url` | Points at the artifact the *next* stage needs — `raw-dmer` for `dmer-ingest`→Ingest's own read, `extracted-dmer` for `dmer-extracted`, etc. Never an extraction/normalization payload inline. |
-| `attempt` | Incremented on republish (sweeper re-signal, DLQ Drain fallback requeue). |
+| `attempt` | Incremented on republish (sweeper re-signal, DLQ Drain **operational-recovery redrive** for a `TRANSIENT`/`PROCESSING` failure). Bounded by `DLQ_REDRIVE_MAX_ATTEMPTS`; at the ceiling the message is re-categorized `UNKNOWN` for human triage rather than redriven again. |
 
 **Security**: never put the licence number or any clinical content in a message body — Service Bus
 is encrypted at rest, but any operator with portal access can peek a message. Use `driver_key`. The
@@ -75,7 +75,7 @@ because it's the other message-shaped contract in the system:
 
 | Operation | Purpose |
 |---|---|
-| `UPDATE_OUTCOME` | Write the outcome code (`CP`/`IN`/`PR`/`PU`/`PCM`/`CR`) and reason back to the DMER record. |
+| `UPDATE_OUTCOME` | Write the outcome code (`CP`/`IN`/`PR`/`PU`/`PCM`/`CR`) and reason back to the DMER record. A **fallback** `UPDATE_OUTCOME` (`IN`, `decided_by = FALLBACK`, carrying `fallback_reason_code` + the "AI could not process" comment) is written **only** by the DLQ Drain for a `PERMANENT_BUSINESS` failure — never for a transient/processing/unknown failure. |
 | `MARK_DUPLICATE` | Flag a document as a duplicate of another — Mercury's `Rejected` status per question I-7. |
 | `MAP_DRIVER` | Attach the proposed driver to the DMER record (question I-11: AI may do this automatically). |
 | `CREATE_CASE` | Create a case where none exists, or attach to an existing open case (question I-13). |
@@ -91,17 +91,29 @@ See [Post-Processing](stages/08-post-processing.md) for how these rows are writt
 | Time-to-live expiry | Only when `EnableDeadLetteringOnMessageExpiration` is set (it is, on all four queues). |
 | Explicit dead-lettering | Handler calls `DeadLetterMessageAsync(reason, description)` — the only path that records *why*. Always prefer this for known-bad input. |
 
-Classify every failure explicitly:
+Classify every failure explicitly. The DLQ Drain uses these same categories to decide what happens
+to a dead-lettered message — see
+[DLQ Drain §Failure categorization](stages/10-dlq-drain.md#failure-categorization-the-first-thing-the-drain-does).
+The `failure_category` values below are what land on `processing_error.failure_category` and govern
+whether a fallback business decision may be produced:
 
-| Class | Examples | Handling |
-|---|---|---|
-| **Transient** | HTTP 429 from DI/OpenAI, Mercury timeout, transient DB error | Retry inside the handler with exponential backoff. Never let it consume delivery count on its own — only dead-letter after the internal retry budget is exhausted. |
-| **Downstream outage** | Mercury unavailable, Azure OpenAI region issue | Back off and let the queue build; the queue is the shock absorber. Alert on queue depth, not individual failures. |
-| **Poison** | Malformed/unreadable PDF, `document_guid` that no longer exists, schema violation | Dead-letter immediately and explicitly with a reason. Retrying wastes quota and delays everything behind it in the queue. |
+| `failure_category` | Examples | In-handler handling | On dead-letter, may produce a fallback decision? |
+|---|---|---|---|
+| **`PERMANENT_BUSINESS`** | Malformed/unreadable PDF, `document_guid` that no longer exists, content schema violation | Dead-letter immediately and explicitly with a reason. Retrying wastes quota and delays everything behind it. | **Yes** — and *only* this category, and *only* under the explicit business rule for un-processable DMERs (question I-1): `IN`, `decided_by = FALLBACK`. |
+| **`TRANSIENT`** | Lock/session expiry mid-processing, transient DB error/deadlock, Service Bus lock lost, network blip, `MaxDeliveryCount` reached purely via repeated timeouts | Retry inside the handler with exponential backoff. Never let it consume delivery count on its own — only dead-letter after the internal retry budget is exhausted. | **No** — route to operational recovery (bounded redrive) + `MANUAL_REVIEW` + alert. |
+| **`PROCESSING`** | HTTP 429/5xx from DI/OpenAI/Mercury past the retry budget, downstream outage that outlasted TTL | Back off and let the queue build; the queue is the shock absorber. Alert on queue depth, not individual failures. | **No** — route to `MANUAL_REVIEW` + alert; fix/redrive the dependency, do not decide. |
+| **`UNKNOWN`** | Missing/garbled dead-letter reason, unexpected exception, `MaxDeliveryCount` system reason with no correlating application error | N/A (only observable at dead-letter time). | **No** — route to `MANUAL_REVIEW` + alert for human triage. Default category when classification is not confident. |
+
+**Safety invariant:** a fallback business decision is produced for `PERMANENT_BUSINESS` only.
+Transient, processing, and unknown failures are made *visible* (via `MANUAL_REVIEW`,
+`processing_error`, and an alert) but are **never** auto-converted into an `IN` — or any other —
+business outcome. See the legacy `error_class` mapping in
+[`data-model.md`](data-model.md) (`POISON → PERMANENT_BUSINESS`, `DOWNSTREAM → PROCESSING`).
 
 Dead-letter queues do not drain themselves and there is no native requeue — see
 [DLQ Drain](stages/10-dlq-drain.md) for the function that reads every `$DeadLetterQueue` and turns
-each message into a recorded, visible outcome.
+each message into a recorded, visible outcome (a decision only for `PERMANENT_BUSINESS`; visibility
++ recovery routing for everything else).
 
 ## Alignment gaps vs. current code
 

@@ -21,9 +21,14 @@ because a developer building them needs to know exactly which columns they own.
 1. **Outbox pattern** (this doc) — a decision and the intent to publish it commit together (see
    [Post-Processing](08-post-processing.md)); this doc covers the publisher that drains it.
 2. **Reconciliation Sweeper** (this doc) — finds documents/drivers stuck mid-pipeline.
-3. **Fallback outcome** — after the total retry budget across all stages is exhausted, the pipeline
-   still emits an outcome (`IN`, `decided_by = FALLBACK`) rather than stopping. See
-   [DLQ Drain](10-dlq-drain.md) for where this is implemented.
+3. **Categorized failure handling with a guarded fallback outcome** — when a message dead-letters,
+   the [DLQ Drain](10-dlq-drain.md) first *classifies* the failure (permanent business / transient
+   infrastructure / processing / unknown). Only a **permanent business failure**, and only under the
+   explicit business rule for un-processable DMERs (question I-1), emits a fallback outcome
+   (`IN`, `decided_by = FALLBACK`) rather than stopping. Transient, processing, and unknown failures
+   are made visible via `MANUAL_REVIEW` + a `processing_error` row + an alert and are routed to
+   **operational recovery (bounded redrive)** or **manual review** — they never auto-produce a
+   business decision. See [DLQ Drain](10-dlq-drain.md#failure-categorization-the-first-thing-the-drain-does).
 4. **Daily reconciliation report** (this doc) — the evidence that the guarantee holds, checked
    against Mercury directly.
 
@@ -80,7 +85,7 @@ per row via `next_attempt_at`, alert on a growing count of `PENDING` rows past S
 |---|---|---|
 | `dmer_document` | `UPDATE` | `attempt_count` incremented when a document is re-published to a queue; `updated_at`. |
 | `driver_evaluation` | `UPDATE` | `status` `WAITING` → `STALE` when no progress past SLA, and `STALE` back to `READY` when re-signalled. |
-| `processing_error` | `INSERT` | `document_id`, `stage`, `error_class`, `message`, `occurred_at` — recorded when a stall is detected, so repeated stalls on the same document are visible as a pattern. |
+| `processing_error` | `INSERT` | `document_id`, `stage`, `error_class` / `failure_category` (a sweeper-detected stall is `TRANSIENT` by nature — it never sets `PERMANENT_BUSINESS` and so never triggers a fallback decision), `reason_code`, `message`, `occurred_at` — recorded when a stall is detected, so repeated stalls on the same document are visible as a pattern. |
 
 ## Daily reconciliation report
 
@@ -97,12 +102,26 @@ The third fails in extraction because the fax is unreadable.
 - **Without this design:** the third document stops, the first two wait forever, and none of the
   three is ever posted. Intake sees nothing, and because the DMERs are no longer in the manual
   queue either, the driver is silently dropped.
-- **With it:** the third document exhausts its retries, is dead-lettered with an explicit reason, is
-  drained to `MANUAL_REVIEW`, and a fallback `IN` outcome is queued to the outbox (see
+- **With it:** the third document exhausts its retries and is dead-lettered with an explicit reason.
+  The DLQ Drain classifies it as **`PERMANENT_BUSINESS`** (an unreadable fax can never succeed on
+  retry), drains it to `MANUAL_REVIEW`, and — because the explicit business rule (question I-1)
+  covers un-processable DMERs — queues a fallback `IN` outcome (`decided_by = FALLBACK`,
+  `fallback_reason_code = PERMANENT_UNREADABLE_DOCUMENT`) to the outbox (see
   [DLQ Drain](10-dlq-drain.md)). It therefore reaches `RULES_APPLIED`-equivalent completeness for
   the purposes of the join. The driver evaluation becomes `READY`, the decision gateway runs, all
   three outcomes are written, and the outbox delivers them. Intake sees three DMERs, one flagged as
   needing human reading.
+
+### The contrasting case this design also prevents
+
+Now suppose the third document instead dead-letters because its lock expired while Postgres was
+briefly unavailable — a **`TRANSIENT`** failure. The old design would have posted an `IN` fallback
+here too, telling Mercury the driver is `IN` on the strength of an infrastructure blip. The revised
+design does **not**: the transient failure is recorded in `processing_error`, the document goes to
+`MANUAL_REVIEW`, an alert fires, and the message becomes a bounded **redrive** candidate for
+operational recovery. No `dmer_decision` is written. Once the DB recovers the message is redriven and
+processes normally; if redrive is exhausted it becomes `UNKNOWN` for human triage. A transient fault
+never becomes a fabricated clinical outcome.
 
 ## Interaction with other stages
 

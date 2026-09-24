@@ -172,9 +172,21 @@ The final per-document outcome. Written **once, atomically with the outbox row**
 | `superseded_by_cutoff_rule` | bool | Set when a cut-off document was excluded from the outcome decision in favour of a clear sibling. |
 | `driver_mapped` | bool | |
 | `proposed_driver_key` | uuid, nullable | Set when Mercury had no driver object but a licence resolved to exactly one driver (question I-11: AI may map automatically). |
-| `decision_reason` | jsonb | The rule path, the diff that forced `IN`, the cut-off flags that applied. |
-| `decided_by` | enum | `AI`, `FALLBACK`, `MANUAL` — a fallback outcome must never be mistaken for a considered one. |
+| `decision_reason` | jsonb | The rule path, the diff that forced `IN`, the cut-off flags that applied. For a fallback: the failure category, the failed stage, and the dead-letter reason. |
+| `decided_by` | enum | `AI`, `FALLBACK`, `MANUAL` — a fallback outcome must never be mistaken for a considered one. A `FALLBACK` row is **only** ever produced by [DLQ Drain](stages/10-dlq-drain.md) for a `PERMANENT_BUSINESS` failure under an explicit business rule; it is never produced for a transient, processing, or unknown failure. |
+| `fallback_reason_code` | text, nullable | Set only when `decided_by = FALLBACK`. The enumerated reason (e.g. `PERMANENT_UNREADABLE_DOCUMENT`) explaining why a fallback was permitted — see [DLQ Drain §Reason codes](stages/10-dlq-drain.md#reason-codes). Non-null on every fallback row; null otherwise. |
 | `decided_at` | timestamptz | |
+
+**Duplicate-decision prevention:** a document has **at most one** `dmer_decision` row, ever. The
+DLQ Drain's fallback insert is guarded (`WHERE NOT EXISTS` on `document_id`) so a redrive cannot add
+a second decision or overwrite a human/AI decision that landed first (see the immutability rule in
+[Post-Processing](stages/08-post-processing.md#decision-immutability-after-human-review-question-i-2-answered)).
+A partial unique index enforces this at the database level:
+
+```sql
+-- at most one decision per document
+CREATE UNIQUE INDEX ON dmer_decision (document_id);
+```
 
 Duplicates and outcomes are recorded here, **not** on `dmer_document` — a document is a fact; being
 a duplicate is a decision, and decisions can change when a new sibling arrives (question I-10).
@@ -208,11 +220,17 @@ The failure register — populated by the [DLQ Drain](stages/10-dlq-drain.md) an
 | `id` | bigserial PK | |
 | `document_id` | uuid FK → `dmer_document.id` | |
 | `stage` | enum | Same stage enum as `dmer_stage_run`. |
-| `error_class` | enum | `TRANSIENT`, `POISON`, `DOWNSTREAM` — see `azure-service-bus.md` for the classification rule. |
-| `message` | text | |
+| `error_class` | enum | Legacy classification, retained for back-compat: `TRANSIENT`, `POISON`, `DOWNSTREAM`. New rows should also set `failure_category` (below); `POISON` maps to `PERMANENT_BUSINESS`, `DOWNSTREAM` to `PROCESSING`. See `azure-service-bus.md` and [DLQ Drain](stages/10-dlq-drain.md#failure-categorization-the-first-thing-the-drain-does) for the classification rule. |
+| `failure_category` | enum | `PERMANENT_BUSINESS`, `TRANSIENT`, `PROCESSING`, `UNKNOWN` — the category that governs whether a fallback decision may be produced. **Only `PERMANENT_BUSINESS` may accompany a `dmer_decision`.** |
+| `reason_code` | text | Stable enumerated reason string (e.g. `PERMANENT_UNREADABLE_DOCUMENT`, `TRANSIENT_LOCK_EXPIRED`, `UNKNOWN_UNCLASSIFIED`) — see [DLQ Drain §Reason codes](stages/10-dlq-drain.md#reason-codes). Makes failures queryable/auditable rather than free-text-only. |
+| `message` | text | Raw dead-letter reason string, verbatim. |
 | `dlq_message_id` | text, nullable | |
+| `redrive_count` | int, default 0 | Bounded operational-recovery redrive attempts for `TRANSIENT`/`PROCESSING`; at the ceiling the row is re-categorized `UNKNOWN`. |
 | `occurred_at` | timestamptz | |
 | `resolved_at` / `resolution` | timestamptz, text, nullable | |
+
+Unique on `(document_id, stage, dlq_message_id)` — makes re-draining the same dead-lettered message
+a no-op rather than a duplicate row (see [DLQ Drain §Idempotency](stages/10-dlq-drain.md#idempotency-requirements)).
 
 ### `poll_checkpoint`
 
@@ -269,6 +287,10 @@ CREATE INDEX ON mercury_outbox (status, next_attempt_at) WHERE status = 'PENDING
 CREATE INDEX ON dmer_extraction (comparison_hash);
 -- stage timings and replay
 CREATE INDEX ON dmer_stage_run (document_id, stage, attempt_no DESC);
+-- at most one decision per document (duplicate-decision prevention)
+CREATE UNIQUE INDEX ON dmer_decision (document_id);
+-- re-drain idempotency: one processing_error row per dead-lettered message
+CREATE UNIQUE INDEX ON processing_error (document_id, stage, dlq_message_id);
 ```
 
 ## `document_guid` is not a content key
