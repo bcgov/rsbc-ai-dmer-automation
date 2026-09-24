@@ -98,6 +98,36 @@ param owner string = 'RSBC-DMER'
 @description('Data classification tag value — DMER content is personal/medical information (FOIPPA).')
 param dataClassification string = 'protected-b'
 
+@description('Service Bus namespace SKU. Premium — the only tier this landing zone\'s policy allows to actually be reachable (Basic/Standard have no private endpoint option and public access is denied by policy) — see modules/servicebus/namespace.bicep\'s header.')
+@allowed([
+  'Basic'
+  'Standard'
+  'Premium'
+])
+param serviceBusSkuName string = 'Premium'
+
+@description('Optional resource ID of the platform/hub-managed Private DNS Zone for privatelink.servicebus.windows.net. Leave empty — confirmed empty for every other private endpoint in this landing zone (see docs/deployment/deployment-guide.md, "Private DNS: confirmed behavior"); the platform\'s DINE policy registers the DNS A-record automatically regardless of resource type.')
+param privateDnsZoneIdServiceBus string = ''
+
+@description('PostgreSQL administrator login username.')
+param postgresAdministratorLogin string = 'rsbc_dmer_admin'
+
+@secure()
+@description('PostgreSQL administrator login password. Supply via a pipeline secret, never a parameters.json file.')
+param postgresAdministratorLoginPassword string
+
+@description('PostgreSQL compute SKU name.')
+param postgresSkuName string = 'Standard_B2s'
+
+@description('PostgreSQL compute SKU tier.')
+param postgresSkuTier string = 'Burstable'
+
+@description('PostgreSQL storage size in GB.')
+param postgresStorageSizeGB int = 32
+
+@description('Optional resource ID of the platform/hub-managed Private DNS Zone for privatelink.postgres.database.azure.com. Leave empty — same confirmed-empty reasoning as privateDnsZoneIdServiceBus above.')
+param privateDnsZoneIdPostgres string = ''
+
 // --- di-processor Container App inputs -------------------------------------
 // The Container Apps Environment and Service Bus namespace are shared/other-
 // workstream resources not provisioned by this template; they are supplied by
@@ -147,6 +177,21 @@ var sharedTags = buildTags(environment, 'shared', costCenter, owner, dataClassif
 var documentIntelligenceAccountName = resourceName('di', 'shared', environment, instance)
 var storageAccountNameValue = storageAccountName(environment, location, instance)
 var diProcessorIdentityName = resourceName('id', 'di-processor', environment, instance)
+var serviceBusNamespaceName = resourceName('sb', 'shared', environment, instance)
+var postgresServerName = resourceName('psql', 'shared', environment, instance)
+var extractedDmerQueueName = 'extracted-dmer-queue'
+// Revised architecture (docs/development/message-contracts.md) -- the
+// Ingest stage's two queues. extracted-dmer-queue (original architecture)
+// stays live for di-processor, which still produces to it and hasn't been
+// rebuilt for the revised architecture yet. raw-dmer-queue (the original
+// architecture's other queue, intake-processor's old output) was removed --
+// intake-processor now publishes to dmer-raw instead; di-processor's own
+// consumer still reads raw-dmer-queue by name in its current code, so it
+// needs migrating to dmer-raw separately (not done here). dmer-extracted
+// and driver-decision belong to later stages not built yet -- not declared
+// here until they are.
+var dmerIngestQueueName = 'dmer-ingest'
+var dmerRawQueueName = 'dmer-raw'
 var diProcessorContainerAppName = resourceName('ca', 'di-processor', environment, instance)
 var deployDiProcessorContainerApp = !empty(containerAppsEnvironmentId)
 
@@ -335,6 +380,7 @@ module diProcessorContainerApp 'modules/compute/container-app.bicep' = if (deplo
     image: diProcessorImage
     registryServer: containerRegistryServer
     serviceBusNamespaceFqdn: serviceBusNamespaceFqdn
+    // di-processor consumes dmer-raw (migrated from raw-dmer-queue).
     scaleQueueName: 'dmer-raw'
     minReplicas: environment == 'prod' ? 1 : 0
     logAnalyticsWorkspaceId: logAnalyticsWorkspaceId
@@ -344,6 +390,171 @@ module diProcessorContainerApp 'modules/compute/container-app.bicep' = if (deplo
 }
 
 // ---------------------------------------------------------------------------
+// 6. Service Bus
+//
+// One namespace, three queues so far: extracted-dmer-queue
+// (docs/contracts/queues/*.md, original architecture — still live for
+// di-processor, not yet rebuilt) and dmer-ingest/dmer-raw
+// (docs/development/message-contracts.md, revised architecture — the
+// Ingest stage). raw-dmer-queue (the original architecture's other queue)
+// was removed once intake-processor's own rebuild stopped publishing to it
+// — see the note above dmerIngestQueueName's declaration; di-processor's
+// consumer code still needs migrating off it separately. dmer-extracted
+// and driver-decision (the revised architecture's remaining two queues)
+// aren't declared yet — later stages, not built. No topics: PaddleOCR isn't
+// a Service Bus consumer (it's a separately-deployed Container App,
+// `paddleocr-gpu-app` in this same resource group, called directly over
+// HTTP by di-processor rather than via pub/sub).
+// ---------------------------------------------------------------------------
+module serviceBusNamespace 'modules/servicebus/namespace.bicep' = {
+  name: '${deployment().name}-sb-namespace'
+  params: {
+    name: serviceBusNamespaceName
+    location: location
+    tags: sharedTags
+    skuName: serviceBusSkuName
+  }
+}
+
+module serviceBusPrivateEndpoint 'modules/networking/private-endpoint.bicep' = {
+  name: '${deployment().name}-sb-pe'
+  params: {
+    name: resourceName('pe-sb', 'shared', environment, instance)
+    location: location
+    tags: sharedTags
+    subnetId: privateEndpointSubnetId
+    targetResourceId: serviceBusNamespace.outputs.id
+    groupIds: [
+      'namespace'
+    ]
+    privateDnsZoneResourceId: privateDnsZoneIdServiceBus
+  }
+}
+
+module extractedDmerQueue 'modules/servicebus/queue.bicep' = {
+  name: '${deployment().name}-sb-extracted-dmer-queue'
+  params: {
+    namespaceName: serviceBusNamespace.outputs.name
+    name: extractedDmerQueueName
+    maxDeliveryCount: 5
+    lockDuration: 'PT5M'
+    // No duplicate-detection window in extracted-dmer-queue.md's contract —
+    // left disabled rather than assuming a value the contract doesn't specify.
+  }
+}
+
+module dmerIngestQueue 'modules/servicebus/queue.bicep' = {
+  name: '${deployment().name}-sb-dmer-ingest-queue'
+  params: {
+    namespaceName: serviceBusNamespace.outputs.name
+    name: dmerIngestQueueName
+    maxDeliveryCount: 5
+    // Duplicate detection window sized to the poll interval (~5 min default,
+    // question I-14 may adjust) -- message-contracts.md: "window sized to
+    // the poll interval", keyed on MessageId = document_guid (01-ingest.md).
+    duplicateDetectionWindow: 'PT5M'
+  }
+}
+
+module dmerRawQueue 'modules/servicebus/queue.bicep' = {
+  name: '${deployment().name}-sb-dmer-raw-queue'
+  params: {
+    namespaceName: serviceBusNamespace.outputs.name
+    name: dmerRawQueueName
+    maxDeliveryCount: 5
+    // "Lock duration 5 minutes with lock renewal during extraction"
+    // (message-contracts.md) -- lock renewal is consumer-side behaviour
+    // (auto-renewal on the receiver), not a queue property; nothing more
+    // to configure here for it.
+    lockDuration: 'PT5M'
+    // No duplicate-detection window specified for dmer-raw in
+    // message-contracts.md -- left disabled, same reasoning as extracted-dmer-queue.
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 7. PostgreSQL — the revised architecture's schema (see
+//    database/migrations/V0001__create_dmer_pipeline_schema.sql and
+//    docs/development/data-model.md); the original architecture's
+//    dmer_processing/mercury_links tables were retired in
+//    database/migrations/V0002__drop_original_architecture_tables.sql once
+//    the Ingest stage was rebuilt against the new schema. AAD role grants
+//    for individual service identities (e.g. intake-processor's Function
+//    App) are a data-plane concern, not created here — see
+//    services/intake-processor/roles.sql and apply_roles.sh.
+// ---------------------------------------------------------------------------
+module postgresServer 'modules/database/postgresql-flexible-server.bicep' = {
+  name: '${deployment().name}-psql-server'
+  params: {
+    name: postgresServerName
+    location: location
+    tags: sharedTags
+    administratorLogin: postgresAdministratorLogin
+    administratorLoginPassword: postgresAdministratorLoginPassword
+    skuName: postgresSkuName
+    skuTier: postgresSkuTier
+    storageSizeGB: postgresStorageSizeGB
+  }
+}
+
+module postgresDatabase 'modules/database/postgresql-database.bicep' = {
+  name: '${deployment().name}-psql-database'
+  params: {
+    serverName: postgresServer.outputs.name
+    databaseName: 'dmer'
+  }
+}
+
+module postgresPrivateEndpoint 'modules/networking/private-endpoint.bicep' = {
+  name: '${deployment().name}-psql-pe'
+  params: {
+    name: resourceName('pe-psql', 'shared', environment, instance)
+    location: location
+    tags: sharedTags
+    subnetId: privateEndpointSubnetId
+    targetResourceId: postgresServer.outputs.id
+    groupIds: [
+      'postgresqlServer'
+    ]
+    privateDnsZoneResourceId: privateDnsZoneIdPostgres
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 8. Service Bus RBAC role assignments
+// ---------------------------------------------------------------------------
+var serviceBusDataSenderRoleId = '69a216fc-b8fb-44d8-bc22-1f3c2cd27a39'
+
+resource extractedDmerQueueExisting 'Microsoft.ServiceBus/namespaces/queues@2024-01-01' existing = {
+  name: '${serviceBusNamespaceName}/${extractedDmerQueueName}'
+  dependsOn: [
+    extractedDmerQueue
+  ]
+}
+
+// di-processor's raw-dmer-queue receiver grant was removed along with the
+// queue itself -- its consumer code still reads that queue name today, so
+// it will fail to open a receiver until it's migrated to dmer-raw (not done
+// here; see the comment above dmerIngestQueueName's declaration).
+
+@description('Lets id-rsbc-dmer-di-processor publish its result to extracted-dmer-queue.')
+resource diProcessorExtractedDmerSender 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(extractedDmerQueueExisting.id, diProcessorIdentityName, serviceBusDataSenderRoleId)
+  scope: extractedDmerQueueExisting
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', serviceBusDataSenderRoleId)
+    principalId: diProcessorIdentity.outputs.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// intake-processor's own Service Bus grant lives in intake-processor.bicep
+// itself now, not here -- see that template's own role-assignment module
+// for why (its identity doesn't exist until that deployment creates it,
+// so a grant declared here would need this template run a second time
+// afterward; keeping it there avoids that entirely).
+
+// ---------------------------------------------------------------------------
 // Outputs
 // ---------------------------------------------------------------------------
 output documentIntelligenceName string = documentIntelligence.outputs.name
@@ -351,6 +562,14 @@ output documentIntelligenceEndpoint string = documentIntelligence.outputs.endpoi
 output storageAccountDeployedName string = storage.outputs.name
 output storageBlobEndpoint string = storage.outputs.blobEndpoint
 output diProcessorManagedIdentityClientId string = diProcessorIdentity.outputs.clientId
+output serviceBusNamespaceName string = serviceBusNamespace.outputs.name
+output serviceBusEndpoint string = serviceBusNamespace.outputs.serviceBusEndpoint
+output extractedDmerQueueName string = extractedDmerQueue.outputs.name
+output dmerIngestQueueName string = dmerIngestQueue.outputs.name
+output dmerRawQueueName string = dmerRawQueue.outputs.name
+output postgresServerName string = postgresServer.outputs.name
+output postgresFullyQualifiedDomainName string = postgresServer.outputs.fullyQualifiedDomainName
+output postgresDatabaseName string = postgresDatabase.outputs.name
 
 @description('Name of the di-processor Container App, or empty when not deployed by this template (no Container Apps Environment ID supplied).')
 output diProcessorContainerAppName string = diProcessorContainerApp.?outputs.name ?? ''

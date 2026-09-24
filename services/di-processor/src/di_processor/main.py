@@ -17,8 +17,8 @@ from typing import Any
 
 from dmer_common.db import (
     DmerDocumentRepository,
+    DmerStageRunRepository,
     ExtractionRepository,
-    StageRunRepository,
 )
 from dmer_common.doc_intelligence import DocumentIntelligenceClient
 from dmer_common.messaging import (
@@ -59,7 +59,7 @@ def build_application(
     openai: OpenAIClient,
     repository: DmerDocumentRepository,
     extraction_repository: ExtractionRepository,
-    stage_run_repository: StageRunRepository,
+    stage_run_repository: DmerStageRunRepository,
     publisher: ServiceBusPublisher,
     receiver: Any,
     idempotency_store: IdempotencyStore,
@@ -166,7 +166,7 @@ def main() -> None:  # pragma: no cover - thin production wiring
         openai=OpenAIClient(),
         repository=DmerDocumentRepository(engine),
         extraction_repository=ExtractionRepository(engine),
-        stage_run_repository=StageRunRepository(engine),
+        stage_run_repository=DmerStageRunRepository(engine),
         publisher=ServiceBusPublisher(sender),
         receiver=receiver,
         idempotency_store=PostgresIdempotencyStore(engine),

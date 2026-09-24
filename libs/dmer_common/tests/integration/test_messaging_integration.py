@@ -6,7 +6,7 @@ default unit run is unaffected.
 
 GIVEN a queue on the emulator/dev namespace
 WHEN an ExtractedMessage is published and then consumed
-THEN the consumer receives it, propagates the correlation id, and completes it,
+THEN the consumer receives it, propagates the document id, and completes it,
      and a redelivery of the same messageId is a no-op.
 """
 
@@ -32,7 +32,6 @@ def _extracted(message_id: str):
 
     return ExtractedMessage(
         message_id=message_id,
-        correlation_id="case-int-1",
         document_id="doc-int-1",
         document_guid="guid-int-1",
         driver_key="driver-int-1",

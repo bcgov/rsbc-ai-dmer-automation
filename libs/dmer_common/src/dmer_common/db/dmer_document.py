@@ -1,40 +1,36 @@
-"""``dmer_document`` table repository (revised architecture).
+"""``dmer_document`` table repository.
 
-One row per ``document_guid`` (Mercury's identifier). Carries Mercury metadata as
-last received plus two denormalized pointers for cheap current-state queries:
-``current_stage`` (where the document is) and ``pipeline_status`` (how it is
-doing). See ``docs/development/data-model.md`` §``dmer_document``.
+One row per ``document_guid`` (Mercury's identifier) -- see
+``docs/development/data-model.md``. The table itself is created by
+``database/migrations/V0001__create_dmer_pipeline_schema.sql``; this module only
+mirrors it. ``id`` (this row's own primary key) is the tracing/join key used
+everywhere downstream, not a separate ``correlation_id`` (see
+``docs/development/message-contracts.md``).
 
-``pipeline_status`` changes are **atomic compare-and-set** writes. The caller
-passes the status it ``expected`` the row to be in; the write succeeds only if the
-row is still in that status (``UPDATE ... WHERE id = :id AND pipeline_status =
-:expected``), and the ``expected -> target`` move is validated against the state
-machine in :mod:`dmer_common.db.status` first. Two workers on the same document
-(e.g. a Service Bus redelivery while the first is still running) therefore cannot
-move a status backwards or overwrite each other: the loser gets
-:class:`StaleStatusError` and must stop. The pure transition logic
-(``_validated_status``) is testable without a database.
+Two groups of writes:
 
-Scope note: this repository exposes the surface di-processor needs (upsert the
-extraction stage's status + the combined-extraction blob URL, read the current
-status and stored blob URL for the replay guard). Columns owned by other stages (``mercury_case_id``,
-``document_priority``, etc.) are part of the table but not written here.
+- **Ingest** (``upsert_received``, ``mark_downloaded``): creates the row and
+  advances it to ``DOWNLOADED``.
+- **Later stages** (``upsert_status``): **atomic compare-and-set** status
+  writes. The caller passes the status it ``expected`` the row to be in; the
+  write succeeds only if the row is still in that status (``UPDATE ... WHERE id
+  = :id AND pipeline_status = :expected``), and the ``expected -> target`` move
+  is validated against the state machine in :mod:`dmer_common.db.status`
+  first. Two workers on the same document (e.g. a Service Bus redelivery while
+  the first is still running) therefore cannot move a status backwards or
+  overwrite each other: the loser gets :class:`StaleStatusError` and must stop.
+  The pure transition logic (``_validated_status``) is testable without a
+  database.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 
-from sqlalchemy import (
-    Column,
-    DateTime,
-    MetaData,
-    String,
-    Table,
-    func,
-    select,
-    update,
-)
+from sqlalchemy import Column, DateTime, Integer, MetaData, Table, Text, func, select
+from sqlalchemy.dialects.postgresql import ENUM as PG_ENUM
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -42,37 +38,108 @@ from .status import PipelineStage, PipelineStatus, is_valid_transition
 
 metadata = MetaData()
 
+# create_type=False on both: the enum types are created by
+# database/migrations/V0001__create_dmer_pipeline_schema.sql, not by this
+# repository -- SQLAlchemy must not try to (re)create them.
+_pipeline_status_enum = PG_ENUM(
+    "RECEIVED",
+    "DOWNLOADED",
+    "EXTRACTING",
+    "EXTRACTED",
+    "NORMALIZED",
+    "RULES_APPLIED",
+    "AWAITING_DRIVER_COMPLETION",
+    "DECIDED",
+    "POSTING",
+    "COMPLETED",
+    "MANUAL_REVIEW",
+    name="dmer_pipeline_status",
+    create_type=False,
+)
+_stage_enum = PG_ENUM(
+    "INGEST",
+    "EXTRACT",
+    "NORMALIZE",
+    "RULES",
+    "DECISION",
+    "POST",
+    name="dmer_stage",
+    create_type=False,
+)
+
 dmer_document = Table(
     "dmer_document",
     metadata,
-    Column("id", String, primary_key=True),
-    Column("document_guid", String, nullable=False, unique=True),
-    Column("correlation_id", String, nullable=False),
-    Column("driver_key", String, nullable=True),
-    Column("current_stage", String, nullable=False),
-    Column("pipeline_status", String, nullable=False),
-    Column("extracted_blob_url", String, nullable=True),
-    Column("first_seen_at", DateTime(timezone=True), server_default=func.now()),
     Column(
-        "updated_at",
-        DateTime(timezone=True),
-        server_default=func.now(),
-        onupdate=func.now(),
+        "id",
+        PG_UUID(as_uuid=False),
+        primary_key=True,
+        server_default="gen_random_uuid()",
     ),
+    Column("document_guid", PG_UUID(as_uuid=False), unique=True, nullable=False),
+    Column("document_name", Text, nullable=True),
+    Column("mercury_document_status", Text, nullable=True),
+    Column("document_priority", Text, nullable=True),
+    Column("received_date", DateTime(timezone=True), nullable=True),
+    Column("dps_date", DateTime(timezone=True), nullable=True),
+    Column("queue", Text, nullable=True),
+    Column("business_area", Text, nullable=True),
+    Column("mercury_case_id", Text, nullable=True),
+    Column("driver_key", PG_UUID(as_uuid=False), nullable=True),
+    Column("document_url", Text, nullable=True),
+    Column("raw_blob_url", Text, nullable=True),
+    Column("pipeline_status", _pipeline_status_enum, nullable=False),
+    Column("current_stage", _stage_enum, nullable=False),
+    Column("attempt_count", Integer, nullable=False),
+    Column("first_seen_at", DateTime(timezone=True), nullable=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
 )
 
 
 @dataclass(frozen=True)
 class DmerDocumentRecord:
-    """A row in the ``dmer_document`` table (di-processor's view)."""
+    """A row in the ``dmer_document`` table."""
 
     id: str
     document_guid: str
-    correlation_id: str
-    current_stage: PipelineStage
-    pipeline_status: PipelineStatus
-    driver_key: str | None = None
-    extracted_blob_url: str | None = None
+    document_name: str | None
+    mercury_document_status: str | None
+    document_priority: str | None
+    received_date: datetime | None
+    dps_date: datetime | None
+    queue: str | None
+    business_area: str | None
+    mercury_case_id: str | None
+    driver_key: str | None
+    document_url: str | None
+    raw_blob_url: str | None
+    pipeline_status: str
+    current_stage: str
+    attempt_count: int
+    first_seen_at: datetime
+    updated_at: datetime
+
+
+_ALL_COLUMNS = (
+    dmer_document.c.id,
+    dmer_document.c.document_guid,
+    dmer_document.c.document_name,
+    dmer_document.c.mercury_document_status,
+    dmer_document.c.document_priority,
+    dmer_document.c.received_date,
+    dmer_document.c.dps_date,
+    dmer_document.c.queue,
+    dmer_document.c.business_area,
+    dmer_document.c.mercury_case_id,
+    dmer_document.c.driver_key,
+    dmer_document.c.document_url,
+    dmer_document.c.raw_blob_url,
+    dmer_document.c.pipeline_status,
+    dmer_document.c.current_stage,
+    dmer_document.c.attempt_count,
+    dmer_document.c.first_seen_at,
+    dmer_document.c.updated_at,
+)
 
 
 class InvalidStatusTransition(RuntimeError):
@@ -134,6 +201,92 @@ class DmerDocumentRepository:
     def __init__(self, engine: AsyncEngine) -> None:
         self._engine = engine
 
+    async def upsert_received(
+        self,
+        *,
+        document_guid: str,
+        document_name: str | None,
+        mercury_document_status: str | None,
+        document_priority: str | None,
+        received_date: datetime | None,
+        dps_date: datetime | None,
+        queue: str | None,
+        business_area: str | None,
+        mercury_case_id: str | None,
+        driver_key: str | None,
+        document_url: str | None,
+        now: datetime,
+    ) -> str:
+        """Upsert on ``document_guid``, returning the row's ``id`` either way.
+
+        ``INSERT ... ON CONFLICT (document_guid) DO NOTHING`` -- the single
+        most important idempotency guarantee in the Ingest stage (see
+        01-ingest.md): a redelivered/re-polled document must not reset
+        ``pipeline_status`` on a row already mid-flight. Because ``DO
+        NOTHING`` returns no row on conflict, ``id`` is always re-fetched by
+        ``document_guid`` afterward rather than relying on ``RETURNING``.
+        """
+        stmt = pg_insert(dmer_document).values(
+            document_guid=document_guid,
+            document_name=document_name,
+            mercury_document_status=mercury_document_status,
+            document_priority=document_priority,
+            received_date=received_date,
+            dps_date=dps_date,
+            queue=queue,
+            business_area=business_area,
+            mercury_case_id=mercury_case_id,
+            driver_key=driver_key,
+            document_url=document_url,
+            pipeline_status="RECEIVED",
+            current_stage="INGEST",
+            attempt_count=0,
+            first_seen_at=now,
+            updated_at=now,
+        )
+        stmt = stmt.on_conflict_do_nothing(
+            index_elements=[dmer_document.c.document_guid]
+        )
+        async with self._engine.begin() as conn:
+            await conn.execute(stmt)
+
+        async with self._engine.connect() as conn:
+            result = await conn.execute(
+                select(dmer_document.c.id).where(
+                    dmer_document.c.document_guid == document_guid
+                )
+            )
+            return result.scalar_one()
+
+    async def get_by_id(self, document_id: str) -> DmerDocumentRecord | None:
+        """Return the row for ``document_id`` (the internal PK), or ``None``."""
+        async with self._engine.connect() as conn:
+            result = await conn.execute(
+                select(*_ALL_COLUMNS).where(dmer_document.c.id == document_id)
+            )
+            row = result.first()
+        return DmerDocumentRecord(*row) if row else None
+
+    async def mark_downloaded(
+        self, document_id: str, *, raw_blob_url: str, now: datetime
+    ) -> None:
+        """Advance a row to ``DOWNLOADED``/``EXTRACT`` after the Ingest
+        Function writes the source PDF to ``raw-dmer`` (see 01-ingest.md).
+        """
+        stmt = (
+            dmer_document.update()
+            .where(dmer_document.c.id == document_id)
+            .values(
+                raw_blob_url=raw_blob_url,
+                pipeline_status="DOWNLOADED",
+                current_stage="EXTRACT",
+                attempt_count=dmer_document.c.attempt_count + 1,
+                updated_at=now,
+            )
+        )
+        async with self._engine.begin() as conn:
+            await conn.execute(stmt)
+
     async def get_status(self, document_id: str) -> PipelineStatus | None:
         """Return the current ``pipeline_status``, or None if the row is absent."""
         async with self._engine.connect() as conn:
@@ -145,60 +298,43 @@ class DmerDocumentRepository:
             row = result.first()
         return PipelineStatus(row[0]) if row else None
 
-    async def get_extracted_blob_url(self, document_id: str) -> str | None:
-        """Return the stored combined-extraction blob URL, or None if unset/absent."""
-        async with self._engine.connect() as conn:
-            result = await conn.execute(
-                select(dmer_document.c.extracted_blob_url).where(
-                    dmer_document.c.id == document_id
-                )
-            )
-            row = result.first()
-        return row[0] if row else None
-
     async def upsert_status(
         self,
         document_id: str,
-        correlation_id: str,
         status: PipelineStatus,
         *,
         expected: PipelineStatus | None,
         document_guid: str | None = None,
         stage: PipelineStage | None = None,
-        extracted_blob_url: str | None = None,
     ) -> None:
         """Atomically move a document from ``expected`` to ``status``.
 
         Compare-and-set: the write applies only if the row is still in
         ``expected``; otherwise :class:`StaleStatusError` is raised and nothing is
-        written. ``expected=None`` means "the row must not exist yet" (the
-        initial insert). ``expected -> status`` is validated against the state
-        machine first, so an illegal move raises :class:`InvalidStatusTransition`
-        before any SQL runs. ``expected == status`` is an idempotent re-entry
-        (e.g. ``EXTRACTING`` again on redelivery) and succeeds while the row is
-        still there.
+        written. ``expected=None`` means "the row must not exist yet" (a
+        bootstrap insert when no Ingest row exists). ``expected -> status`` is
+        validated against the state machine first, so an illegal move raises
+        :class:`InvalidStatusTransition` before any SQL runs. ``expected ==
+        status`` is an idempotent re-entry (e.g. ``EXTRACTING`` again on
+        redelivery) and succeeds while the row is still there.
 
-        On the initial insert ``document_guid`` and ``stage`` are required (both
-        columns are ``NOT NULL``); on subsequent updates they are optional.
-        ``stage`` (``current_stage``) is written only when given, so a
-        status-only write such as ``MANUAL_REVIEW`` leaves the position alone.
-
-        An existing row is changed with a plain ``UPDATE`` (which also applies
-        the ``updated_at`` ``onupdate`` the reconciliation sweeper relies on),
-        never ``INSERT ... ON CONFLICT ... DO UPDATE``.
+        On the insert ``document_guid`` and ``stage`` are required; on updates
+        they are optional. ``stage`` (``current_stage``) is written only when
+        given, so a status-only write such as ``MANUAL_REVIEW`` leaves the
+        position alone. Every write sets ``updated_at`` (the reconciliation
+        sweeper's stall detection scans it).
         """
         target = _validated_status(expected, status)
+        now = func.now()
 
         values: dict[str, object] = {
-            "correlation_id": correlation_id,
             "pipeline_status": target.value,
+            "updated_at": now,
         }
         if stage is not None:
             values["current_stage"] = stage.value
         if document_guid is not None:
             values["document_guid"] = document_guid
-        if extracted_blob_url is not None:
-            values["extracted_blob_url"] = extracted_blob_url
 
         if expected is None:
             if not document_guid:
@@ -209,13 +345,18 @@ class DmerDocumentRepository:
             # the same Mercury document) is a real error and still raises.
             stmt = (
                 pg_insert(dmer_document)
-                .values(id=document_id, **values)
+                .values(
+                    id=document_id,
+                    attempt_count=0,
+                    first_seen_at=now,
+                    **values,
+                )
                 .on_conflict_do_nothing(index_elements=[dmer_document.c.id])
                 .returning(dmer_document.c.id)
             )
         else:
             stmt = (
-                update(dmer_document)
+                dmer_document.update()
                 .where(
                     (dmer_document.c.id == document_id)
                     & (dmer_document.c.pipeline_status == expected.value)

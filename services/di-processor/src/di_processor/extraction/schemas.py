@@ -135,7 +135,6 @@ class CombinedExtraction(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     document_id: str
-    correlation_id: str
     source_model_version: str | None = None
     prompt_version: str | None = None
     processed_at: datetime

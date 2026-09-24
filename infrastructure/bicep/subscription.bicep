@@ -82,6 +82,25 @@ param allowSharedKeyAccess bool = true
 @description('Whether to disable Document Intelligence API-key auth in favour of Azure AD/RBAC only.')
 param disableLocalAuthDocumentIntelligence bool = false
 
+@description('PostgreSQL administrator login username.')
+param postgresAdministratorLogin string = 'rsbc_dmer_admin'
+
+@secure()
+@description('PostgreSQL administrator login password. Supply via a pipeline secret, never a parameters.json file.')
+param postgresAdministratorLoginPassword string
+
+@description('PostgreSQL compute SKU name.')
+param postgresSkuName string = 'Standard_B2s'
+
+@description('PostgreSQL compute SKU tier.')
+param postgresSkuTier string = 'Burstable'
+
+@description('PostgreSQL storage size in GB.')
+param postgresStorageSizeGB int = 32
+
+@description('Optional resource ID of the platform/hub-managed Private DNS Zone for privatelink.postgres.database.azure.com. Leave empty — same confirmed-empty reasoning as other private endpoints in this landing zone.')
+param privateDnsZoneIdPostgres string = ''
+
 @description('Cost center tag value.')
 param costCenter string = 'RSBC'
 
@@ -192,6 +211,12 @@ module workload 'main.bicep' = {
     blobContainerNames: blobContainerNames
     allowSharedKeyAccess: allowSharedKeyAccess
     disableLocalAuthDocumentIntelligence: disableLocalAuthDocumentIntelligence
+    postgresAdministratorLogin: postgresAdministratorLogin
+    postgresAdministratorLoginPassword: postgresAdministratorLoginPassword
+    postgresSkuName: postgresSkuName
+    postgresSkuTier: postgresSkuTier
+    postgresStorageSizeGB: postgresStorageSizeGB
+    privateDnsZoneIdPostgres: privateDnsZoneIdPostgres
     costCenter: costCenter
     owner: owner
     dataClassification: dataClassification

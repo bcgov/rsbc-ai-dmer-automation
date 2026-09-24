@@ -52,7 +52,6 @@ One shape for all four queues — pointers only, never extracted/normalized cont
   "document_guid":  "123e4567-e89b-...",
   "driver_key":     "a91b77e4-...",
   "blob_url":       "https://.../extracted-dmer/8f3c1b2a/combined.json",
-  "correlation_id": "5d10...",
   "attempt":        1,
   "enqueued_at":    "2026-09-18T12:00:00Z"
 }
@@ -60,12 +59,12 @@ One shape for all four queues — pointers only, never extracted/normalized cont
 
 | Field | Notes |
 |---|---|
-| `message_id` | Identifies **this** event on **this** queue, and is the idempotency key. Derive it deterministically from the event — `dmer_common.dto.event_message_id(<queue>, <natural key>)`, e.g. `event_message_id("dmer-extracted", document_id)` — so every retry or replay of the same event carries the same ID. **Never copy the upstream message's `message_id`**: two different events would then share an ID, and a consumer could mistake one for the other (or fail to recognise a replay triggered by a re-sent upstream message). `correlation_id` is what links events across stages. Also used as the Service Bus `MessageId` (broker duplicate detection, per queue). The `dmer-ingest` exception: `MessageId = document_guid`, for broker duplicate detection of re-polled documents. |
-| `document_id` | Internal `dmer_document.id` (uuid) — not `document_guid`. Use this for every DB join and log line. |
+| `message_id` | Identifies **this** event on **this** queue, and is the idempotency key. Derive it deterministically from the event — `dmer_common.dto.event_message_id(<queue>, <natural key>)`, e.g. `event_message_id("dmer-extracted", document_id)` — so every retry or replay of the same event carries the same ID. **Never copy the upstream message's `message_id`**: two different events would then share an ID, and a consumer could mistake one for the other (or fail to recognise a replay triggered by a re-sent upstream message). `document_id` is what links events across stages. Also used as the Service Bus `MessageId` (broker duplicate detection, per queue). The `dmer-ingest` exception: `MessageId = document_guid`, for broker duplicate detection of re-polled documents. |
+| `document_id` | Internal `dmer_document.id` (uuid) — not `document_guid`. Use this for every DB join and log line; also the tracing key across a document's whole life — there is no separate `correlation_id`. |
 | `document_guid` | Mercury's identifier. Carried for traceability; **do not** use it as a business key downstream of Ingest (see `data-model.md#document_guid-is-not-a-content-key`). |
 | `driver_key` | Set only when Mercury supplied it at Ingest; otherwise resolved by [Document Orchestration's Resolve Driver activity](stages/03-document-orchestration.md#activity-resolve-driver) before `driver-decision` is published; Extraction forwards it as received. Required on `driver-decision`. |
 | `blob_url` | Points at the artifact the *next* stage needs — `raw-dmer` for `dmer-ingest`→Ingest's own read, `extracted-dmer` for `dmer-extracted`, etc. Never an extraction/normalization payload inline. |
-| `attempt` | Incremented on republish (sweeper re-signal, DLQ Drain fallback requeue). |
+| `attempt` | Incremented on republish (sweeper re-signal, DLQ Drain **operational-recovery redrive** for a `TRANSIENT`/`PROCESSING` failure). Bounded by `DLQ_REDRIVE_MAX_ATTEMPTS`; at the ceiling the message is re-categorized `UNKNOWN` for human triage rather than redriven again. |
 
 **Security**: never put the licence number or any clinical content in a message body — Service Bus
 is encrypted at rest, but any operator with portal access can peek a message. Use `driver_key`. The
@@ -78,7 +77,7 @@ because it's the other message-shaped contract in the system:
 
 | Operation | Purpose |
 |---|---|
-| `UPDATE_OUTCOME` | Write the outcome code (`CP`/`IN`/`PR`/`PU`/`PCM`/`CR`) and reason back to the DMER record. |
+| `UPDATE_OUTCOME` | Write the outcome code (`CP`/`IN`/`PR`/`PU`/`PCM`/`CR`) and reason back to the DMER record. A **fallback** `UPDATE_OUTCOME` (`IN`, `decided_by = FALLBACK`, carrying `fallback_reason_code` + the "AI could not process" comment) is written **only** by the DLQ Drain for a `PERMANENT_BUSINESS` failure — never for a transient/processing/unknown failure. |
 | `MARK_DUPLICATE` | Flag a document as a duplicate of another — Mercury's `Rejected` status per question I-7. |
 | `MAP_DRIVER` | Attach the proposed driver to the DMER record (question I-11: AI may do this automatically). |
 | `CREATE_CASE` | Create a case where none exists, or attach to an existing open case (question I-13). |
@@ -145,17 +144,29 @@ duplicate delivery of a completed message.
 | Time-to-live expiry | Only when `EnableDeadLetteringOnMessageExpiration` is set (it is, on all four queues). |
 | Explicit dead-lettering | Handler calls `DeadLetterMessageAsync(reason, description)` — the only path that records *why*. Always prefer this for known-bad input. The shared `dmer_common.messaging.ServiceBusConsumer` does this on any handler exception: `reason`/`description` come from the exception's `dead_letter_reason`/`safe_detail` attributes when present (e.g. extraction's failure codes), otherwise `HandlerError` and the exception type. It never logs or sends the exception message (PII risk). |
 
-Classify every failure explicitly:
+Classify every failure explicitly. The DLQ Drain uses these same categories to decide what happens
+to a dead-lettered message — see
+[DLQ Drain §Failure categorization](stages/10-dlq-drain.md#failure-categorization-the-first-thing-the-drain-does).
+The `failure_category` values below are what land on `processing_error.failure_category` and govern
+whether a fallback business decision may be produced:
 
-| Class | Examples | Handling |
-|---|---|---|
-| **Transient** | HTTP 429 from DI/OpenAI, Mercury timeout, transient DB error | Retry inside the handler with exponential backoff. Never let it consume delivery count on its own — only dead-letter after the internal retry budget is exhausted. |
-| **Downstream outage** | Mercury unavailable, Azure OpenAI region issue | Back off and let the queue build; the queue is the shock absorber. Alert on queue depth, not individual failures. |
-| **Poison** | Malformed/unreadable PDF, `document_guid` that no longer exists, schema violation | Dead-letter immediately and explicitly with a reason. Retrying wastes quota and delays everything behind it in the queue. |
+| `failure_category` | Examples | In-handler handling | On dead-letter, may produce a fallback decision? |
+|---|---|---|---|
+| **`PERMANENT_BUSINESS`** | Malformed/unreadable PDF, `document_guid` that no longer exists, content schema violation | Dead-letter immediately and explicitly with a reason. Retrying wastes quota and delays everything behind it. | **Yes** — and *only* this category, and *only* under the explicit business rule for un-processable DMERs (question I-1): `IN`, `decided_by = FALLBACK`. |
+| **`TRANSIENT`** | Lock/session expiry mid-processing, transient DB error/deadlock, Service Bus lock lost, network blip, `MaxDeliveryCount` reached purely via repeated timeouts | Retry inside the handler with exponential backoff. Never let it consume delivery count on its own — only dead-letter after the internal retry budget is exhausted. | **No** — route to operational recovery (bounded redrive) + `MANUAL_REVIEW` + alert. |
+| **`PROCESSING`** | HTTP 429/5xx from DI/OpenAI/Mercury past the retry budget, downstream outage that outlasted TTL | Back off and let the queue build; the queue is the shock absorber. Alert on queue depth, not individual failures. | **No** — route to `MANUAL_REVIEW` + alert; fix/redrive the dependency, do not decide. |
+| **`UNKNOWN`** | Missing/garbled dead-letter reason, unexpected exception, `MaxDeliveryCount` system reason with no correlating application error | N/A (only observable at dead-letter time). | **No** — route to `MANUAL_REVIEW` + alert for human triage. Default category when classification is not confident. |
+
+**Safety invariant:** a fallback business decision is produced for `PERMANENT_BUSINESS` only.
+Transient, processing, and unknown failures are made *visible* (via `MANUAL_REVIEW`,
+`processing_error`, and an alert) but are **never** auto-converted into an `IN` — or any other —
+business outcome. See the legacy `error_class` mapping in
+[`data-model.md`](data-model.md) (`POISON → PERMANENT_BUSINESS`, `DOWNSTREAM → PROCESSING`).
 
 Dead-letter queues do not drain themselves and there is no native requeue — see
 [DLQ Drain](stages/10-dlq-drain.md) for the function that reads every `$DeadLetterQueue` and turns
-each message into a recorded, visible outcome.
+each message into a recorded, visible outcome (a decision only for `PERMANENT_BUSINESS`; visibility
++ recovery routing for everything else).
 
 ## Alignment gaps vs. current code
 
@@ -167,20 +178,23 @@ Under the revised architecture:
 - There are **four** queues, not two, with the names above (`dmer-ingest`, `dmer-raw`,
   `dmer-extracted`, `driver-decision`), and a fifth logical delivery path (`mercury_outbox`, DB-driven).
 - One message shape covers all four queues (`document_id`, `document_guid`, `driver_key`,
-  `blob_url`, `correlation_id`, `attempt`, `enqueued_at`) rather than a distinct DTO per queue.
+  `blob_url`, `attempt`, `enqueued_at`) rather than a distinct DTO per queue.
 - `driver-decision` requires **sessions** (`SessionId = driver_key`) — the current
   `ServiceBusPublisher`/`ServiceBusConsumer` in `libs/dmer_common/src/dmer_common/messaging/` have
   no session-aware send/receive path yet; a session receiver (`ServiceBusSessionReceiver`, or the
   Durable Functions Service Bus session trigger) is new work, not an extension of the existing
   consumer.
 
-**What's reusable as-is:** the `Envelope` base class's camelCase-on-the-wire pattern
-(`message_id`/`correlation_id`/`schema_version`), the `ServiceBusPublisher`/`ServiceBusConsumer`
-settlement logic (complete on success, dead-letter with reason on handler failure, no-op on a
-`message_id` already processed), and the idempotency store abstraction — keyed on
-`(idempotency_scope, message_id)`, where the scope names the consumer (e.g.
-`di-processor/dmer-raw`), so a store shared between services can never let one consumer's
-completed ID suppress another's; a durable implementation keys its table the same way. These are
-architecture-agnostic and should be kept; only the concrete DTOs and the queue names they map to
-need to change. Add `IngestMessage` (or rename `RawDmerMessage`), `RawMessage`, `ExtractedMessage`,
-and `DriverDecisionMessage` (session-aware) as the four envelope subclasses.
+**Already done:** the `Envelope` base class carries `message_id`/`document_id`/`schema_version`
+(no separate `correlation_id` — `document_id` serves that role, per the correlation-id decision
+above), and `dmer_common.telemetry`'s context-propagation helpers
+(`document_id_context`/`get_document_id`) and `ServiceBusPublisher`/`ServiceBusConsumer` match.
+`RawMessage` (`dmer-raw`) and `ExtractedMessage` (`dmer-extracted`) are implemented as
+`PipelineMessage` subclasses (inheriting `document_id` from `Envelope`), with deterministic
+per-event `message_id`s (`event_message_id`). The consumer uses a durable, atomic claim in
+`message_idempotency` keyed on `(idempotency_scope, message_id)` — see
+[Message idempotency](#message-idempotency-consumer-side) — and takes the broker `MessageId`
+when a producer (e.g. Ingest) sets it only as the Service Bus property.
+
+**Still to add:** `IngestMessage` (`dmer-ingest`) and `DriverDecisionMessage` (`driver-decision`,
+session-aware) as envelope subclasses, when their stages are built.

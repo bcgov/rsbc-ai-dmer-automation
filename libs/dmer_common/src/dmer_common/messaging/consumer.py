@@ -1,7 +1,7 @@
 """Envelope-aware Service Bus consumer with durable idempotency and settlement.
 
 The consumer receives raw Service Bus messages, extracts the envelope
-(``messageId``/``correlationId``), binds the correlation id for the duration of
+(``messageId``/``documentId``), binds the document id for the duration of
 handling, and **claims** the message in the idempotency store before invoking
 the handler (see :mod:`dmer_common.messaging.idempotency` for the semantics).
 
@@ -35,7 +35,7 @@ import json
 from collections.abc import Callable
 from typing import Any, Protocol
 
-from ..telemetry import correlation_context, get_logger
+from ..telemetry import document_id_context, get_logger
 from .idempotency import ClaimOutcome, IdempotencyStore
 
 _log = get_logger(__name__)
@@ -76,6 +76,16 @@ def _envelope(message: Any) -> dict[str, Any]:
     return json.loads(_message_body(message).decode("utf-8"))
 
 
+def _message_id(message: Any, envelope: dict[str, Any]) -> str | None:
+    """The message's idempotency ID: the envelope's ``messageId``, else the
+    broker ``MessageId`` property (some producers set only the latter)."""
+    body_id = envelope.get("messageId")
+    if body_id:
+        return str(body_id)
+    broker_id = getattr(message, "message_id", None)
+    return str(broker_id) if broker_id else None
+
+
 def _dead_letter_fields(exc: BaseException) -> tuple[str, str]:
     """Return ``(reason, description)`` for dead-lettering ``exc``.
 
@@ -92,7 +102,7 @@ def _dead_letter_fields(exc: BaseException) -> tuple[str, str]:
 
 
 class ServiceBusConsumer:
-    """Consumes messages, enforcing correlation propagation and idempotency.
+    """Consumes messages, enforcing document-id propagation and idempotency.
 
     Parameters
     ----------
@@ -129,8 +139,12 @@ class ServiceBusConsumer:
         message dead-lettered, and the error re-raised to the caller.
         """
         envelope = _envelope(message)
-        message_id = envelope.get("messageId")
-        correlation_id = envelope.get("correlationId")
+        message_id = _message_id(message, envelope)
+        if message_id and not envelope.get("messageId"):
+            # Producers may set the ID only as the broker MessageId (Ingest does):
+            # carry it into the envelope so the handler's model sees it.
+            envelope["messageId"] = message_id
+        document_id = envelope.get("documentId")
         if not message_id:
             self._receiver.dead_letter_message(
                 message,
@@ -139,7 +153,7 @@ class ServiceBusConsumer:
             )
             return False
 
-        with correlation_context(correlation_id):
+        with document_id_context(document_id):
             # Raises if the store is unavailable: the message is left unsettled
             # and redelivered after its lock expires.
             claim = self._idempotency.claim(self._scope, message_id)

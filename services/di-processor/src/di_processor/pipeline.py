@@ -66,11 +66,11 @@ from datetime import UTC, datetime
 
 from dmer_common.db import (
     DmerDocumentRepository,
+    DmerStageRunRepository,
     ExtractionRecord,
     ExtractionRepository,
     PipelineStage,
     PipelineStatus,
-    StageRunRepository,
     StaleStatusError,
 )
 from dmer_common.doc_intelligence import DocumentIntelligenceClient
@@ -145,7 +145,7 @@ class Pipeline:
         openai: OpenAIClient,
         repository: DmerDocumentRepository,
         extraction_repository: ExtractionRepository,
-        stage_run_repository: StageRunRepository,
+        stage_run_repository: DmerStageRunRepository,
         publisher: ServiceBusPublisher,
     ) -> None:
         self._cfg = config
@@ -165,7 +165,6 @@ class Pipeline:
         the consumer dead-letters the message.
         """
         doc_id = message.document_id
-        correlation_id = message.correlation_id
 
         with failure_step(FailureCode.DB_READ_FAILED):
             current = await self._repo.get_status(doc_id)
@@ -184,7 +183,7 @@ class Pipeline:
                 failure = as_failure(exc, FailureCode.UNEXPECTED)
                 self._log_failure("re-publish failed", doc_id, failure)
                 if not await self._route_to_manual_review(
-                    doc_id, correlation_id, expected=PipelineStatus.EXTRACTED
+                    doc_id, expected=PipelineStatus.EXTRACTED
                 ):
                     return  # another worker moved the document on
                 if failure is exc:
@@ -202,7 +201,6 @@ class Pipeline:
                 with failure_step(FailureCode.DB_WRITE_FAILED):
                     await self._repo.upsert_status(
                         doc_id,
-                        correlation_id,
                         PipelineStatus.RECEIVED,
                         expected=None,
                         document_guid=message.document_guid,
@@ -213,7 +211,9 @@ class Pipeline:
             # Audit trail: open this attempt's stage run (needs the document row).
             with failure_step(FailureCode.DB_WRITE_FAILED):
                 run_id = await self._stage_runs.start(
-                    doc_id, PipelineStage.EXTRACT, model_version=self._model_version()
+                    document_id=doc_id,
+                    stage=PipelineStage.EXTRACT,
+                    model_version=self._model_version(),
                 )
 
             with failure_step(FailureCode.SOURCE_DOWNLOAD_FAILED):
@@ -224,7 +224,6 @@ class Pipeline:
                 if status is PipelineStatus.RECEIVED:
                     await self._repo.upsert_status(
                         doc_id,
-                        correlation_id,
                         PipelineStatus.DOWNLOADED,
                         expected=status,
                         stage=PipelineStage.EXTRACT,
@@ -234,7 +233,6 @@ class Pipeline:
                 # redelivery) it is an idempotent re-entry.
                 await self._repo.upsert_status(
                     doc_id,
-                    correlation_id,
                     PipelineStatus.EXTRACTING,
                     expected=status,
                     stage=PipelineStage.EXTRACT,
@@ -281,7 +279,6 @@ class Pipeline:
             # Stage D: merge (custom base + handwritten fill) -> combined.json.
             combined = merge.merge(
                 doc_id,
-                correlation_id,
                 top,
                 handwritten,
                 source_model_version=self._cfg.custom_model_id,
@@ -318,11 +315,9 @@ class Pipeline:
                 # document now waits on the next stage.
                 await self._repo.upsert_status(
                     doc_id,
-                    correlation_id,
                     PipelineStatus.EXTRACTED,
                     expected=status,
                     stage=PipelineStage.NORMALIZE,
-                    extracted_blob_url=combined_uri,
                 )
                 status = PipelineStatus.EXTRACTED
 
@@ -350,9 +345,7 @@ class Pipeline:
                 )
                 return
             self._log_failure("pipeline failed", doc_id, failure)
-            if not await self._route_to_manual_review(
-                doc_id, correlation_id, expected=status
-            ):
+            if not await self._route_to_manual_review(doc_id, expected=status):
                 # Another worker moved the document on meanwhile: its result
                 # stands, so don't dead-letter this (duplicate) delivery.
                 return
@@ -417,21 +410,16 @@ class Pipeline:
             )
 
     async def _republish(self, message: RawMessage) -> None:
-        """Re-publish the stored combined-extraction pointer for an EXTRACTED doc.
+        """Re-publish the combined-extraction pointer for an EXTRACTED doc.
 
         Covers a crash after EXTRACTED was persisted but before (or during) the
-        publish. The re-sent message carries the same deterministic
-        ``message_id`` as the first publish, so a consumer that already processed
-        it no-ops on it.
+        publish. The pointer isn't stored: ``combined.json`` always lives at
+        ``extracted-dmer/<document_id>/combined.json``, so it is rebuilt from the
+        path. The re-sent message carries the same deterministic ``message_id``
+        as the first publish, so a consumer that already processed it no-ops.
         """
         doc_id = message.document_id
-        with failure_step(FailureCode.DB_READ_FAILED):
-            blob_url = await self._repo.get_extracted_blob_url(doc_id)
-        if not blob_url:
-            raise PipelineFailure(
-                FailureCode.EXTRACTED_POINTER_MISSING,
-                "error=MissingExtractedBlobUrl; status=EXTRACTED",
-            )
+        blob_url = self._blob.blob_url(extracted_dmer(), combined_path(doc_id))
         with failure_step(FailureCode.PUBLISH_FAILED):
             self._publish(message, blob_url)
         _log.info(
@@ -446,12 +434,11 @@ class Pipeline:
         document — never the incoming ``dmer-raw`` ID. Every publish or replay
         for a document carries the same ID (so downstream idempotency catches
         repeats, whatever upstream message triggered it), and it can never be
-        mistaken for the upstream event. ``correlation_id`` links the two.
+        mistaken for the upstream event. ``document_id`` links the two.
         """
         self._publisher.publish(
             ExtractedMessage(
                 message_id=event_message_id(EXTRACTED_EVENT, message.document_id),
-                correlation_id=message.correlation_id,
                 document_id=message.document_id,
                 document_guid=message.document_guid,
                 driver_key=message.driver_key,
@@ -464,7 +451,6 @@ class Pipeline:
     async def _route_to_manual_review(
         self,
         doc_id: str,
-        correlation_id: str,
         *,
         expected: PipelineStatus | None,
     ) -> bool:
@@ -479,7 +465,7 @@ class Pipeline:
             return True  # failed before the row existed: nothing to route
         try:
             await self._repo.upsert_status(
-                doc_id, correlation_id, PipelineStatus.MANUAL_REVIEW, expected=expected
+                doc_id, PipelineStatus.MANUAL_REVIEW, expected=expected
             )
         except StaleStatusError as exc:
             _log.warning(

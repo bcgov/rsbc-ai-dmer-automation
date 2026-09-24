@@ -39,7 +39,7 @@ document's current position in the pipeline.
 
 | Column | Type | Notes |
 |---|---|---|
-| `id` | uuid PK | Internal identifier — use this, never `document_guid`, in queue messages and joins. |
+| `id` | uuid PK | Internal identifier — use this, never `document_guid`, in queue messages, joins, and every log line. Generated once at ingest, constant for the document's life; serves as the tracing/correlation key on its own — there is no separate `correlation_id`. |
 | `document_guid` | uuid, **UNIQUE** | Mercury's identifier. See [`document_guid` is not a content key](#document_guid-is-not-a-content-key) below — this uniqueness guards against redelivery, not duplicate content. |
 | `document_name` | text | As received from Mercury. |
 | `mercury_document_status` | text | Mercury's own status field (`Uploaded`, `Rejected`, ...). Refreshed only by the driver orchestration's completeness call ([Decision Gateway](stages/07-decision-gateway.md)), never by the poller. |
@@ -48,11 +48,11 @@ document's current position in the pipeline.
 | `queue` / `business_area` | text | DPS General / DPS Unknown, etc. |
 | `mercury_case_id` | text, nullable | Set when Mercury supplied a case. |
 | `driver_key` | uuid FK → `driver.driver_key`, nullable | Null until Mercury supplies a driver object at Ingest. When Mercury supplies none it stays null — it is resolved by [Document Orchestration's Resolve Driver activity](stages/03-document-orchestration.md#activity-resolve-driver), not by Extraction. |
+| `document_url` | text, nullable | Mercury's pre-signed source URL, set by the Page Poller from the batch GET response. Not carried on the `dmer-ingest` message — the Ingest Function re-reads it from here (see [Ingest](stages/01-ingest.md)). Left populated after download, not nulled out, as a fallback for a DLQ replay/re-poll — pending question M-1's answer on presigned URL TTL and refresh. |
 | `raw_blob_url` | text | Set by Ingest once the source PDF lands in `raw-dmer`. |
 | `pipeline_status` | enum | Health/lifecycle state — see [Status modelling](#status-modelling). |
 | `current_stage` | enum | Position — see [Status modelling](#status-modelling). A stage that finishes sets the **next** stage (Ingest → `EXTRACT` with `DOWNLOADED`; Extraction → `NORMALIZE` with `EXTRACTED`). Status-only writes such as `MANUAL_REVIEW` leave it unchanged, so it still shows where the document stopped. |
 | `attempt_count` | int | Incremented on republish (sweeper) or stage retry. |
-| `correlation_id` | uuid | Generated once at ingest; constant for the document's life; propagate on every log line and queue message. |
 | `first_seen_at` / `updated_at` | timestamptz | `updated_at` is set on **every** write to this row, by every stage — it is what the reconciliation sweeper's stall-detection query scans. |
 
 `pipeline_status` changes are **atomic compare-and-set** writes (`UPDATE ... WHERE id = :id AND
@@ -182,9 +182,21 @@ The final per-document outcome. Written **once, atomically with the outbox row**
 | `superseded_by_cutoff_rule` | bool | Set when a cut-off document was excluded from the outcome decision in favour of a clear sibling. |
 | `driver_mapped` | bool | |
 | `proposed_driver_key` | uuid, nullable | Set when Mercury had no driver object but a licence resolved to exactly one driver (question I-11: AI may map automatically). |
-| `decision_reason` | jsonb | The rule path, the diff that forced `IN`, the cut-off flags that applied. |
-| `decided_by` | enum | `AI`, `FALLBACK`, `MANUAL` — a fallback outcome must never be mistaken for a considered one. |
+| `decision_reason` | jsonb | The rule path, the diff that forced `IN`, the cut-off flags that applied. For a fallback: the failure category, the failed stage, and the dead-letter reason. |
+| `decided_by` | enum | `AI`, `FALLBACK`, `MANUAL` — a fallback outcome must never be mistaken for a considered one. A `FALLBACK` row is **only** ever produced by [DLQ Drain](stages/10-dlq-drain.md) for a `PERMANENT_BUSINESS` failure under an explicit business rule; it is never produced for a transient, processing, or unknown failure. |
+| `fallback_reason_code` | text, nullable | Set only when `decided_by = FALLBACK`. The enumerated reason (e.g. `PERMANENT_UNREADABLE_DOCUMENT`) explaining why a fallback was permitted — see [DLQ Drain §Reason codes](stages/10-dlq-drain.md#reason-codes). Non-null on every fallback row; null otherwise. |
 | `decided_at` | timestamptz | |
+
+**Duplicate-decision prevention:** a document has **at most one** `dmer_decision` row, ever. The
+DLQ Drain's fallback insert is guarded (`WHERE NOT EXISTS` on `document_id`) so a redrive cannot add
+a second decision or overwrite a human/AI decision that landed first (see the immutability rule in
+[Post-Processing](stages/08-post-processing.md#decision-immutability-after-human-review-question-i-2-answered)).
+A partial unique index enforces this at the database level:
+
+```sql
+-- at most one decision per document
+CREATE UNIQUE INDEX ON dmer_decision (document_id);
+```
 
 Duplicates and outcomes are recorded here, **not** on `dmer_document` — a document is a fact; being
 a duplicate is a decision, and decisions can change when a new sibling arrives (question I-10).
@@ -218,11 +230,17 @@ The failure register — populated by the [DLQ Drain](stages/10-dlq-drain.md) an
 | `id` | bigserial PK | |
 | `document_id` | uuid FK → `dmer_document.id` | |
 | `stage` | enum | Same stage enum as `dmer_stage_run`. |
-| `error_class` | enum | `TRANSIENT`, `POISON`, `DOWNSTREAM` — see `azure-service-bus.md` for the classification rule. |
-| `message` | text | |
+| `error_class` | enum | Legacy classification, retained for back-compat: `TRANSIENT`, `POISON`, `DOWNSTREAM`. New rows should also set `failure_category` (below); `POISON` maps to `PERMANENT_BUSINESS`, `DOWNSTREAM` to `PROCESSING`. See `azure-service-bus.md` and [DLQ Drain](stages/10-dlq-drain.md#failure-categorization-the-first-thing-the-drain-does) for the classification rule. |
+| `failure_category` | enum | `PERMANENT_BUSINESS`, `TRANSIENT`, `PROCESSING`, `UNKNOWN` — the category that governs whether a fallback decision may be produced. **Only `PERMANENT_BUSINESS` may accompany a `dmer_decision`.** |
+| `reason_code` | text | Stable enumerated reason string (e.g. `PERMANENT_UNREADABLE_DOCUMENT`, `TRANSIENT_LOCK_EXPIRED`, `UNKNOWN_UNCLASSIFIED`) — see [DLQ Drain §Reason codes](stages/10-dlq-drain.md#reason-codes). Makes failures queryable/auditable rather than free-text-only. |
+| `message` | text | Raw dead-letter reason string, verbatim. |
 | `dlq_message_id` | text, nullable | |
+| `redrive_count` | int, default 0 | Bounded operational-recovery redrive attempts for `TRANSIENT`/`PROCESSING`; at the ceiling the row is re-categorized `UNKNOWN`. |
 | `occurred_at` | timestamptz | |
 | `resolved_at` / `resolution` | timestamptz, text, nullable | |
+
+Unique on `(document_id, stage, dlq_message_id)` — makes re-draining the same dead-lettered message
+a no-op rather than a duplicate row (see [DLQ Drain §Idempotency](stages/10-dlq-drain.md#idempotency-requirements)).
 
 ### `poll_checkpoint`
 
@@ -231,7 +249,7 @@ Where the poller got to, per source (`BACKLOG` or `REALTIME`).
 | Column | Type | Notes |
 |---|---|---|
 | `source` | text PK | |
-| `last_page` | int | Or the opaque cursor from Mercury's cursor-based pagination (question M-2) — confirm the type once the poller is built; the architecture doc's ERD shows `int` but Mercury returns an opaque `cursor` string. |
+| `last_cursor` | text, nullable | Mercury's `nextLink` URL from the last page fetched, followed as-is on the next poll — not a page number. Was `last_page int` (matching the architecture doc's ERD) until the poller was actually built and that type didn't fit cursor-based pagination (question M-2: confirmed). Null between poll cycles (last page of a cycle had no `nextLink`) or on first run. |
 | `last_received_date` | timestamptz | |
 | `last_run_at` | timestamptz | |
 
@@ -300,6 +318,10 @@ CREATE INDEX ON mercury_outbox (status, next_attempt_at) WHERE status = 'PENDING
 CREATE INDEX ON dmer_extraction (comparison_hash);
 -- stage timings and replay
 CREATE INDEX ON dmer_stage_run (document_id, stage, attempt_no DESC);
+-- at most one decision per document (duplicate-decision prevention)
+CREATE UNIQUE INDEX ON dmer_decision (document_id);
+-- re-drain idempotency: one processing_error row per dead-lettered message
+CREATE UNIQUE INDEX ON processing_error (document_id, stage, dlq_message_id);
 ```
 
 ## `document_guid` is not a content key

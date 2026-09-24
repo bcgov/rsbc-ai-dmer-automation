@@ -116,7 +116,7 @@ addresses four things the original architecture left open:
 | Rule engine | An in-process library (GoRules/Zen) inside a Durable activity — **not a separate service** | It's a library, not a service. |
 | Database | Per-stage status columns replaced by a `dmer_stage_run` audit table + two denormalized pointers on `dmer_document` | Per-stage columns lose attempt history and force a migration for every new stage. |
 | Mercury write-back | `mercury_outbox` table, written in the same transaction as the decision, drained by a publisher | Guarantees the decision and the intent to publish it can't diverge. |
-| Failure handling | A document that exhausts retries still produces a fallback outcome (`IN`) rather than stopping | Failing to decide must not mean failing to appear. |
+| Failure handling | The DLQ Drain classifies each dead-letter (permanent-business / transient / processing / unknown); only a **permanent-business** failure produces a fallback outcome (`IN`), the rest go to manual review / operational recovery | Failing to decide must not mean failing to appear — but a transient fault must not masquerade as a decision. See [ADR-0002](../architecture/decision-records/0002-dlq-fallback-decisions-gated-by-failure-category.md). |
 | Queue naming | The queue between Ingest and Extraction is `dmer-raw` (not `dmer-extract`) | It carries documents *awaiting* extraction, not documents already extracted. |
 | Reconciliation | Added a sweeper function and a daily report against Mercury | Turns "we believe nothing is stuck" into something demonstrable. |
 
@@ -129,7 +129,7 @@ The current state of the codebase, verified against the placeholder folders and 
 
 - **`libs/dmer_common` is real, tested code — reuse what's architecture-agnostic, replace what
   isn't.** Reusable as-is: `messaging/{publisher,consumer,idempotency}.py` (settlement logic,
-  idempotency abstraction), `telemetry/logging.py` (structured JSON logging, correlation
+  idempotency abstraction), `telemetry/logging.py` (structured JSON logging, document-id
   propagation, PII redaction), `retry/{policies,circuit_breaker}.py`, `storage/client.py`
   (`BlobClient`), `doc_intelligence/client.py`, `openai_client/client.py`, `config/__init__.py`.
   Needs rework: `db/{documents,status}.py` (wrong table/schema — see
@@ -157,7 +157,7 @@ testable and the riskiest unknowns are hit early:
 | 2 | [Extraction](stages/02-extraction.md) | Combined JSON produced for a representative sample including cut-off and handwriting-heavy forms; cut-off flags validated against a manually labelled set; `licence_number_read` recorded. (`driver_key` resolution is no longer part of this phase.) |
 | 3 | [Document Orchestration](stages/03-document-orchestration.md) | Normalize and Rule Engine activities running end to end; `rule_evaluation` populated with full outcome lists and `rules_version`. |
 | 4 | [Driver Orchestration](stages/06-driver-orchestration.md) | The join proven **under concurrency**: a driver with several documents finishing simultaneously produces exactly one evaluation and one set of decisions. Test this deliberately with a load harness, not incidentally. |
-| 5 | [Reliability](stages/09-reliability-components.md), [DLQ Drain](stages/10-dlq-drain.md) | Mercury outage simulated and recovered with no lost outcome; poison document dead-lettered, drained, and delivered as fallback `IN`. |
+| 5 | [Reliability](stages/09-reliability-components.md), [DLQ Drain](stages/10-dlq-drain.md) | Mercury outage simulated and recovered with no lost outcome; a **permanent-business** poison document (unreadable PDF) dead-lettered, drained, and delivered as fallback `IN`; a **transient** dead-letter (e.g. lock expiry) drained to `MANUAL_REVIEW` with **no** decision and redriven successfully. |
 | 6 | Backlog drain and tuning | Quota-bounded backfill running at the agreed rate (~1M documents, oldest-first, per question I-15) alongside real-time submissions. |
 
 **Phase 4's exit criterion is the one to be strict about.** The concurrency race in the driver join
@@ -171,7 +171,9 @@ reaches `DECIDED` and exactly one outbox row exists per document.
 These are answered in the architecture document and are treated as settled in every stage doc that
 implements them — don't re-litigate them without a reason:
 
-- Fallback outcome is `IN` with comment "AI could not process," written back to Mercury (I-1).
+- Fallback outcome is `IN` with comment "AI could not process," written back to Mercury (I-1) —
+  **only** for a permanent-business failure (an un-processable DMER), never for a transient,
+  processing, or unknown failure (see [ADR-0002](../architecture/decision-records/0002-dlq-fallback-decisions-gated-by-failure-category.md)).
 - AI never revises a decision after a human has reviewed it (I-2).
 - Rule engine decides PR/PU/PCM/CR entirely from medical content; `document_priority` never
   overrides it (I-3).

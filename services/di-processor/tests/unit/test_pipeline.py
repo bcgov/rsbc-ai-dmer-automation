@@ -36,12 +36,9 @@ class FakeRepo:
     worker had written first.
     """
 
-    def __init__(
-        self, initial=None, extracted_blob_url=None, stage=None, interleave=None
-    ):
+    def __init__(self, initial=None, stage=None, interleave=None):
         self._interleave = dict(interleave or {})
         self._status = initial
-        self._extracted_blob_url = extracted_blob_url
         self.stage = stage  # current_stage; only changed when a write passes one
         self.transitions: list[PipelineStatus] = []
         self.stage_writes: list[tuple[PipelineStatus, object]] = []
@@ -50,19 +47,14 @@ class FakeRepo:
     async def get_status(self, document_id):
         return self._status
 
-    async def get_extracted_blob_url(self, document_id):
-        return self._extracted_blob_url
-
     async def upsert_status(
         self,
         document_id,
-        correlation_id,
         status,
         *,
         expected,
         document_guid=None,
         stage=None,
-        extracted_blob_url=None,
     ):
         if status in self._interleave:  # another worker writes first
             self._status = self._interleave.pop(status)
@@ -76,9 +68,6 @@ class FakeRepo:
         if stage is not None:
             self.stage = stage
         self._status = status
-        if extracted_blob_url is not None:
-            self._extracted_blob_url = extracted_blob_url
-            self.blob_urls.append(extracted_blob_url)
 
 
 class FakeExtractionRepo:
@@ -98,7 +87,7 @@ class FakeStageRunRepo:
         self.failed: list[tuple[int, str, str | None]] = []
         self._fail_on_succeed = fail_on_succeed
 
-    async def start(self, document_id, stage, *, model_version=None):
+    async def start(self, *, document_id, stage, model_version=None, **_):
         self.started.append((document_id, stage.value, model_version))
         return len(self.started)
 
@@ -118,6 +107,9 @@ class FakeBlob:
 
     def download(self, uri):
         return b"%PDF-fake-bytes"
+
+    def blob_url(self, container, path):
+        return f"https://acct.blob.core.windows.net/{container}/{path}"
 
     def upload_json(self, container, path, obj):
         self.uploads.append((container, path))
@@ -159,7 +151,6 @@ class FakeDICustom:
 def _raw_message(**over):
     base = {
         "message_id": "m-1",
-        "correlation_id": "case-1",
         "schema_version": "1.0",
         "document_id": "doc-1",
         "document_guid": "123e4567-e89b-12d3-a456-426614174000",
@@ -283,13 +274,12 @@ async def test_extracted_is_persisted_before_publish(monkeypatch):
 
     # THEN EXTRACTED (with the pointer) was already durable when publishing
     assert publisher.status_at_publish is PipelineStatus.EXTRACTED
-    assert repo.blob_urls == [publisher.published[0].blob_url]
 
 
 async def test_replay_at_extracted_republishes_stored_pointer(monkeypatch):
     # GIVEN a crash after EXTRACTED was persisted but before the publish
     stored = "https://acct.blob.core.windows.net/extracted-dmer/doc-1/combined.json"
-    repo = FakeRepo(initial=PipelineStatus.EXTRACTED, extracted_blob_url=stored)
+    repo = FakeRepo(initial=PipelineStatus.EXTRACTED)
     blob = FakeBlob()
     publisher = FakePublisher()
     pipeline = _pipeline(monkeypatch, repo=repo, blob=blob, publisher=publisher)
@@ -307,22 +297,6 @@ async def test_replay_at_extracted_republishes_stored_pointer(monkeypatch):
     # downstream dedups the repeat — and never the upstream dmer-raw id
     assert msg.message_id == event_message_id(EXTRACTED_EVENT, "doc-1")
     assert msg.message_id != "m-1"
-
-
-async def test_replay_at_extracted_without_pointer_routes_to_manual_review(
-    monkeypatch,
-):
-    # GIVEN an EXTRACTED row with no stored blob URL (inconsistent state)
-    repo = FakeRepo(initial=PipelineStatus.EXTRACTED)
-    publisher = FakePublisher()
-    pipeline = _pipeline(monkeypatch, repo=repo, publisher=publisher)
-
-    # WHEN redelivered THEN it fails visibly instead of silently completing
-    with pytest.raises(PipelineFailure) as info:
-        await pipeline.run(_raw_message())
-    assert info.value.code is FailureCode.EXTRACTED_POINTER_MISSING
-    assert repo.transitions == [PipelineStatus.MANUAL_REVIEW]
-    assert publisher.published == []
 
 
 async def test_noop_when_past_extraction(monkeypatch):
@@ -521,9 +495,8 @@ async def test_audit_write_failure_after_publish_keeps_document_published(
 
 async def test_republish_and_noop_replays_write_no_stage_run(monkeypatch):
     # GIVEN replays that do not re-run extraction
-    stored = "https://acct.blob.core.windows.net/extracted-dmer/doc-1/combined.json"
     for repo in (
-        FakeRepo(initial=PipelineStatus.EXTRACTED, extracted_blob_url=stored),
+        FakeRepo(initial=PipelineStatus.EXTRACTED),
         FakeRepo(initial=PipelineStatus.NORMALIZED),
     ):
         stage_runs = FakeStageRunRepo()
@@ -587,10 +560,16 @@ async def test_manual_review_leaves_current_stage_unchanged(monkeypatch):
 
 
 async def test_failed_republish_keeps_normalize_stage(monkeypatch):
-    # GIVEN an EXTRACTED document (stage NORMALIZE) with no stored pointer
+    # GIVEN an EXTRACTED document (stage NORMALIZE) whose re-publish fails
+    class DownPublisher(FakePublisher):
+        def publish(self, envelope):
+            raise ConnectionError("service bus down")
+
     repo = FakeRepo(initial=PipelineStatus.EXTRACTED, stage=PipelineStage.NORMALIZE)
     with pytest.raises(PipelineFailure):
-        await _pipeline(monkeypatch, repo=repo).run(_raw_message())
+        await _pipeline(monkeypatch, repo=repo, publisher=DownPublisher()).run(
+            _raw_message()
+        )
 
     # THEN it goes to MANUAL_REVIEW without being moved back to EXTRACT
     assert repo.transitions == [PipelineStatus.MANUAL_REVIEW]
@@ -769,8 +748,8 @@ async def test_extracted_message_id_is_not_the_upstream_raw_id(monkeypatch):
     msg = publisher.published[0]
     assert msg.message_id != "m-1"
     assert msg.message_id == event_message_id(EXTRACTED_EVENT, "doc-1")
-    # the upstream link is the correlation id, not a shared message id
-    assert msg.correlation_id == "case-1"
+    # the upstream link is the document id, not a shared message id
+    assert msg.document_id == "doc-1"
 
 
 async def test_extracted_message_id_is_stable_across_upstream_redeliveries(

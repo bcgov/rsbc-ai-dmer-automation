@@ -20,7 +20,6 @@ from pydantic import ValidationError
 # The exact field set the documented unified envelope carries (camelCase on wire).
 ENVELOPE_KEYS = {
     "messageId",
-    "correlationId",
     "schemaVersion",
     "documentId",
     "documentGuid",
@@ -34,7 +33,6 @@ ENVELOPE_KEYS = {
 def _message() -> ExtractedMessage:
     return ExtractedMessage(
         message_id="m-1",
-        correlation_id="case-1",
         document_id="doc-1",
         document_guid="123e4567-e89b-12d3-a456-426614174000",
         driver_key="a91b77e4-0000-0000-0000-000000000000",
@@ -74,7 +72,6 @@ def test_rejects_unknown_field():
     rejected (extra fields forbidden — guards contract drift)."""
     wire = {
         "messageId": "m-1",
-        "correlationId": "case-1",
         "schemaVersion": "1.0",
         "documentId": "doc-1",
         "documentGuid": "123e4567-e89b-12d3-a456-426614174000",

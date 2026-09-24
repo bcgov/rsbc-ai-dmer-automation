@@ -166,20 +166,14 @@ class InMemoryRepository(DmerDocumentRepository):
         row = self._rows.get(document_id)
         return PipelineStatus(row["pipeline_status"]) if row else None
 
-    async def get_extracted_blob_url(self, document_id: str) -> str | None:
-        row = self._rows.get(document_id)
-        return row.get("extracted_blob_url") if row else None
-
     async def upsert_status(
         self,
         document_id: str,
-        correlation_id: str,
         status: PipelineStatus,
         *,
         expected: PipelineStatus | None,
         document_guid: str | None = None,
         stage: Any = None,
-        extracted_blob_url: str | None = None,
     ) -> None:
         target = _validated_status(expected, status)
         if expected is None and not document_guid:
@@ -192,15 +186,12 @@ class InMemoryRepository(DmerDocumentRepository):
         row = self._rows.setdefault(document_id, {})
         row.update(
             id=document_id,
-            correlation_id=correlation_id,
             pipeline_status=target.value,
         )
         if stage is not None:
             row["current_stage"] = stage.value
         if document_guid is not None:
             row["document_guid"] = document_guid
-        if extracted_blob_url is not None:
-            row["extracted_blob_url"] = extracted_blob_url
         self.transitions.append(target)
 
 
@@ -317,7 +308,9 @@ class InMemoryStageRunRepository:
     def __init__(self) -> None:
         self.runs: list[dict[str, Any]] = []
 
-    async def start(self, document_id: str, stage: Any, *, model_version=None) -> int:
+    async def start(
+        self, *, document_id: str, stage: Any, model_version=None, **_
+    ) -> int:
         self.runs.append(
             {
                 "document_id": document_id,
@@ -391,7 +384,6 @@ def _build_app(
 def _envelope(blob_url: str, **over) -> dict[str, Any]:
     base = {
         "messageId": "m-1",
-        "correlationId": "case-1",
         "schemaVersion": "1.0",
         "documentId": "doc-1",
         "documentGuid": "123e4567-e89b-12d3-a456-426614174000",
@@ -494,10 +486,8 @@ def test_redelivery_at_extracted_republishes_without_reprocessing():
     stored = "https://acct.blob.core.windows.net/extracted-dmer/doc-1/combined.json"
     repo._rows["doc-1"] = {
         "id": "doc-1",
-        "correlation_id": "case-1",
         "document_guid": "123e4567-e89b-12d3-a456-426614174000",
         "pipeline_status": PipelineStatus.EXTRACTED.value,
-        "extracted_blob_url": stored,
     }
 
     app = _build_app(
@@ -524,7 +514,6 @@ def test_redelivery_past_extraction_is_noop():
     repo = InMemoryRepository()
     repo._rows["doc-1"] = {
         "id": "doc-1",
-        "correlation_id": "case-1",
         "document_guid": "123e4567-e89b-12d3-a456-426614174000",
         "pipeline_status": PipelineStatus.NORMALIZED.value,
     }
@@ -551,7 +540,6 @@ def test_extraction_starts_from_ingest_owned_row():
     repo = InMemoryRepository()
     repo._rows["doc-1"] = {
         "id": "doc-1",
-        "correlation_id": "case-1",
         "document_guid": "123e4567-e89b-12d3-a456-426614174000",
         "pipeline_status": PipelineStatus.DOWNLOADED.value,
     }

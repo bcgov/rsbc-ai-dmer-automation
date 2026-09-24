@@ -19,7 +19,7 @@ carry ``driver_key`` and a ``blob_url`` only (see message-contracts.md §Securit
 
 Message IDs: each queue's ``message_id`` identifies *that* event and is derived
 deterministically from it with :func:`event_message_id` — never copied from the
-upstream message that triggered it. ``correlation_id`` is what links events.
+upstream message that triggered it. ``document_id`` is what links events across stages.
 """
 
 from __future__ import annotations
@@ -61,11 +61,10 @@ class PipelineMessage(Envelope):
     points at the artifact the *next* stage needs (e.g. the source PDF under the
     ``raw-dmer`` container for ``dmer-raw``; the combined extraction under
     ``extracted-dmer`` for ``dmer-extracted``). ``message_id`` is the idempotency
-    key.
+    key; ``document_id`` (the tracing key) is inherited from :class:`Envelope`.
     """
 
     schema_version: str = PIPELINE_SCHEMA_VERSION
-    document_id: str
     document_guid: str
     driver_key: str | None = None
     blob_url: str

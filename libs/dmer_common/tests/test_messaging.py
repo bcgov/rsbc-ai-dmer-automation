@@ -1,7 +1,7 @@
 """Unit tests for the Service Bus consumer/publisher with a faked bus.
 
 Behaviour specs (GIVEN/WHEN/THEN) for complete-on-success, dead-letter-on-failure,
-idempotent no-op on duplicate messageId, correlation propagation, and envelope
+idempotent no-op on duplicate messageId, document-id propagation, and envelope
 publishing.
 """
 
@@ -17,7 +17,7 @@ from dmer_common.messaging import (
     ServiceBusConsumer,
     ServiceBusPublisher,
 )
-from dmer_common.telemetry import get_correlation_id
+from dmer_common.telemetry import get_document_id
 
 
 class FakeMessage:
@@ -49,18 +49,17 @@ class FakeSender:
         self.sent.append(message)
 
 
-def _raw(message_id: str = "m-1", correlation_id: str = "case-1") -> FakeMessage:
+def _raw(message_id: str = "m-1", document_id: str = "doc-1") -> FakeMessage:
     return FakeMessage(
         {
             "messageId": message_id,
-            "correlationId": correlation_id,
             "schemaVersion": "1.0",
-            "documentId": "doc-1",
+            "documentId": document_id,
         }
     )
 
 
-def test_consumer_completes_on_success_and_propagates_correlation():
+def test_consumer_completes_on_success_and_propagates_document_id():
     # GIVEN a consumer and a message
     receiver = FakeReceiver()
     consumer = ServiceBusConsumer(
@@ -72,13 +71,13 @@ def test_consumer_completes_on_success_and_propagates_correlation():
 
     def handler(env: dict) -> None:
         seen["doc"] = env["documentId"]
-        seen["corr"] = get_correlation_id()
+        seen["bound_doc"] = get_document_id()
 
     # WHEN the message is handled successfully
     ran = consumer.handle(_raw(), handler)
-    # THEN the handler ran with the correlation id bound and the message completed
+    # THEN the handler ran with the document id bound and the message completed
     assert ran is True
-    assert seen == {"doc": "doc-1", "corr": "case-1"}
+    assert seen == {"doc": "doc-1", "bound_doc": "doc-1"}
     assert len(receiver.completed) == 1
     assert receiver.dead_lettered == []
 
@@ -132,7 +131,7 @@ def test_consumer_dead_letters_message_without_message_id():
         idempotency_scope="test/queue",
         idempotency_store=InMemoryIdempotencyStore(),
     )
-    bad = FakeMessage({"correlationId": "case-1", "schemaVersion": "1.0"})
+    bad = FakeMessage({"documentId": "doc-1", "schemaVersion": "1.0"})
     # WHEN handled THEN it is dead-lettered and the handler never runs
     ran = consumer.handle(bad, lambda _e: pytest.fail("should not run"))
     assert ran is False
@@ -144,16 +143,15 @@ def test_publisher_serializes_envelope_and_sets_broker_ids():
     sender = FakeSender()
     captured = {}
 
-    def factory(body, *, message_id, correlation_id):
+    def factory(body, *, message_id, document_id):
         captured["body"] = body
         captured["message_id"] = message_id
-        captured["correlation_id"] = correlation_id
+        captured["document_id"] = document_id
         return {"body": body}
 
     publisher = ServiceBusPublisher(sender, message_factory=factory)
     msg = ExtractedMessage(
         message_id="m-9",
-        correlation_id="case-9",
         document_id="doc-1",
         document_guid="123e4567-e89b-12d3-a456-426614174000",
         driver_key="a91b77e4-0000-0000-0000-000000000000",
@@ -168,7 +166,7 @@ def test_publisher_serializes_envelope_and_sets_broker_ids():
     assert body["messageId"] == "m-9"
     assert body["blobUrl"].endswith("combined.json")
     assert captured["message_id"] == "m-9"
-    assert captured["correlation_id"] == "case-9"
+    assert captured["document_id"] == "doc-1"
 
 
 class _ClassifiedError(Exception):
@@ -409,3 +407,34 @@ def test_stale_token_cannot_complete_or_release_a_taken_over_claim():
     assert store.claim("s", "m-1").outcome.value == "IN_PROGRESS"
     assert store.complete("s", "m-1", new) is True
     assert store.claim("s", "m-1").outcome.value == "DUPLICATE"
+
+
+class _BrokerIdMessage:
+    """A Service Bus message whose ID is only the broker MessageId property."""
+
+    def __init__(self, body: dict, message_id: str) -> None:
+        self.body = json.dumps(body).encode("utf-8")
+        self.message_id = message_id
+
+
+def test_consumer_uses_broker_message_id_when_body_has_none():
+    # GIVEN a producer (Ingest) that sets MessageId only as the broker property
+    receiver = FakeReceiver()
+    store = InMemoryIdempotencyStore()
+    consumer = ServiceBusConsumer(
+        receiver, idempotency_scope="test/queue", idempotency_store=store
+    )
+    seen = {}
+    body = {"schemaVersion": "1.0", "documentId": "doc-1"}
+
+    # WHEN handled
+    ran = consumer.handle(
+        _BrokerIdMessage(body, "guid-1"), lambda env: seen.update(env)
+    )
+
+    # THEN it is processed (not dead-lettered as MissingMessageId), the handler
+    # sees the ID in the envelope, and a redelivery is suppressed by that ID
+    assert ran is True
+    assert seen["messageId"] == "guid-1"
+    assert receiver.dead_lettered == []
+    assert consumer.handle(_BrokerIdMessage(body, "guid-1"), seen.update) is False

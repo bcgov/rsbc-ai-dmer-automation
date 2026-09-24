@@ -1,20 +1,71 @@
 
 # build.yml
 #
-# Purpose: Build/package every changed service (Functions & Container Apps) on push and PR
+# Purpose: Build/package each changed service on push and PR.
 #
-# NOTE: This is a structural placeholder. Implementation (steps, actions,
-# matrix strategy per service) is intentionally deferred until the
-# repository skeleton is approved. See docs/deployment/deployment-guide.md
-# for the intended trigger/approval flow.
+# Currently wired for intake-processor only — add a job (or turn this into
+# a matrix) for each other service under services/ as it gets real code,
+# following the same shape. `workflow_call` lets deploy-dev.yml invoke this
+# directly rather than duplicating these steps.
 
 name: Build
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'services/intake-processor/**'
+      - '.github/workflows/build.yml'
+  pull_request:
+    paths:
+      - 'services/intake-processor/**'
+      - '.github/workflows/build.yml'
   workflow_dispatch: {}
+  workflow_call: {}
+
+concurrency:
+  # A literal group name, not `github.workflow` -- deploy-dev.yml calls this
+  # file as a reusable workflow (`uses:`). Inside a reusable-workflow call,
+  # `github.workflow` resolves to the CALLER's name ("Deploy Dev"), not this
+  # file's own -- so a dynamic-name-derived group here would collide with
+  # deploy-dev.yml's own group whenever it invokes this file, and the caller
+  # would deadlock waiting on a run it's occupying the group for.
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
-  placeholder:
+  intake-processor:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/intake-processor
     steps:
-      - run: 'echo "TODO: implement Build/package every changed service (Functions & Container Apps) on push and PR"'
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          # Matches functionAppConfig.runtime.version in
+          # infrastructure/bicep/intake-processor.bicep — keep both in sync.
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Compile-check
+        run: python -m py_compile function_app.py
+
+      - name: Package deployment zip
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/dist"
+          zip -r "$GITHUB_WORKSPACE/dist/intake-processor.zip" . \
+            -x '.venv/*' -x '.python_packages/*' -x '__pycache__/*' \
+            -x 'tests/*' -x '*.pyc' -x '.pytest_cache/*'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: intake-processor-package
+          path: dist/intake-processor.zip
+          retention-days: 7

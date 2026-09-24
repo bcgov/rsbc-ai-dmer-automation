@@ -97,7 +97,6 @@ def test_repository_rejects_illegal_transition_before_sql(monkeypatch):
     async def run():
         await repo.upsert_status(
             "doc-1",
-            "case-1",
             PipelineStatus.EXTRACTED,
             expected=PipelineStatus.RECEIVED,
         )
@@ -114,7 +113,6 @@ def test_repository_requires_document_guid_on_initial_insert(monkeypatch):
     async def run():
         await repo.upsert_status(
             "doc-1",
-            "case-1",
             PipelineStatus.RECEIVED,
             expected=None,
             stage=PipelineStage.INGEST,
@@ -132,7 +130,6 @@ def test_repository_requires_stage_on_initial_insert(monkeypatch):
     async def run():
         await repo.upsert_status(
             "doc-1",
-            "case-1",
             PipelineStatus.RECEIVED,
             expected=None,
             document_guid="g-1",

@@ -16,7 +16,7 @@ per-service once that's true.
 - Python 3.12, type-hinted, formatted with `black`, linted with `ruff`, type-checked with `mypy --strict`.
 - One package per service under `src/<service_name>/`; no cross-service imports — shared code
   goes in `libs/dmer_common`.
-- Structured logging only (no bare `print`); every log line includes `correlation_id`.
+- Structured logging only (no bare `print`); every log line includes `document_id`.
 - All I/O (Blob, Service Bus, PostgreSQL, Document Intelligence, the external Azure OpenAI
   endpoint) goes through `libs/dmer_common` clients — no service opens a raw SDK/HTTP client
   directly.

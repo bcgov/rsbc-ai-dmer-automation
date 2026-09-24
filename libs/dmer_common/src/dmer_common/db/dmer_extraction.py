@@ -1,6 +1,7 @@
 """``dmer_extraction`` table repository (revised architecture).
 
-One row per document (1:1 with ``dmer_document``) — the extracted values that need
+One row per document (1:1 with ``dmer_document``; table created by
+``database/migrations/V0001__create_dmer_pipeline_schema.sql``) — the extracted values that need
 to be *queried*, not merely stored (the full extraction JSON lives in the
 ``extracted-dmer`` blob). See ``docs/development/data-model.md`` §``dmer_extraction``.
 
@@ -17,17 +18,21 @@ idempotency requirement in ``docs/development/stages/02-extraction.md``.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
 
 from sqlalchemy import (
+    CHAR,
     Boolean,
     Column,
+    Date,
     Integer,
     MetaData,
     Numeric,
-    String,
     Table,
+    Text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -36,17 +41,17 @@ metadata = MetaData()
 dmer_extraction = Table(
     "dmer_extraction",
     metadata,
-    Column("document_id", String, primary_key=True),
-    Column("licence_number_read", String, nullable=True),
-    Column("exam_date", String, nullable=True),
-    Column("physician_name", String, nullable=True),
+    Column("document_id", PG_UUID(as_uuid=False), primary_key=True),
+    Column("licence_number_read", Text, nullable=True),
+    Column("exam_date", Date, nullable=True),
+    Column("physician_name", Text, nullable=True),
     Column("has_header", Boolean, nullable=True),
     Column("has_signature", Boolean, nullable=True),
     Column("is_cutoff", Boolean, nullable=True),
     Column("page_count", Integer, nullable=True),
     Column("confidence_avg", Numeric, nullable=True),
     Column("comparison_fields", JSONB, nullable=True),
-    Column("comparison_hash", String(64), nullable=True),
+    Column("comparison_hash", CHAR(64), nullable=True),
 )
 
 
@@ -56,7 +61,7 @@ class ExtractionRecord:
 
     document_id: str
     licence_number_read: str | None = None
-    exam_date: str | None = None
+    exam_date: date | None = None
     physician_name: str | None = None
     has_header: bool | None = None
     has_signature: bool | None = None

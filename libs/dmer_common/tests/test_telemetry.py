@@ -1,7 +1,7 @@
-"""Unit tests for structured JSON logging: PII redaction and correlation id.
+"""Unit tests for structured JSON logging: PII redaction and document id.
 
 Behaviour specs (GIVEN/WHEN/THEN) for the redaction helper, the logging filters,
-the JSON formatter, and correlation-id context propagation.
+the JSON formatter, and document-id context propagation.
 """
 
 from __future__ import annotations
@@ -11,8 +11,8 @@ import logging
 
 from dmer_common.telemetry import (
     JsonFormatter,
-    correlation_context,
-    get_correlation_id,
+    document_id_context,
+    get_document_id,
     get_logger,
     redact,
 )
@@ -46,19 +46,18 @@ def _capture(logger: logging.Logger) -> list[str]:
     return buffer  # type: ignore[return-value]
 
 
-def test_logger_emits_json_with_correlation_id():
-    # GIVEN a logger and an ambient correlation id
-    logger = get_logger("test.telemetry.corr")
+def test_logger_emits_json_with_document_id():
+    # GIVEN a logger and an ambient document id
+    logger = get_logger("test.telemetry.docid")
     buffer = _capture(logger)
-    # WHEN logging inside a correlation context
-    with correlation_context("case-abc"):
-        logger.info("processing", extra={"document_id": "doc-1"})
-    # THEN the emitted line is JSON carrying the correlation id and safe extras
+    # WHEN logging inside a document-id context
+    with document_id_context("doc-abc"):
+        logger.info("processing")
+    # THEN the emitted line is JSON carrying the document id
     line = buffer.getvalue().strip()
     record = json.loads(line)
-    assert record["correlation_id"] == "case-abc"
+    assert record["document_id"] == "doc-abc"
     assert record["message"] == "processing"
-    assert record["document_id"] == "doc-1"
     assert record["level"] == "INFO"
 
 
@@ -73,14 +72,14 @@ def test_logger_redacts_pii_extra_fields():
     assert record["patient_name"] == "[REDACTED]"
 
 
-def test_correlation_context_restores_previous_value():
-    # GIVEN no ambient correlation id
-    assert get_correlation_id() is None
+def test_document_id_context_restores_previous_value():
+    # GIVEN no ambient document id
+    assert get_document_id() is None
     # WHEN entering and leaving a context
-    with correlation_context("case-1"):
-        assert get_correlation_id() == "case-1"
+    with document_id_context("doc-1"):
+        assert get_document_id() == "doc-1"
     # THEN the previous (empty) value is restored
-    assert get_correlation_id() is None
+    assert get_document_id() is None
 
 
 def test_get_logger_is_idempotent_no_duplicate_handlers():

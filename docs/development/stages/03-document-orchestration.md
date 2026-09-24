@@ -160,7 +160,7 @@ already-running or completed instance (configurable via `overridable_existing_in
 
 ## Logging / auditing
 
-Correlation ID flows from the queue message through both activities (bind it once at the top of
+`document_id` flows from the queue message through both activities (bind it once at the top of
 the orchestrator's activity-input construction — but remember step 1's determinism rule: the bind
 itself must not do I/O). `dmer_stage_run` rows from both activities are the audit trail; no
 additional orchestrator-level audit table is needed.

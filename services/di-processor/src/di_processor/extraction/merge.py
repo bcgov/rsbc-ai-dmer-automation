@@ -21,7 +21,6 @@ from .schemas import CombinedExtraction, HandwrittenExtraction, TopLevelExtracti
 
 def merge(
     document_id: str,
-    correlation_id: str,
     top_level: TopLevelExtraction,
     handwritten: HandwrittenExtraction,
     *,
@@ -50,7 +49,6 @@ def merge(
 
     return CombinedExtraction(
         document_id=document_id,
-        correlation_id=correlation_id,
         source_model_version=source_model_version,
         prompt_version=prompt_version,
         processed_at=processed_at or datetime.now(UTC),

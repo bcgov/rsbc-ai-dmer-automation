@@ -7,7 +7,7 @@ Source: architecture doc §3.2, §9.2, §9.3. Bicep modules:
 
 Logs, metrics, and alerting for every component in the pipeline. One shared Log Analytics
 Workspace per environment; every resource's diagnostic settings point to it, so a single query can
-trace one document (via `correlation_id`) through every stage it passed through.
+trace one document (via `document_id`) through every stage it passed through.
 
 ## Structured logging
 
@@ -15,10 +15,11 @@ trace one document (via `correlation_id`) through every stage it passed through.
 stage should use — already implements:
 
 - JSON-formatted log lines (`JsonFormatter`) with `timestamp`, `level`, `logger`, `message`,
-  `correlation_id`, plus any extra fields.
-- Correlation-ID propagation via a context variable (`correlation_context`), so it doesn't need to
+  `document_id`, plus any extra fields.
+- Document-ID propagation via a context variable (`document_id_context`), so it doesn't need to
   be threaded through every function call manually — bind it once per message/document at the top
-  of a handler.
+  of a handler. `document_id` (`dmer_document.id`) is the one trace key used for this — there is no
+  separate `correlation_id`.
 - **PII redaction** (`PiiRedactionFilter`, `DEFAULT_PII_FIELDS`) — any log field or nested key named
   `name`, `dob`, `phn`, `address`, `diagnosis`, `handwritten`, `ocr_text`, `content`, etc. is
   replaced with `[REDACTED]` automatically. This is the enforcement mechanism for §9.2's "no
@@ -34,6 +35,8 @@ stage should call `get_logger(__name__)` and rely on its redaction rather than h
 |---|---|---|
 | Active message count per queue | Earliest indicator of a stalled stage | Sustained growth over a defined window |
 | Dead-letter message count | Poison input or a systemic failure | Any non-zero value, and separately on rate of change |
+| DLQ-drain failures by `failure_category` | Distinguishes a permanent-business failure (expected, produces a guarded fallback) from a transient/processing/unknown failure (must not, and needs recovery or human triage) | Any `TRANSIENT`/`PROCESSING`/`UNKNOWN` row; each `UNKNOWN` individually |
+| Fallback decisions (`decided_by = FALLBACK`) | Every one is a DMER the AI could not process; a spike is a model/input-quality regression | Rate above the agreed baseline — see [DLQ Drain](../stages/10-dlq-drain.md) |
 | Oldest `PENDING` outbox row age | Direct measure of the no-lost-outcome guarantee | Older than the agreed SLA to Intake |
 | `driver_evaluation` rows in `WAITING` past SLA | The join is stuck | Any row beyond threshold after a sweeper pass |
 | Stage duration p50/p95 from `dmer_stage_run` | Capacity planning and quota pressure | p95 beyond the modelled budget |
@@ -73,7 +76,7 @@ carry sensitive content, add it to that frozenset rather than special-casing the
 ## Implementation considerations for Claude Code
 
 - Every stage/activity should call `dmer_common.telemetry.get_logger(__name__)` and bind
-  `correlation_id` via `correlation_context()` at the start of message/activity handling — see each
+  `document_id` via `document_id_context()` at the start of message/activity handling — see each
   stage doc's "Logging / auditing" section for what's worth logging at INFO vs. keeping DB-only.
 - `infrastructure/bicep/modules/monitor/alerts.bicep` exists but has no alert rules instantiated
   yet matching the table above — build these from the four-queue names in `../message-contracts.md`

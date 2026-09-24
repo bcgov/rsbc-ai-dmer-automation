@@ -14,6 +14,6 @@ labels: bug
 
 **Actual behavior**
 
-**Correlation ID / message ID (if applicable)**
+**Document ID / message ID (if applicable)**
 
 **Steps to reproduce**

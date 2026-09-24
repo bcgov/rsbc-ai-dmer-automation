@@ -153,7 +153,6 @@ document still goes to `MANUAL_REVIEW` and the message is dead-lettered.
 | `LLM_OUTPUT_INVALID` | Unparseable or schema-violating LLM output (Stage C) |
 | `ARTIFACT_WRITE_FAILED` | Uploading any of the four extraction files |
 | `PUBLISH_FAILED` | Publishing to `dmer-extracted` |
-| `EXTRACTED_POINTER_MISSING` | Re-publish replay found an `EXTRACTED` document with no stored blob URL |
 | `UNEXPECTED` | Anything else (a code bug, e.g. in merge) |
 
 The detail is `key=value; ...` text built only from safe facts, e.g.
@@ -219,7 +218,6 @@ a disputed extraction can be traced to the exact model/prompt combination that p
   "document_guid": "123e4567-e89b-...",
   "driver_key": "a91b77e4-...",
   "blob_url": "https://.../extracted-dmer/8f3c1b2a/combined.json",
-  "correlation_id": "5d10...",
   "attempt": 1,
   "enqueued_at": "2026-09-18T12:05:00Z"
 }

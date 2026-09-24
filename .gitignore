@@ -7,10 +7,13 @@ venv/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.coverage
 coverage.xml
 htmlcov/
-.coverage
 .coverage.*
+
+# Office lock files
+~$*
 
 # Azure Functions
 local.settings.json
@@ -38,6 +41,9 @@ build/
 
 # Local commit-message drafts (git commit -F commit-msg.txt)
 /commit-msg.txt
+
+# Local build/deploy artifacts
+*.zip
 
 # Temporary POC staging (di-processor) - being ported into services/di-processor + libs/dmer_common
 services/diocr-poc/

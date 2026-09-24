@@ -71,3 +71,20 @@ def di_breaker() -> CircuitBreaker:
 def openai_breaker() -> CircuitBreaker:
     """Circuit breaker tuned for external Azure OpenAI."""
     return CircuitBreaker(failure_threshold=5, reset_timeout=30.0)
+
+
+def mercury_retry(
+    retry_on: tuple[type[BaseException], ...] = (Exception,),
+) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    """Retry policy tuned for Mercury batch API calls (see 01-ingest.md's
+    "Failure handling": a Mercury call failure is transient, retried inside
+    the function with backoff before letting the timer retry the whole page).
+    """
+    return retry_policy(
+        max_attempts=4, initial_wait=1.0, max_wait=20.0, retry_on=retry_on
+    )
+
+
+def mercury_breaker() -> CircuitBreaker:
+    """Circuit breaker tuned for the Mercury batch API."""
+    return CircuitBreaker(failure_threshold=5, reset_timeout=30.0)

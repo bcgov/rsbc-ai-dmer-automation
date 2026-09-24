@@ -30,7 +30,6 @@ class _RecordingPipeline:
 def _envelope(**over) -> dict:
     base = {
         "messageId": "m-1",
-        "correlationId": "case-1",
         "schemaVersion": "1.0",
         "documentId": "doc-1",
         "documentGuid": "123e4567-e89b-12d3-a456-426614174000",
@@ -52,7 +51,6 @@ def test_handler_parses_envelope_and_runs_pipeline():
 
     assert len(pipeline.calls) == 1
     assert pipeline.calls[0].document_id == "doc-1"
-    assert pipeline.calls[0].correlation_id == "case-1"
 
 
 def test_handler_propagates_pipeline_failure():

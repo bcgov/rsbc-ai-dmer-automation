@@ -20,7 +20,6 @@ from pydantic import ValidationError
 
 RAW_WIRE = {
     "messageId": "11111111-1111-1111-1111-111111111111",
-    "correlationId": "case-123",
     "schemaVersion": "1.0",
     "documentId": "doc-1",
     "documentGuid": "123e4567-e89b-12d3-a456-426614174000",
@@ -32,7 +31,6 @@ RAW_WIRE = {
 
 EXTRACTED_WIRE = {
     "messageId": "22222222-2222-2222-2222-222222222222",
-    "correlationId": "case-123",
     "schemaVersion": "1.0",
     "documentId": "doc-1",
     "documentGuid": "123e4567-e89b-12d3-a456-426614174000",
@@ -70,7 +68,6 @@ def test_extracted_message_defaults_schema_version_and_serializes():
     # GIVEN an extracted message built from Python (no schema_version given)
     msg = ExtractedMessage(
         message_id="22222222-2222-2222-2222-222222222222",
-        correlation_id="case-123",
         document_id="doc-1",
         document_guid="123e4567-e89b-12d3-a456-426614174000",
         driver_key="a91b77e4-0000-0000-0000-000000000000",

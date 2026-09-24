@@ -1,0 +1,195 @@
+// Figure2_Database_ERD.dot
+//
+// Source for Figure2_Database_ERD.png. Render with:
+//   dot -Tpng -Gdpi=150 Figure2_Database_ERD.dot -o Figure2_Database_ERD.png
+//
+// Kept as a real source file (the original PNG had none) so this diagram
+// can be regenerated instead of hand-edited as an image every time the
+// schema changes. Matches docs/development/data-model.md and
+// database/migrations/V0001__create_dmer_pipeline_schema.sql exactly --
+// update data-model.md first, then this file, never the reverse.
+
+digraph erd {
+  rankdir="TB";
+  graph [fontname="Helvetica", nodesep=0.6, ranksep=0.9, bgcolor="white"];
+  node [fontname="Helvetica", fontsize=11, shape=plain];
+  edge [fontname="Helvetica", fontsize=10];
+
+  driver [label=<
+    <TABLE BORDER="1" CELLBORDER="1" CELLSPACING="0" CELLPADDING="4">
+      <TR><TD BGCOLOR="#2E75B6" COLSPAN="2"><FONT COLOR="white"><B>driver</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT"><B>driver_key</B></TD><TD ALIGN="LEFT">uuid PK</TD></TR>
+      <TR><TD ALIGN="LEFT">licence_number</TD><TD ALIGN="LEFT">text UNIQUE</TD></TR>
+      <TR><TD ALIGN="LEFT">mercury_driver_id</TD><TD ALIGN="LEFT">text NULL</TD></TR>
+      <TR><TD ALIGN="LEFT">first_name / last_name</TD><TD ALIGN="LEFT">text</TD></TR>
+      <TR><TD ALIGN="LEFT">last_synced_at</TD><TD ALIGN="LEFT">timestamptz</TD></TR>
+    </TABLE>
+  >];
+
+  dmer_document [label=<
+    <TABLE BORDER="1" CELLBORDER="1" CELLSPACING="0" CELLPADDING="4">
+      <TR><TD BGCOLOR="#2E75B6" COLSPAN="2"><FONT COLOR="white"><B>dmer_document</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT"><B>id</B></TD><TD ALIGN="LEFT">uuid PK</TD></TR>
+      <TR><TD ALIGN="LEFT">document_guid</TD><TD ALIGN="LEFT">uuid UNIQUE</TD></TR>
+      <TR><TD ALIGN="LEFT">document_name</TD><TD ALIGN="LEFT">text</TD></TR>
+      <TR><TD ALIGN="LEFT">mercury_document_status</TD><TD ALIGN="LEFT">text</TD></TR>
+      <TR><TD ALIGN="LEFT">document_priority</TD><TD ALIGN="LEFT">text</TD></TR>
+      <TR><TD ALIGN="LEFT">received_date / dps_date</TD><TD ALIGN="LEFT">timestamptz</TD></TR>
+      <TR><TD ALIGN="LEFT">queue / business_area</TD><TD ALIGN="LEFT">text</TD></TR>
+      <TR><TD ALIGN="LEFT">mercury_case_id</TD><TD ALIGN="LEFT">text NULL</TD></TR>
+      <TR><TD ALIGN="LEFT">driver_key</TD><TD ALIGN="LEFT">uuid FK NULL</TD></TR>
+      <TR><TD ALIGN="LEFT">document_url</TD><TD ALIGN="LEFT">text NULL</TD></TR>
+      <TR><TD ALIGN="LEFT">raw_blob_url</TD><TD ALIGN="LEFT">text</TD></TR>
+      <TR><TD ALIGN="LEFT">pipeline_status</TD><TD ALIGN="LEFT">enum</TD></TR>
+      <TR><TD ALIGN="LEFT">current_stage</TD><TD ALIGN="LEFT">enum</TD></TR>
+      <TR><TD ALIGN="LEFT">attempt_count</TD><TD ALIGN="LEFT">int</TD></TR>
+      <TR><TD ALIGN="LEFT">first_seen_at / updated_at</TD><TD ALIGN="LEFT">timestamptz</TD></TR>
+    </TABLE>
+  >];
+
+  driver_evaluation [label=<
+    <TABLE BORDER="1" CELLBORDER="1" CELLSPACING="0" CELLPADDING="4">
+      <TR><TD BGCOLOR="#A6303C" COLSPAN="2"><FONT COLOR="white"><B>driver_evaluation</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT"><B>id</B></TD><TD ALIGN="LEFT">uuid PK</TD></TR>
+      <TR><TD ALIGN="LEFT">driver_key</TD><TD ALIGN="LEFT">uuid FK</TD></TR>
+      <TR><TD ALIGN="LEFT">status</TD><TD ALIGN="LEFT">enum</TD></TR>
+      <TR><TD ALIGN="LEFT">expected_document_count</TD><TD ALIGN="LEFT">int</TD></TR>
+      <TR><TD ALIGN="LEFT">completed_document_count</TD><TD ALIGN="LEFT">int</TD></TR>
+      <TR><TD ALIGN="LEFT">last_mercury_check_at</TD><TD ALIGN="LEFT">timestamptz</TD></TR>
+      <TR><TD ALIGN="LEFT">evaluated_at</TD><TD ALIGN="LEFT">timestamptz NULL</TD></TR>
+      <TR><TD ALIGN="LEFT">decision_summary</TD><TD ALIGN="LEFT">jsonb</TD></TR>
+    </TABLE>
+  >];
+
+  dmer_extraction [label=<
+    <TABLE BORDER="1" CELLBORDER="1" CELLSPACING="0" CELLPADDING="4">
+      <TR><TD BGCOLOR="#6A3D9A" COLSPAN="2"><FONT COLOR="white"><B>dmer_extraction</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT"><B>document_id</B></TD><TD ALIGN="LEFT">uuid PK FK</TD></TR>
+      <TR><TD ALIGN="LEFT">licence_number_read</TD><TD ALIGN="LEFT">text NULL</TD></TR>
+      <TR><TD ALIGN="LEFT">exam_date</TD><TD ALIGN="LEFT">date NULL</TD></TR>
+      <TR><TD ALIGN="LEFT">physician_name</TD><TD ALIGN="LEFT">text NULL</TD></TR>
+      <TR><TD ALIGN="LEFT">has_header</TD><TD ALIGN="LEFT">bool</TD></TR>
+      <TR><TD ALIGN="LEFT">has_signature</TD><TD ALIGN="LEFT">bool</TD></TR>
+      <TR><TD ALIGN="LEFT">is_cutoff</TD><TD ALIGN="LEFT">bool</TD></TR>
+      <TR><TD ALIGN="LEFT">page_count</TD><TD ALIGN="LEFT">int</TD></TR>
+      <TR><TD ALIGN="LEFT">confidence_avg</TD><TD ALIGN="LEFT">numeric</TD></TR>
+      <TR><TD ALIGN="LEFT">comparison_fields</TD><TD ALIGN="LEFT">jsonb</TD></TR>
+      <TR><TD ALIGN="LEFT">comparison_hash</TD><TD ALIGN="LEFT">char(64)</TD></TR>
+    </TABLE>
+  >];
+
+  dmer_stage_run [label=<
+    <TABLE BORDER="1" CELLBORDER="1" CELLSPACING="0" CELLPADDING="4">
+      <TR><TD BGCOLOR="#2E75B6" COLSPAN="2"><FONT COLOR="white"><B>dmer_stage_run</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT"><B>id</B></TD><TD ALIGN="LEFT">bigserial PK</TD></TR>
+      <TR><TD ALIGN="LEFT">document_id</TD><TD ALIGN="LEFT">uuid FK</TD></TR>
+      <TR><TD ALIGN="LEFT">stage</TD><TD ALIGN="LEFT">enum</TD></TR>
+      <TR><TD ALIGN="LEFT">status</TD><TD ALIGN="LEFT">enum</TD></TR>
+      <TR><TD ALIGN="LEFT">attempt_no</TD><TD ALIGN="LEFT">int</TD></TR>
+      <TR><TD ALIGN="LEFT">started_at / ended_at</TD><TD ALIGN="LEFT">timestamptz</TD></TR>
+      <TR><TD ALIGN="LEFT">output_blob_url</TD><TD ALIGN="LEFT">text NULL</TD></TR>
+      <TR><TD ALIGN="LEFT">model_version</TD><TD ALIGN="LEFT">text NULL</TD></TR>
+      <TR><TD ALIGN="LEFT">error_code / error_detail</TD><TD ALIGN="LEFT">text NULL</TD></TR>
+    </TABLE>
+  >];
+
+  processing_error [label=<
+    <TABLE BORDER="1" CELLBORDER="1" CELLSPACING="0" CELLPADDING="4">
+      <TR><TD BGCOLOR="#595959" COLSPAN="2"><FONT COLOR="white"><B>processing_error</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT"><B>id</B></TD><TD ALIGN="LEFT">bigserial PK</TD></TR>
+      <TR><TD ALIGN="LEFT">document_id</TD><TD ALIGN="LEFT">uuid FK</TD></TR>
+      <TR><TD ALIGN="LEFT">stage</TD><TD ALIGN="LEFT">enum</TD></TR>
+      <TR><TD ALIGN="LEFT">error_class</TD><TD ALIGN="LEFT">TRANSIENT/POISON/DOWNSTREAM</TD></TR>
+      <TR><TD ALIGN="LEFT">message</TD><TD ALIGN="LEFT">text</TD></TR>
+      <TR><TD ALIGN="LEFT">dlq_message_id</TD><TD ALIGN="LEFT">text NULL</TD></TR>
+      <TR><TD ALIGN="LEFT">occurred_at</TD><TD ALIGN="LEFT">timestamptz</TD></TR>
+      <TR><TD ALIGN="LEFT">resolved_at / resolution</TD><TD ALIGN="LEFT">timestamptz, text NULL</TD></TR>
+    </TABLE>
+  >];
+
+  mercury_outbox [label=<
+    <TABLE BORDER="1" CELLBORDER="1" CELLSPACING="0" CELLPADDING="4">
+      <TR><TD BGCOLOR="#4C7A3D" COLSPAN="2"><FONT COLOR="white"><B>mercury_outbox</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT"><B>id</B></TD><TD ALIGN="LEFT">uuid PK</TD></TR>
+      <TR><TD ALIGN="LEFT">document_id</TD><TD ALIGN="LEFT">uuid FK</TD></TR>
+      <TR><TD ALIGN="LEFT">operation</TD><TD ALIGN="LEFT">enum</TD></TR>
+      <TR><TD ALIGN="LEFT">payload</TD><TD ALIGN="LEFT">jsonb</TD></TR>
+      <TR><TD ALIGN="LEFT">idempotency_key</TD><TD ALIGN="LEFT">text UNIQUE</TD></TR>
+      <TR><TD ALIGN="LEFT">status</TD><TD ALIGN="LEFT">PENDING/SENT/FAILED</TD></TR>
+      <TR><TD ALIGN="LEFT">attempt_count</TD><TD ALIGN="LEFT">int</TD></TR>
+      <TR><TD ALIGN="LEFT">next_attempt_at</TD><TD ALIGN="LEFT">timestamptz</TD></TR>
+      <TR><TD ALIGN="LEFT">last_error</TD><TD ALIGN="LEFT">text NULL</TD></TR>
+      <TR><TD ALIGN="LEFT">sent_at</TD><TD ALIGN="LEFT">timestamptz NULL</TD></TR>
+      <TR><TD ALIGN="LEFT">mercury_response</TD><TD ALIGN="LEFT">jsonb NULL</TD></TR>
+    </TABLE>
+  >];
+
+  rules_version [label=<
+    <TABLE BORDER="1" CELLBORDER="1" CELLSPACING="0" CELLPADDING="4">
+      <TR><TD BGCOLOR="#6E6E6E" COLSPAN="2"><FONT COLOR="white"><B>rules_version</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT"><B>version</B></TD><TD ALIGN="LEFT">text PK</TD></TR>
+      <TR><TD ALIGN="LEFT">blob_url</TD><TD ALIGN="LEFT">text</TD></TR>
+      <TR><TD ALIGN="LEFT">checksum</TD><TD ALIGN="LEFT">char(64)</TD></TR>
+      <TR><TD ALIGN="LEFT">activated_at / by</TD><TD ALIGN="LEFT">timestamptz, text</TD></TR>
+    </TABLE>
+  >];
+
+  rule_evaluation [label=<
+    <TABLE BORDER="1" CELLBORDER="1" CELLSPACING="0" CELLPADDING="4">
+      <TR><TD BGCOLOR="#B8860B" COLSPAN="2"><FONT COLOR="white"><B>rule_evaluation</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT"><B>id</B></TD><TD ALIGN="LEFT">bigserial PK</TD></TR>
+      <TR><TD ALIGN="LEFT">document_id</TD><TD ALIGN="LEFT">uuid FK</TD></TR>
+      <TR><TD ALIGN="LEFT">rules_version</TD><TD ALIGN="LEFT">text FK</TD></TR>
+      <TR><TD ALIGN="LEFT">all_outcomes</TD><TD ALIGN="LEFT">jsonb</TD></TR>
+      <TR><TD ALIGN="LEFT">selected_outcome_code</TD><TD ALIGN="LEFT">text</TD></TR>
+      <TR><TD ALIGN="LEFT">selected_reason</TD><TD ALIGN="LEFT">text</TD></TR>
+      <TR><TD ALIGN="LEFT">priority_rank</TD><TD ALIGN="LEFT">int</TD></TR>
+      <TR><TD ALIGN="LEFT">evaluated_at</TD><TD ALIGN="LEFT">timestamptz</TD></TR>
+    </TABLE>
+  >];
+
+  dmer_decision [label=<
+    <TABLE BORDER="1" CELLBORDER="1" CELLSPACING="0" CELLPADDING="4">
+      <TR><TD BGCOLOR="#A6303C" COLSPAN="2"><FONT COLOR="white"><B>dmer_decision</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT"><B>id</B></TD><TD ALIGN="LEFT">uuid PK</TD></TR>
+      <TR><TD ALIGN="LEFT">document_id</TD><TD ALIGN="LEFT">uuid FK</TD></TR>
+      <TR><TD ALIGN="LEFT">driver_evaluation_id</TD><TD ALIGN="LEFT">uuid FK</TD></TR>
+      <TR><TD ALIGN="LEFT">outcome_code</TD><TD ALIGN="LEFT">CP/IN/PR/PU/PCM/CR</TD></TR>
+      <TR><TD ALIGN="LEFT">is_duplicate</TD><TD ALIGN="LEFT">bool</TD></TR>
+      <TR><TD ALIGN="LEFT">duplicate_of_document_id</TD><TD ALIGN="LEFT">uuid FK NULL</TD></TR>
+      <TR><TD ALIGN="LEFT">duplicate_reason</TD><TD ALIGN="LEFT">text NULL</TD></TR>
+      <TR><TD ALIGN="LEFT">superseded_by_cutoff_rule</TD><TD ALIGN="LEFT">bool</TD></TR>
+      <TR><TD ALIGN="LEFT">driver_mapped</TD><TD ALIGN="LEFT">bool</TD></TR>
+      <TR><TD ALIGN="LEFT">proposed_driver_key</TD><TD ALIGN="LEFT">uuid NULL</TD></TR>
+      <TR><TD ALIGN="LEFT">decision_reason</TD><TD ALIGN="LEFT">jsonb</TD></TR>
+      <TR><TD ALIGN="LEFT">decided_by</TD><TD ALIGN="LEFT">AI/FALLBACK/MANUAL</TD></TR>
+      <TR><TD ALIGN="LEFT">decided_at</TD><TD ALIGN="LEFT">timestamptz</TD></TR>
+    </TABLE>
+  >];
+
+  poll_checkpoint [label=<
+    <TABLE BORDER="1" CELLBORDER="1" CELLSPACING="0" CELLPADDING="4">
+      <TR><TD BGCOLOR="#6E6E6E" COLSPAN="2"><FONT COLOR="white"><B>poll_checkpoint</B></FONT></TD></TR>
+      <TR><TD ALIGN="LEFT"><B>source</B></TD><TD ALIGN="LEFT">text PK</TD></TR>
+      <TR><TD ALIGN="LEFT">last_cursor</TD><TD ALIGN="LEFT">text NULL</TD></TR>
+      <TR><TD ALIGN="LEFT">last_received_date</TD><TD ALIGN="LEFT">timestamptz</TD></TR>
+      <TR><TD ALIGN="LEFT">last_run_at</TD><TD ALIGN="LEFT">timestamptz</TD></TR>
+    </TABLE>
+  >];
+
+  // Edges -- colored to echo the original figure's convention (driver's
+  // own relationships in driver's blue; the decision path in
+  // dmer_decision's red; the outbox/delivery path in mercury_outbox's
+  // green; everything else plain gray).
+  driver -> dmer_document [label="1:N", color="#2E75B6"];
+  driver -> driver_evaluation [label="1:N", color="#2E75B6"];
+  dmer_document -> dmer_stage_run [label="1:N", color="gray40"];
+  dmer_document -> dmer_extraction [label="1:1", color="gray40"];
+  dmer_document -> rule_evaluation [label="1:N", color="gray40"];
+  dmer_document -> processing_error [label="1:N", color="gray40"];
+  dmer_document -> mercury_outbox [label="1:N", color="#4C7A3D"];
+  dmer_document -> dmer_decision [label="1:N", color="#A6303C"];
+  driver_evaluation -> dmer_decision [label="1:N", color="#A6303C"];
+  rules_version -> rule_evaluation [label="1:N", style=dashed, color="gray40"];
+  dmer_decision -> dmer_decision [label="duplicate_of", style=dashed, color="gray40"];
+}
