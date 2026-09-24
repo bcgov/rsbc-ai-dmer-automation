@@ -151,7 +151,8 @@ def main() -> None:  # pragma: no cover - thin production wiring
     # from the next message fails. A fresh connection per operation avoids that
     # (and suits per-connection Managed Identity tokens, still to be added).
     engine = create_async_engine(
-        f"postgresql+asyncpg://{settings.postgres_host}/postgres", poolclass=NullPool
+        f"postgresql+asyncpg://{settings.postgres_host}/{settings.postgres_database}",
+        poolclass=NullPool,
     )
 
     app = build_application(

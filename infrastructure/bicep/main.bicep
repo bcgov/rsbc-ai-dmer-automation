@@ -140,17 +140,11 @@ param containerAppsEnvironmentId string = ''
 @description('Fully-qualified di-processor container image, e.g. myacr.azurecr.io/di-processor:1.0.0. Required when containerAppsEnvironmentId is supplied.')
 param diProcessorImage string = ''
 
-@description('Service Bus namespace FQDN the di-processor KEDA scaler watches, e.g. sb-rsbc-dmer-shared-dev-001.servicebus.windows.net (shared resource, passed in by FQDN). Required when containerAppsEnvironmentId is supplied.')
-param serviceBusNamespaceFqdn string = ''
-
 @description('Optional container registry login server for image pull via the di-processor Managed Identity (e.g. myacr.azurecr.io). Empty = public image / no registry auth.')
 param containerRegistryServer string = ''
 
 @description('Optional Log Analytics Workspace resource ID for di-processor Container App diagnostics (shared resource, passed in by ID). Empty = diagnostics not attached here.')
 param logAnalyticsWorkspaceId string = ''
-
-@description('PostgreSQL flexible server host for di-processor, e.g. psql-rsbc-dmer-shared-dev-001.postgres.database.azure.com (shared resource, other workstream). Required when containerAppsEnvironmentId is supplied.')
-param postgresHost string = ''
 
 @description('App Configuration endpoint, e.g. https://appcs-rsbc-dmer-shared-dev-001.azconfig.io (shared resource, other workstream). Required when containerAppsEnvironmentId is supplied.')
 param appConfigurationEndpoint string = ''
@@ -202,8 +196,9 @@ var deployDiProcessorContainerApp = !empty(containerAppsEnvironmentId)
 var diProcessorEnvironmentVariables = concat(
   [
     { name: 'APP_CONFIGURATION_ENDPOINT', value: appConfigurationEndpoint }
-    { name: 'SERVICE_BUS_NAMESPACE_FQDN', value: serviceBusNamespaceFqdn }
-    { name: 'POSTGRES_HOST', value: postgresHost }
+    { name: 'SERVICE_BUS_NAMESPACE_FQDN', value: serviceBusNamespace.outputs.fullyQualifiedNamespace }
+    { name: 'POSTGRES_HOST', value: postgresServer.outputs.fullyQualifiedDomainName }
+    { name: 'POSTGRES_DATABASE', value: postgresDatabase.outputs.name }
     { name: 'BLOB_ACCOUNT_URL', value: storage.outputs.blobEndpoint }
     { name: 'DOC_INTELLIGENCE_ENDPOINT', value: documentIntelligence.outputs.endpoint }
     { name: 'DI_CUSTOM_MODEL_ID', value: diCustomModelId }
@@ -376,7 +371,7 @@ module diProcessorContainerApp 'modules/compute/container-app.bicep' = if (deplo
     userAssignedIdentityId: diProcessorIdentity.outputs.id
     image: diProcessorImage
     registryServer: containerRegistryServer
-    serviceBusNamespaceFqdn: serviceBusNamespaceFqdn
+    serviceBusNamespaceFqdn: serviceBusNamespace.outputs.fullyQualifiedNamespace
     // di-processor consumes dmer-raw (migrated from raw-dmer-queue).
     scaleQueueName: 'dmer-raw'
     minReplicas: environment == 'prod' ? 1 : 0

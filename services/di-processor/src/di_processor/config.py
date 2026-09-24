@@ -45,6 +45,9 @@ class Settings:
         combined extraction metadata).
     health_port:
         Port the readiness/liveness HTTP server binds to.
+    postgres_database:
+        PostgreSQL database holding the pipeline schema (default ``dmer``, the
+        database the Flyway migrations and Ingest use).
     """
 
     app_configuration_endpoint: str
@@ -57,6 +60,7 @@ class Settings:
     custom_model_id: str
     prompt_version: str | None
     health_port: int
+    postgres_database: str = "dmer"
 
 
 def load_settings() -> Settings:
@@ -78,4 +82,5 @@ def load_settings() -> Settings:
         custom_model_id=config.require("DI_CUSTOM_MODEL_ID"),
         prompt_version=config.get("LLM_PROMPT_VERSION"),
         health_port=int(port),
+        postgres_database=config.get("POSTGRES_DATABASE", "dmer") or "dmer",
     )

@@ -116,17 +116,11 @@ param containerAppsEnvironmentId string = ''
 @description('Fully-qualified di-processor container image. Required when containerAppsEnvironmentId is supplied.')
 param diProcessorImage string = ''
 
-@description('Service Bus namespace FQDN the di-processor KEDA scaler watches (shared resource, passed in by FQDN). Required when containerAppsEnvironmentId is supplied.')
-param serviceBusNamespaceFqdn string = ''
-
 @description('Optional container registry login server for image pull via the di-processor Managed Identity. Empty = public image / no registry auth.')
 param containerRegistryServer string = ''
 
 @description('Optional Log Analytics Workspace resource ID for di-processor Container App diagnostics. Empty = diagnostics not attached.')
 param logAnalyticsWorkspaceId string = ''
-
-@description('PostgreSQL flexible server host for di-processor, e.g. psql-rsbc-dmer-shared-dev-001.postgres.database.azure.com (shared resource, other workstream). Required when containerAppsEnvironmentId is supplied.')
-param postgresHost string = ''
 
 @description('App Configuration endpoint, e.g. https://appcs-rsbc-dmer-shared-dev-001.azconfig.io (shared resource, other workstream). Required when containerAppsEnvironmentId is supplied.')
 param appConfigurationEndpoint string = ''
@@ -222,10 +216,8 @@ module workload 'main.bicep' = {
     dataClassification: dataClassification
     containerAppsEnvironmentId: containerAppsEnvironmentId
     diProcessorImage: diProcessorImage
-    serviceBusNamespaceFqdn: serviceBusNamespaceFqdn
     containerRegistryServer: containerRegistryServer
     logAnalyticsWorkspaceId: logAnalyticsWorkspaceId
-    postgresHost: postgresHost
     appConfigurationEndpoint: appConfigurationEndpoint
     diCustomModelId: diCustomModelId
     llmPromptVersion: llmPromptVersion

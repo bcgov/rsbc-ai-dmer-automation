@@ -30,6 +30,7 @@ def _set_required(monkeypatch):
         "DMER_EXTRACTED_QUEUE",
         "LLM_PROMPT_VERSION",
         "HEALTH_PORT",
+        "POSTGRES_DATABASE",
     ):
         monkeypatch.delenv(key, raising=False)
 
@@ -45,6 +46,8 @@ def test_loads_required_and_applies_defaults(monkeypatch):
     assert settings.dmer_extracted_queue == "dmer-extracted"
     assert settings.prompt_version is None
     assert settings.health_port == 8080
+    # the pipeline schema lives in the "dmer" database (Flyway + Ingest)
+    assert settings.postgres_database == "dmer"
 
 
 def test_overrides_defaults_from_env(monkeypatch):
@@ -54,10 +57,12 @@ def test_overrides_defaults_from_env(monkeypatch):
     monkeypatch.setenv("DMER_EXTRACTED_QUEUE", "dmer-extracted-alt")
     monkeypatch.setenv("LLM_PROMPT_VERSION", "v3")
     monkeypatch.setenv("HEALTH_PORT", "9090")
+    monkeypatch.setenv("POSTGRES_DATABASE", "dmer_test")
 
     settings = load_settings()
 
     assert settings.dmer_raw_queue == "dmer-raw-alt"
+    assert settings.postgres_database == "dmer_test"
     assert settings.dmer_extracted_queue == "dmer-extracted-alt"
     assert settings.prompt_version == "v3"
     assert settings.health_port == 9090

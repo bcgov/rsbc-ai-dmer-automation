@@ -572,8 +572,6 @@ empty, with `__PLACEHOLDER__` values for the rest.
 | `containerAppsEnvironmentId` | (enables the app) | Container Apps Environment resource ID — Container Apps workstream |
 | `diProcessorImage` | container image | Your build, e.g. `<registry>.azurecr.io/di-processor:<tag>` (see [Build and push](#build-and-push-the-image)) |
 | `containerRegistryServer` | registry pull via the identity | Registry login server; empty = public image |
-| `serviceBusNamespaceFqdn` | `SERVICE_BUS_NAMESPACE_FQDN` + the KEDA scaler | Service Bus workstream |
-| `postgresHost` | `POSTGRES_HOST` | PostgreSQL workstream |
 | `appConfigurationEndpoint` | `APP_CONFIGURATION_ENDPOINT` | App Configuration workstream |
 | `diCustomModelId` | `DI_CUSTOM_MODEL_ID` | The trained custom model id (`rsbc-ocr-dmer-v9` as of this writing — confirm per environment) |
 | `llmPromptVersion` | `LLM_PROMPT_VERSION` (only set when non-empty) | Optional; empty records `prompt=unversioned` on `dmer_stage_run.model_version` |
@@ -581,10 +579,13 @@ empty, with `__PLACEHOLDER__` values for the rest.
 | `openAiApiKeySecretUri` | `AZURE_OPENAI_API_KEY`, as a Key Vault **secret reference** (never a plain value) | Key Vault secret URI — Key Vault workstream |
 | `logAnalyticsWorkspaceId` | diagnostics | Optional; shared workspace resource ID |
 
-Set automatically by `main.bicep`, not parameters: `BLOB_ACCOUNT_URL`
-(storage account), `DOC_INTELLIGENCE_ENDPOINT` (DI account), and
-`AZURE_CLIENT_ID` (the identity's client ID — required so
-`DefaultAzureCredential` picks the user-assigned identity). Queue,
+Set automatically by `main.bicep` from the resources it creates, not
+parameters: `BLOB_ACCOUNT_URL` (storage account), `DOC_INTELLIGENCE_ENDPOINT`
+(DI account), `SERVICE_BUS_NAMESPACE_FQDN` (the Service Bus namespace — also
+the KEDA scaler's namespace), `POSTGRES_HOST` and `POSTGRES_DATABASE` (the
+PostgreSQL flexible server and its `dmer` database), and `AZURE_CLIENT_ID` (the
+identity's client ID — required so `DefaultAzureCredential` picks the
+user-assigned identity). Queue,
 container, and port names use the code defaults (`dmer-raw`,
 `dmer-extracted`, `extracted-dmer`, `8080`).
 
@@ -595,17 +596,18 @@ or fails its first call to the resource it names.
 
 ### Access the identity needs on shared resources
 
-`main.bicep` grants only the roles on resources it creates (DI, `raw`,
-`extracted-dmer`). Ask each owning workstream to grant
+`main.bicep` grants the roles on resources it creates: Cognitive Services
+User on DI, Blob Data Reader on `raw`, Blob Data Contributor on
+`extracted-dmer`, **Service Bus Data Receiver on `dmer-raw`** and **Service Bus
+Data Sender on `dmer-extracted`** (all queue/container-scoped). For the rest,
+ask the owning workstream to grant
 `id-rsbc-dmer-di-processor-<env>-<instance>`:
 
 | Resource | Role | Without it |
 |---|---|---|
 | Key Vault holding the OpenAI key | Key Vault Secrets User | The Container App cannot resolve the secret reference; the revision fails to start |
-| Service Bus `dmer-raw` | Azure Service Bus Data Receiver | Cannot receive; the KEDA scaler cannot read queue depth |
-| Service Bus `dmer-extracted` | Azure Service Bus Data Sender | Extraction runs but publishing fails (`PUBLISH_FAILED`) |
 | App Configuration | App Configuration Data Reader | Configuration reads fail |
-| PostgreSQL | An Entra ID database user for the identity | Every status write fails (`DB_WRITE_FAILED`). **Note:** the app does not yet acquire a Managed Identity token for PostgreSQL — deferred; see the di-processor spec |
+| PostgreSQL (`dmer` database) | An Entra ID database user for the identity | Every status write fails (`DB_WRITE_FAILED`). **Note:** the app does not yet acquire a Managed Identity token for PostgreSQL — deferred; see the di-processor spec |
 | Container registry (if `containerRegistryServer` is set) | AcrPull | Image pull fails |
 
 ### Build and push the image

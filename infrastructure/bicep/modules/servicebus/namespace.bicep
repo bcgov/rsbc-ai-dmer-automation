@@ -69,3 +69,6 @@ resource namespace 'Microsoft.ServiceBus/namespaces@2024-01-01' = {
 output id string = namespace.id
 output name string = namespace.name
 output serviceBusEndpoint string = namespace.properties.serviceBusEndpoint
+
+@description('Namespace host name, e.g. sb-rsbc-dmer-shared-dev-001.servicebus.windows.net -- what SDK clients and the KEDA scaler take as the fully-qualified namespace.')
+output fullyQualifiedNamespace string = split(replace(namespace.properties.serviceBusEndpoint, 'https://', ''), ':')[0]
