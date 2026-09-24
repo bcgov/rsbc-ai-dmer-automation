@@ -26,8 +26,10 @@ Two Bicep entry points, deployed as one command:
   `main.bicep` as a nested module.
 - **`infrastructure/bicep/main.bicep`** (resource group scope) — the
   workload: Managed Identity, Document Intelligence account, Storage
-  account + blob container, both private endpoints, and the RBAC role
-  assignments connecting them.
+  account + blob containers, both private endpoints, the RBAC role
+  assignments connecting them, and — only when `containerAppsEnvironmentId`
+  is supplied — the di-processor Container App (see
+  [di-processor Container App](#di-processor-container-app) below).
 
 You normally deploy `subscription.bicep` directly; it pulls in `main.bicep`
 for you (see "Redeploying only the workload" below for the one case where
@@ -45,11 +47,15 @@ rg-rsbc-dmer-<env>                   ← created by subscription.bicep
   ├─ id-rsbc-dmer-di-processor-<env>-<instance>      (Managed Identity)
   ├─ di-rsbc-dmer-shared-<env>-<instance>             (Document Intelligence)
   │    └─ pe-di-rsbc-dmer-shared-<env>-<instance>     (its private endpoint)
-  ├─ stdmer<env><region>-<instance>                   (Storage Account)
-  │    ├─ raw                                          (blob container)
+  ├─ stdmer<env><region><instance>                    (Storage Account, e.g. stdmerdevcac001)
+  │    ├─ raw                                          (blob container — source/training PDFs)
+  │    ├─ extracted-dmer                               (blob container — di-processor output)
   │    └─ pe-st-rsbc-dmer-shared-<env>-<instance>     (its private endpoint)
-  └─ 2 RBAC role assignments (Cognitive Services User, Storage Blob Data Reader)
-       scoped to the DI account / storage account, granted to the Managed Identity
+  ├─ 3 RBAC role assignments, granted to the Managed Identity:
+  │    Cognitive Services User (DI account), Storage Blob Data Reader (raw
+  │    container), Storage Blob Data Contributor (extracted-dmer container)
+  └─ ca-rsbc-dmer-di-processor-<env>-<instance>       (Container App — only when
+                                                       containerAppsEnvironmentId is set)
 ```
 
 Not created anywhere in this repository: the VNet itself and its peering
@@ -96,10 +102,15 @@ first deployment to a given environment.
 | `privateDnsZoneIdCognitiveServices` / `privateDnsZoneIdBlob` | `""` | `""` | `""` | **Confirmed empty for this landing zone** — see "Private DNS: confirmed behavior" below. Only set these if a future landing zone doesn't provide the same DINE-policy automation |
 | `documentIntelligenceSku` | `S0` | `S0` | `S0` | Change only if you need a different Cognitive Services tier |
 | `storageSkuName` | `Standard_LRS` | `Standard_LRS` | `Standard_ZRS` | Redundancy — higher in PROD |
-| `blobContainerNames` | `["raw"]` | `["raw"]` | `["raw"]` | Add more container names to the array if needed |
+| `blobContainerNames` | `["raw", "extracted-dmer"]` | same | same | Both are required: `main.bicep` grants di-processor container-scoped roles on them and fails if either is missing |
 | `allowSharedKeyAccess` | `true` | `false` | `false` | DEV allows account-key auth for convenience; TEST/PROD require Azure AD only |
 | `disableLocalAuthDocumentIntelligence` | `false` | `false` | `true` | PROD disables API-key auth on the DI account entirely |
 | `costCenter` / `owner` / `dataClassification` | `RSBC` / `RSBC-DMER` / `protected-b` | same | same | Tag values — change if these aren't accurate for your deployment |
+
+The di-processor Container App parameters are listed separately under
+[di-processor Container App](#di-processor-container-app). They are
+all inert while `containerAppsEnvironmentId` is empty (the default), which
+is the current state of every environment.
 
 Values that are **never** in a parameter file, because they're specific to
 *how* you run the command, not to the environment's infrastructure:
@@ -191,10 +202,11 @@ az deployment sub what-if \
   --parameters deployment/<env>/parameters.json
 ```
 
-Expect roughly 11 resources, all `+ Create`: the application resource
+Expect roughly 13 resources, all `+ Create`: the application resource
 group, NSG, subnet, managed identity, Document Intelligence account, its
-private endpoint, storage account, blob container, its private endpoint,
-and 2 role assignments. Anything else — especially a `~ Modify` or
+private endpoint, storage account, 2 blob containers, its private endpoint,
+and 3 role assignments — plus the di-processor Container App (14) when
+`containerAppsEnvironmentId` is set. Anything else — especially a `~ Modify` or
 `- Delete`, or anything referencing a resource you didn't expect this
 template to touch — means stop and investigate before proceeding.
 
@@ -253,7 +265,7 @@ az deployment group what-if \
   --parameters privateEndpointSubnetId=<subnet-resource-id> \
   --parameters privateDnsZoneIdCognitiveServices="" privateDnsZoneIdBlob="" \
   --parameters documentIntelligenceSku=S0 storageSkuName=Standard_LRS \
-  --parameters blobContainerNames='["raw"]' \
+  --parameters blobContainerNames='["raw", "extracted-dmer"]' \
   --parameters allowSharedKeyAccess=true disableLocalAuthDocumentIntelligence=false \
   --parameters costCenter=RSBC owner=RSBC-DMER dataClassification=protected-b
 
@@ -268,6 +280,9 @@ superset parameter list (it adds `resourceGroupName`,
 containing keys the target template doesn't declare**, so don't pass that
 file directly to `main.bicep` — use inline overrides as above, keeping the
 shared values in sync with `deployment/<env>/parameters.json` by hand.
+When the Container App is enabled, add its parameters (listed under
+[di-processor Container App](#di-processor-container-app)) as further
+`--parameters` overrides.
 
 ## Post-deployment Portal verification
 
@@ -292,9 +307,12 @@ the naming convention (e.g. `dev`/`001`); substitute your actual values.
 **Managed identity and Document Intelligence**
 
 - Managed Identities → `id-rsbc-dmer-di-processor-<env>-<instance>` → left
-  nav "Azure role assignments" — should list two: `Cognitive Services
+  nav "Azure role assignments" — should list three: `Cognitive Services
   User` scoped to the DI account, `Storage Blob Data Reader` scoped to the
-  storage account.
+  `raw` container, `Storage Blob Data Contributor` scoped to the
+  `extracted-dmer` container. (Roles on shared resources — Service Bus, Key
+  Vault, App Configuration, PostgreSQL — are granted by their own
+  workstreams; see [di-processor Container App](#di-processor-container-app).)
 - Document Intelligence (Cognitive Services, kind Form Recognizer) →
   `di-rsbc-dmer-shared-<env>-<instance>`:
   - Overview: Endpoint matches the deployment output; pricing tier matches
@@ -313,7 +331,7 @@ the naming convention (e.g. `dev`/`001`); substitute your actual values.
 
 **Storage account**
 
-- Storage accounts → `stdmer<env><region>-<instance>`:
+- Storage accounts → `stdmer<env><region><instance>` (e.g. `stdmerdevcac001`):
   - Configuration blade: Minimum TLS version `1.2`; "Allow Blob public
     access" = Disabled; "Allow storage account key access" matches
     `allowSharedKeyAccess`.
@@ -322,10 +340,15 @@ the naming convention (e.g. `dev`/`001`); substitute your actual values.
     `Microsoft.CognitiveServices/accounts` → that environment's DI account
     name. Private endpoint connections tab lists
     `pe-st-rsbc-dmer-shared-<env>-<instance>`, status **Approved**.
-  - Access control (IAM): `Storage Blob Data Reader` granted to the
+  - Access control (IAM): roles are container-scoped, so check them on
+    each container, not the account — `raw` → `Storage Blob Data Reader`,
+    `extracted-dmer` → `Storage Blob Data Contributor`, both granted to the
     managed identity.
-  - Containers → `raw` — Public access level **Private (no anonymous
-    access)**; empty until training data is uploaded/copied in.
+  - Containers → `raw` and `extracted-dmer` — Public access level **Private
+    (no anonymous access)**. `raw` is empty until training data is
+    uploaded/copied in; `extracted-dmer` fills with
+    `<document_id>/{top_level,ocr,handwritten,combined}.json` once
+    di-processor runs.
 - Private endpoints → both `pe-di-...` and `pe-st-...` — DNS configuration
   tab should show an A-record within ~10 minutes of deployment (see step 7
   above); empty immediately after deployment is expected, not a fault.
@@ -383,6 +406,9 @@ creates, for one environment at a time.
 | VNet peering to the hub, flow logs, Network Watcher | **Platform team.** |
 | Private DNS zones (`privatelink.cognitiveservices.azure.com`, `privatelink.blob.core.windows.net`) and their link to the VNet | **Confirmed platform-owned.** Both zones already exist centrally in the landing zone hub; the platform team's Deploy-If-Not-Exists (DINE) policy creates the DNS A-record automatically after a private endpoint is deployed (observed within ~10 minutes) — see [BC Gov TechDocs, Azure best practices — Be Mindful, "Private Endpoints and DNS"](https://developer.gov.bc.ca/docs/default/component/public-cloud-techdocs/azure/best-practices/be-mindful/#private-endpoints-and-dns). `privateDnsZoneIdCognitiveServices`/`privateDnsZoneIdBlob` stay empty — do not set them (that would fight with the policy, not complement it). See "Private DNS: confirmed behavior" below. |
 | Document Intelligence account, Storage account, Managed Identity, RBAC, private endpoints | **This repo**, via `main.bicep` (invoked as a nested module by `subscription.bicep`, or standalone once the RG/subnet exist). |
+| di-processor Container App | **This repo**, via `main.bicep` (`modules/compute/container-app.bicep`) — only when `containerAppsEnvironmentId` is supplied. |
+| Container Apps Environment, Service Bus namespace + queues, PostgreSQL, App Configuration, Key Vault (and the OpenAI key secret), Log Analytics, container registry | **Other workstreams.** Passed in by ID / FQDN / URI; di-processor's access to them is granted there — see [di-processor Container App](#di-processor-container-app). |
+| Azure OpenAI deployment | **External** — separate AI Hub subscription; reached by endpoint + API key. |
 
 ### Private DNS: confirmed behavior
 
@@ -522,5 +548,98 @@ work (confirm feasibility with the platform team):
 Each service is built independently (Docker image for Container Apps, zip
 package for Function Apps) and deployed via its stage in the corresponding
 `.github/workflows/deploy-*.yml` pipeline. See each service's `README.md`
-for its build command. (Not yet applicable to this deployment — no compute
-services are wired into `main.bicep` yet.)
+for its build command. The deploy pipelines are still placeholders, so the
+one compute service wired into `main.bicep` today — di-processor — is
+deployed with the steps below.
+
+## di-processor Container App
+
+The extraction stage (see `docs/development/stages/02-extraction.md`). One
+Container App, `ca-rsbc-dmer-di-processor-<env>-<instance>`, running as the
+`id-rsbc-dmer-di-processor-<env>-<instance>` user-assigned identity, scaled
+by KEDA on `dmer-raw` queue depth (`minReplicas` 1 in PROD, 0 elsewhere).
+Ingress is **internal only** — it exists solely for the platform's
+`/healthz` (liveness) and `/readyz` (readiness) probes on port 8080.
+
+It is **not deployed** until `containerAppsEnvironmentId` is set in
+`deployment/<env>/parameters.json`. Every environment currently has it
+empty, with `__PLACEHOLDER__` values for the rest.
+
+### Parameters
+
+| Parameter | Becomes | Where it comes from |
+|---|---|---|
+| `containerAppsEnvironmentId` | (enables the app) | Container Apps Environment resource ID — Container Apps workstream |
+| `diProcessorImage` | container image | Your build, e.g. `<registry>.azurecr.io/di-processor:<tag>` (see [Build and push](#build-and-push-the-image)) |
+| `containerRegistryServer` | registry pull via the identity | Registry login server; empty = public image |
+| `appConfigurationEndpoint` | `APP_CONFIGURATION_ENDPOINT` | App Configuration workstream |
+| `diCustomModelId` | `DI_CUSTOM_MODEL_ID` | The trained custom model id (`rsbc-ocr-dmer-v9` as of this writing — confirm per environment) |
+| `llmPromptVersion` | `LLM_PROMPT_VERSION` (only set when non-empty) | Optional; empty records `prompt=unversioned` on `dmer_stage_run.model_version` |
+| `openAiEndpoint` / `openAiDeployment` / `openAiApiVersion` | `AZURE_OPENAI_ENDPOINT` / `_DEPLOYMENT` / `_API_VERSION` | The external AI Hub deployment |
+| `openAiApiKeySecretUri` | `AZURE_OPENAI_API_KEY`, as a Key Vault **secret reference** (never a plain value) | Key Vault secret URI — Key Vault workstream |
+| `logAnalyticsWorkspaceId` | diagnostics | Optional; shared workspace resource ID |
+
+Set automatically by `main.bicep` from the resources it creates, not
+parameters: `BLOB_ACCOUNT_URL` (storage account), `DOC_INTELLIGENCE_ENDPOINT`
+(DI account), `SERVICE_BUS_NAMESPACE_FQDN` (the Service Bus namespace — also
+the KEDA scaler's namespace), `POSTGRES_HOST` and `POSTGRES_DATABASE` (the
+PostgreSQL flexible server and its `dmer` database), and `AZURE_CLIENT_ID` (the
+identity's client ID — required so `DefaultAzureCredential` picks the
+user-assigned identity). Queue,
+container, and port names use the code defaults (`dmer-raw`,
+`dmer-extracted`, `extracted-dmer`, `8080`).
+
+Bicep does **not** check that the required values are filled in once
+`containerAppsEnvironmentId` is set. A missing or `__PLACEHOLDER__` value
+shows up only at runtime — the app exits at startup on a missing setting,
+or fails its first call to the resource it names.
+
+### Access the identity needs on shared resources
+
+`main.bicep` grants the roles on resources it creates: Cognitive Services
+User on DI, Blob Data Reader on `raw`, Blob Data Contributor on
+`extracted-dmer`, **Service Bus Data Receiver on `dmer-raw`** and **Service Bus
+Data Sender on `dmer-extracted`** (all queue/container-scoped). For the rest,
+ask the owning workstream to grant
+`id-rsbc-dmer-di-processor-<env>-<instance>`:
+
+| Resource | Role | Without it |
+|---|---|---|
+| Key Vault holding the OpenAI key | Key Vault Secrets User | The Container App cannot resolve the secret reference; the revision fails to start |
+| App Configuration | App Configuration Data Reader | Configuration reads fail |
+| PostgreSQL (`dmer` database) | An Entra ID database user for the identity | Every status write fails (`DB_WRITE_FAILED`). **Note:** the app does not yet acquire a Managed Identity token for PostgreSQL — deferred; see the di-processor spec |
+| Container registry (if `containerRegistryServer` is set) | AcrPull | Image pull fails |
+
+### Build and push the image
+
+The Dockerfile needs the **repo root** as build context (it copies
+`libs/dmer_common`):
+
+```bash
+docker build -f services/di-processor/Dockerfile -t <registry>.azurecr.io/di-processor:<tag> .
+az acr login --name <registry>
+docker push <registry>.azurecr.io/di-processor:<tag>
+```
+
+### Enable and deploy
+
+1. Confirm the shared resources exist and the roles above are granted.
+2. In `deployment/<env>/parameters.json`, set `containerAppsEnvironmentId`
+   and replace every `__PLACEHOLDER__` in the di-processor block.
+3. Run the normal `what-if` / `create` (steps 5–6 above). The plan should
+   add one `Microsoft.App/containerApps` resource; on later image-only
+   changes, expect a `~ Modify` of that resource alone.
+
+### Verify
+
+- Container Apps → `ca-rsbc-dmer-di-processor-<env>-<instance>`:
+  - Revisions: the latest revision is **Running** and healthy
+    (liveness/readiness probes passing).
+  - Identity: user assigned = `id-rsbc-dmer-di-processor-<env>-<instance>`.
+  - Secrets blade — the OpenAI key entry is listed as a **Key Vault
+    reference** (never a stored value).
+  - Scale: rule on `dmer-raw`; replica count 0 at idle outside PROD.
+- Log stream / Log Analytics: `di-processor started; consuming` on startup.
+  A failed document logs `pipeline failed` with an `error_code`
+  (`docs/development/stages/02-extraction.md` §Failure codes); the same code
+  is the dead-letter reason on `dmer-raw`, and on `dmer_stage_run.error_code`.

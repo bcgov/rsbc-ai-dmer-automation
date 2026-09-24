@@ -29,7 +29,7 @@ def _top_level(**fields: str) -> TopLevelExtraction:
 
 def test_base_is_all_custom_model_fields():
     top = _top_level(**{"vision.acuity_loss": "selected", "dl_number": "01234567"})
-    combined = merge("doc-1", "c", top, HandwrittenExtraction())
+    combined = merge("doc-1", top, HandwrittenExtraction())
     # every custom-model field is present, un-namespaced
     assert combined.fields["vision.acuity_loss"] == "selected"
     assert combined.fields["dl_number"] == "01234567"
@@ -45,7 +45,7 @@ def test_handwritten_fills_blank_custom_field():
             )
         }
     )
-    combined = merge("doc-1", "c", top, hw)
+    combined = merge("doc-1", top, hw)
     assert combined.fields["endocrine.HbA1C"] == "6.5"
 
 
@@ -59,7 +59,7 @@ def test_blank_handwritten_does_not_overwrite_custom_value():
             )
         }
     )
-    combined = merge("doc-1", "c", top, hw)
+    combined = merge("doc-1", top, hw)
     # custom-model value is preserved
     assert combined.fields["musculoskeletal.weakness_details"] == "cane-use"
 
@@ -74,7 +74,7 @@ def test_handwritten_only_key_is_not_added():
             )
         }
     )
-    combined = merge("doc-1", "c", top, hw)
+    combined = merge("doc-1", top, hw)
     assert "some.unknown_key" not in combined.fields
 
 
@@ -87,7 +87,7 @@ def test_low_confidence_image_value_still_fills_existing_key():
             )
         }
     )
-    combined = merge("doc-1", "c", top, hw)
+    combined = merge("doc-1", top, hw)
     assert combined.fields["visual_acuity.uncorrected_right"] == "24/30"
 
 
@@ -97,7 +97,6 @@ def test_metadata_and_uncertain_fields_carried():
     hw = HandwrittenExtraction(uncertain_fields=["visual_acuity.uncorrected_right"])
     combined = merge(
         "doc-1",
-        "case-123",
         top,
         hw,
         source_model_version="rsbc-ocr-dmer-v9",

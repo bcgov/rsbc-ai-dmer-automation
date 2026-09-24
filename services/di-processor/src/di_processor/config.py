@@ -28,10 +28,10 @@ class Settings:
         App Configuration endpoint the runtime bootstraps config from.
     service_bus_namespace_fqdn:
         Fully-qualified Service Bus namespace (Managed Identity auth).
-    raw_dmer_queue:
-        Source queue this service consumes.
-    extracted_dmer_queue:
-        Destination queue for the v2 combined-extraction message.
+    dmer_raw_queue:
+        Source queue this service consumes (``dmer-raw``).
+    dmer_extracted_queue:
+        Destination queue for the combined-extraction message (``dmer-extracted``).
     postgres_host:
         PostgreSQL host (Managed Identity token auth).
     blob_account_url:
@@ -45,18 +45,22 @@ class Settings:
         combined extraction metadata).
     health_port:
         Port the readiness/liveness HTTP server binds to.
+    postgres_database:
+        PostgreSQL database holding the pipeline schema (default ``dmer``, the
+        database the Flyway migrations and Ingest use).
     """
 
     app_configuration_endpoint: str
     service_bus_namespace_fqdn: str
-    raw_dmer_queue: str
-    extracted_dmer_queue: str
+    dmer_raw_queue: str
+    dmer_extracted_queue: str
     postgres_host: str
     blob_account_url: str
     doc_intelligence_endpoint: str
     custom_model_id: str
     prompt_version: str | None
     health_port: int
+    postgres_database: str = "dmer"
 
 
 def load_settings() -> Settings:
@@ -69,14 +73,14 @@ def load_settings() -> Settings:
     return Settings(
         app_configuration_endpoint=config.require("APP_CONFIGURATION_ENDPOINT"),
         service_bus_namespace_fqdn=config.require("SERVICE_BUS_NAMESPACE_FQDN"),
-        raw_dmer_queue=config.get("RAW_DMER_QUEUE", "raw-dmer-queue")
-        or "raw-dmer-queue",
-        extracted_dmer_queue=config.get("EXTRACTED_DMER_QUEUE", "extracted-dmer-queue")
-        or "extracted-dmer-queue",
+        dmer_raw_queue=config.get("DMER_RAW_QUEUE", "dmer-raw") or "dmer-raw",
+        dmer_extracted_queue=config.get("DMER_EXTRACTED_QUEUE", "dmer-extracted")
+        or "dmer-extracted",
         postgres_host=config.require("POSTGRES_HOST"),
         blob_account_url=config.require("BLOB_ACCOUNT_URL"),
         doc_intelligence_endpoint=config.require("DOC_INTELLIGENCE_ENDPOINT"),
         custom_model_id=config.require("DI_CUSTOM_MODEL_ID"),
         prompt_version=config.get("LLM_PROMPT_VERSION"),
         health_port=int(port),
+        postgres_database=config.get("POSTGRES_DATABASE", "dmer") or "dmer",
     )

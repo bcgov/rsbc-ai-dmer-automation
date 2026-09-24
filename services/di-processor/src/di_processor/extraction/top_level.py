@@ -16,6 +16,7 @@ from typing import Any
 from dmer_common.doc_intelligence import DocumentIntelligenceClient
 from dmer_common.telemetry import get_logger
 
+from . import cutoff
 from .schemas import TopLevelExtraction, TopLevelField
 
 _log = get_logger(__name__)
@@ -72,8 +73,16 @@ def extract_top_level(
     documents = result.documents or []
     fields = documents[0].get("fields", {}) if documents else {}
     mapped = map_di_fields(fields)
+    # Cut-off check reuses this call's full-page layout (no extra DI call).
+    flags = cutoff.detect_cutoff(result.pages[0] if result.pages else None, fields)
     _log.info(
         "custom-model top-level extraction complete",
-        extra={"model_id": model_id, "field_count": len(mapped)},
+        extra={
+            "model_id": model_id,
+            "field_count": len(mapped),
+            "has_header": flags.has_header,
+            "has_signature": flags.has_signature,
+            "is_cutoff": flags.is_cutoff,
+        },
     )
-    return TopLevelExtraction(fields=mapped)
+    return TopLevelExtraction(fields=mapped, cutoff=flags)

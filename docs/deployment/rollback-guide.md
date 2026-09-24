@@ -27,18 +27,27 @@ and the rollback script has to know about both:
 | Resource | Created by | Lives in |
 |---|---|---|
 | Document Intelligence account | `main.bicep` → `modules/ai/document-intelligence.bicep` | Application RG (`rg-rsbc-dmer-<env>`) |
-| Storage account + `raw` blob container | `main.bicep` → `modules/storage/storage-account.bicep` + `blob-containers.bicep` | Application RG |
+| Storage account + `raw` and `extracted-dmer` blob containers | `main.bicep` → `modules/storage/storage-account.bicep` + `blob-containers.bicep` | Application RG |
 | Managed identity | `main.bicep` → `modules/identity/managed-identity.bicep` | Application RG |
 | Both private endpoints | `main.bicep` → `modules/networking/private-endpoint.bicep` | Application RG |
-| 2 RBAC role assignments (Cognitive Services User, Storage Blob Data Reader) | `main.bicep` | Scoped directly to the DI account / storage account, both in the Application RG |
+| 3 RBAC role assignments (Cognitive Services User on the DI account; Storage Blob Data Reader on `raw`; Storage Blob Data Contributor on `extracted-dmer`) | `main.bicep` | Scoped to the DI account / the two containers, all in the Application RG |
+| di-processor Container App (only if `containerAppsEnvironmentId` was set) | `main.bicep` → `modules/compute/container-app.bicep` | Application RG (its Container Apps Environment is shared and **not** deleted) |
 | Application resource group itself | `subscription.bicep` → `modules/shared/resource-group.bicep` | — |
 | Private-endpoint subnet | `subscription.bicep` → `modules/networking/subnet.bicep` | **Platform VNet's resource group** (e.g. `f11861-dev-networking`) — scoped there deliberately, since the subnet has to live inside the platform-owned VNet |
 | NSG for that subnet | `subscription.bicep` → `modules/networking/network-security-group.bicep` (only if `createNetworkSecurityGroup: true`) | **Platform VNet's resource group** |
 
-Everything in the first six rows is inside one resource group, so deleting
+Everything in the first seven rows is inside one resource group, so deleting
 that resource group (`az group delete`) removes all of it in one step —
-including the two role assignments, since a role assignment scoped to a
-resource is removed automatically when that resource is deleted. That's the
+including the three role assignments, since a role assignment scoped to a
+resource is removed automatically when that resource is deleted.
+
+Not removed: roles that **other workstreams** granted the di-processor
+identity on shared resources (Key Vault Secrets User, Service Bus
+Sender/Receiver, App Configuration Data Reader, the PostgreSQL database
+user). Deleting the identity leaves those assignments behind, shown as
+"Identity not found" on each shared resource. Ask the owning workstreams to
+remove them, or they will pile up across redeploys (each new identity gets a
+new principal ID). That's the
 "safest approach" the script uses for that half of the teardown: one
 guaranteed-complete deletion instead of enumerating every resource type by
 hand.

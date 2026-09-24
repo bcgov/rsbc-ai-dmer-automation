@@ -116,14 +116,32 @@ param containerAppsEnvironmentId string = ''
 @description('Fully-qualified di-processor container image. Required when containerAppsEnvironmentId is supplied.')
 param diProcessorImage string = ''
 
-@description('Service Bus namespace FQDN the di-processor KEDA scaler watches (shared resource, passed in by FQDN). Required when containerAppsEnvironmentId is supplied.')
-param serviceBusNamespaceFqdn string = ''
-
 @description('Optional container registry login server for image pull via the di-processor Managed Identity. Empty = public image / no registry auth.')
 param containerRegistryServer string = ''
 
 @description('Optional Log Analytics Workspace resource ID for di-processor Container App diagnostics. Empty = diagnostics not attached.')
 param logAnalyticsWorkspaceId string = ''
+
+@description('App Configuration endpoint, e.g. https://appcs-rsbc-dmer-shared-dev-001.azconfig.io (shared resource, other workstream). Required when containerAppsEnvironmentId is supplied.')
+param appConfigurationEndpoint string = ''
+
+@description('Document Intelligence custom DMER model id di-processor analyzes with, e.g. rsbc-ocr-dmer-v9. Required when containerAppsEnvironmentId is supplied.')
+param diCustomModelId string = ''
+
+@description('Optional LLM prompt/schema version recorded on dmer_stage_run.model_version. Empty = recorded as \'unversioned\'.')
+param llmPromptVersion string = ''
+
+@description('External Azure OpenAI (AI Hub) endpoint for di-processor handwriting reconstruction. Required when containerAppsEnvironmentId is supplied.')
+param openAiEndpoint string = ''
+
+@description('Azure OpenAI deployment name, e.g. gpt-5.1. Required when containerAppsEnvironmentId is supplied.')
+param openAiDeployment string = ''
+
+@description('Azure OpenAI API version. Required when containerAppsEnvironmentId is supplied.')
+param openAiApiVersion string = ''
+
+@description('Key Vault secret URI of the external Azure OpenAI API key (the documented Managed Identity exception), e.g. https://kv-rsbc-dmer-dev-001.vault.azure.net/secrets/azure-openai-api-key. Resolved by the Container App via the di-processor identity, which needs Key Vault Secrets User on that vault (granted by the Key Vault workstream). Required when containerAppsEnvironmentId is supplied.')
+param openAiApiKeySecretUri string = ''
 
 var sharedTags = buildTags(environment, 'shared', costCenter, owner, dataClassification)
 var privateEndpointSubnetName = resourceName('snet', 'pe', environment, instance)
@@ -198,9 +216,15 @@ module workload 'main.bicep' = {
     dataClassification: dataClassification
     containerAppsEnvironmentId: containerAppsEnvironmentId
     diProcessorImage: diProcessorImage
-    serviceBusNamespaceFqdn: serviceBusNamespaceFqdn
     containerRegistryServer: containerRegistryServer
     logAnalyticsWorkspaceId: logAnalyticsWorkspaceId
+    appConfigurationEndpoint: appConfigurationEndpoint
+    diCustomModelId: diCustomModelId
+    llmPromptVersion: llmPromptVersion
+    openAiEndpoint: openAiEndpoint
+    openAiDeployment: openAiDeployment
+    openAiApiVersion: openAiApiVersion
+    openAiApiKeySecretUri: openAiApiKeySecretUri
   }
   dependsOn: [
     appResourceGroup

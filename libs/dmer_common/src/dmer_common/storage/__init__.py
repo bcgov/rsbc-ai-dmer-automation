@@ -1,10 +1,11 @@
 """Blob Storage helpers: managed-identity-authenticated client and path builders
 for the pipeline container layout (raw/ocr/normalized/rules/audit/failed/archive
-plus the di-processor extracted-dmer/combined-extracted-dmer containers)."""
+plus the di-processor ``extracted-dmer`` container that holds all four extraction
+artifacts per document)."""
 
 from . import containers
 from .client import BlobClient
-from .containers import combined_extracted_dmer, extracted_dmer
+from .containers import extracted_dmer
 from .paths import (
     combined_path,
     handwritten_path,
@@ -14,7 +15,6 @@ from .paths import (
 
 __all__ = [
     "BlobClient",
-    "combined_extracted_dmer",
     "combined_path",
     "containers",
     "extracted_dmer",

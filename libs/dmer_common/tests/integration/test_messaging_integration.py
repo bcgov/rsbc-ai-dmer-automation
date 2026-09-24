@@ -5,7 +5,7 @@ Runs against the Service Bus emulator or a dev namespace. Skipped unless
 default unit run is unaffected.
 
 GIVEN a queue on the emulator/dev namespace
-WHEN an ExtractedDmerMessage is published and then consumed
+WHEN an ExtractedMessage is published and then consumed
 THEN the consumer receives it, propagates the document id, and completes it,
      and a redelivery of the same messageId is a no-op.
 """
@@ -28,15 +28,15 @@ pytestmark = pytest.mark.skipif(
 
 
 def _extracted(message_id: str):
-    from dmer_common.dto import ExtractedDmerMessage
+    from dmer_common.dto import ExtractedMessage
 
-    return ExtractedDmerMessage(
+    return ExtractedMessage(
         message_id=message_id,
         document_id="doc-int-1",
-        mercury_case_id="case-int-1",
-        sha256_hash="deadbeef",
-        combined_result_uri="combined-extracted-dmer/doc-int-1/combined.json",
-        processed_at=datetime.now(tz=UTC),
+        document_guid="guid-int-1",
+        driver_key="driver-int-1",
+        blob_url="https://example/extracted-dmer/doc-int-1/combined.json",
+        enqueued_at=datetime.now(tz=UTC),
     )
 
 
@@ -58,11 +58,15 @@ def test_publish_then_consume_round_trip():
         store = InMemoryIdempotencyStore()
         received: list[dict] = []
         with sb.get_queue_receiver(QUEUE, max_wait_time=10) as receiver:
-            consumer = ServiceBusConsumer(receiver, idempotency_store=store)
+            consumer = ServiceBusConsumer(
+                receiver,
+                idempotency_scope="integration/test-queue",
+                idempotency_store=store,
+            )
             for msg in receiver:
                 consumer.handle(msg, lambda env: received.append(env))
                 break
 
     assert received, "expected to receive the published message"
     assert received[0]["messageId"] == message_id
-    assert received[0]["combinedResultUri"].endswith("combined.json")
+    assert received[0]["blobUrl"].endswith("combined.json")

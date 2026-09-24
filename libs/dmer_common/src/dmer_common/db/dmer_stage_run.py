@@ -4,20 +4,57 @@ One row per document, per stage, per attempt (see
 ``docs/development/data-model.md``). Every stage inserts one of these at
 the start of its work (``RUNNING``) and updates it to ``SUCCEEDED``/
 ``FAILED`` at the end -- this repository provides that start/succeed/fail
-helper so each stage doesn't reimplement it.
+helper so each stage doesn't reimplement it. The table is created by
+``database/migrations/V0001__create_dmer_pipeline_schema.sql``.
+
+``attempt_no`` may be passed by the caller (Ingest derives it from
+``dmer_document.attempt_count``) or left out, in which case it is derived from
+the table (previous attempts for the same document + stage, plus one) — the
+queue message's own ``attempt`` doesn't change on Service Bus redelivery.
+Starting a new attempt also closes any row still ``RUNNING`` for that document +
+stage as ``FAILED`` / ``ABANDONED``: a run that crashed or lost its lock never
+reached its own finish call and must not look in-flight forever.
+
+``model_version`` records the DI custom-model version and/or the LLM
+prompt/schema version, so a disputed extraction can be traced to the exact
+model/prompt that produced it.
 """
 
 from __future__ import annotations
 
+import enum
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Final
 
-from sqlalchemy import BigInteger, Column, DateTime, Integer, MetaData, Table, Text
+from sqlalchemy import (
+    BigInteger,
+    Column,
+    DateTime,
+    Integer,
+    MetaData,
+    Table,
+    Text,
+    func,
+    select,
+)
 from sqlalchemy.dialects.postgresql import ENUM as PG_ENUM
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 metadata = MetaData()
+
+# error_code written on a RUNNING row superseded by a newer attempt.
+ABANDONED_ERROR_CODE: Final = "ABANDONED"
+
+
+class StageRunStatus(str, enum.Enum):
+    """Status of a single stage attempt."""
+
+    RUNNING = "RUNNING"
+    SUCCEEDED = "SUCCEEDED"
+    FAILED = "FAILED"
+
 
 # create_type=False: created by V0001__create_dmer_pipeline_schema.sql.
 _stage_enum = PG_ENUM(
@@ -68,6 +105,11 @@ class DmerStageRunRecord:
     error_detail: str | None
 
 
+def _value(v: object) -> object:
+    """Accept an enum member or its string value."""
+    return v.value if isinstance(v, enum.Enum) else v
+
+
 class DmerStageRunRepository:
     """Async repository over the ``dmer_stage_run`` table."""
 
@@ -75,35 +117,76 @@ class DmerStageRunRepository:
         self._engine = engine
 
     async def start(
-        self, *, document_id: str, stage: str, attempt_no: int, started_at: datetime
+        self,
+        *,
+        document_id: str,
+        stage: str | enum.Enum,
+        attempt_no: int | None = None,
+        started_at: datetime | None = None,
+        model_version: str | None = None,
     ) -> int:
         """Insert a ``RUNNING`` row, returning its ``id`` for the matching
         :meth:`succeed`/:meth:`fail` call.
+
+        In one transaction: close any still-``RUNNING`` row for this document +
+        stage as abandoned, then insert. ``attempt_no`` defaults to the previous
+        max + 1; ``started_at`` defaults to the database clock.
         """
-        stmt = (
-            dmer_stage_run.insert()
-            .values(
-                document_id=document_id,
-                stage=stage,
-                status="RUNNING",
-                attempt_no=attempt_no,
-                started_at=started_at,
+        stage_value = _value(stage)
+        same_stage = (dmer_stage_run.c.document_id == document_id) & (
+            dmer_stage_run.c.stage == stage_value
+        )
+        abandon = (
+            dmer_stage_run.update()
+            .where(
+                same_stage & (dmer_stage_run.c.status == StageRunStatus.RUNNING.value)
             )
-            .returning(dmer_stage_run.c.id)
+            .values(
+                status=StageRunStatus.FAILED.value,
+                ended_at=func.now(),
+                error_code=ABANDONED_ERROR_CODE,
+            )
         )
         async with self._engine.begin() as conn:
-            result = await conn.execute(stmt)
+            await conn.execute(abandon)
+            if attempt_no is None:
+                last = (
+                    await conn.execute(
+                        select(
+                            func.coalesce(func.max(dmer_stage_run.c.attempt_no), 0)
+                        ).where(same_stage)
+                    )
+                ).scalar_one()
+                attempt_no = int(last) + 1
+            result = await conn.execute(
+                dmer_stage_run.insert()
+                .values(
+                    document_id=document_id,
+                    stage=stage_value,
+                    status=StageRunStatus.RUNNING.value,
+                    attempt_no=attempt_no,
+                    started_at=started_at if started_at is not None else func.now(),
+                    model_version=model_version,
+                )
+                .returning(dmer_stage_run.c.id)
+            )
             return result.scalar_one()
 
     async def succeed(
-        self, run_id: int, *, ended_at: datetime, output_blob_url: str | None = None
+        self,
+        run_id: int,
+        *,
+        ended_at: datetime | None = None,
+        output_blob_url: str | None = None,
     ) -> None:
         """Mark a run ``SUCCEEDED``."""
         stmt = (
             dmer_stage_run.update()
             .where(dmer_stage_run.c.id == run_id)
             .values(
-                status="SUCCEEDED", ended_at=ended_at, output_blob_url=output_blob_url
+                status=StageRunStatus.SUCCEEDED.value,
+                ended_at=ended_at if ended_at is not None else func.now(),
+                output_blob_url=output_blob_url,
             )
         )
         async with self._engine.begin() as conn:
@@ -113,17 +196,17 @@ class DmerStageRunRepository:
         self,
         run_id: int,
         *,
-        ended_at: datetime,
+        ended_at: datetime | None = None,
         error_code: str | None,
-        error_detail: str | None,
+        error_detail: str | None = None,
     ) -> None:
         """Mark a run ``FAILED`` with an error code/detail."""
         stmt = (
             dmer_stage_run.update()
             .where(dmer_stage_run.c.id == run_id)
             .values(
-                status="FAILED",
-                ended_at=ended_at,
+                status=StageRunStatus.FAILED.value,
+                ended_at=ended_at if ended_at is not None else func.now(),
                 error_code=error_code,
                 error_detail=error_detail,
             )

@@ -20,12 +20,23 @@
     "documentIntelligenceSku": { "value": "S0" },
     "storageSkuName": { "value": "Standard_LRS" },
     "blobContainerNames": {
-      "value": ["raw", "extracted-dmer", "combined-extracted-dmer"]
+      "value": ["raw", "extracted-dmer"]
     },
     "allowSharedKeyAccess": { "value": true },
     "disableLocalAuthDocumentIntelligence": { "value": false },
     "costCenter": { "value": "RSBC" },
     "owner": { "value": "RSBC-DMER" },
-    "dataClassification": { "value": "protected-b" }
+    "dataClassification": { "value": "protected-b" },
+    "containerAppsEnvironmentId": { "value": "" },
+    "diProcessorImage": { "value": "__DI_PROCESSOR_IMAGE__" },
+    "containerRegistryServer": { "value": "" },
+    "logAnalyticsWorkspaceId": { "value": "" },
+    "appConfigurationEndpoint": { "value": "__APP_CONFIGURATION_ENDPOINT__" },
+    "diCustomModelId": { "value": "rsbc-ocr-dmer-v9" },
+    "llmPromptVersion": { "value": "" },
+    "openAiEndpoint": { "value": "__AZURE_OPENAI_ENDPOINT__" },
+    "openAiDeployment": { "value": "__AZURE_OPENAI_DEPLOYMENT__" },
+    "openAiApiVersion": { "value": "__AZURE_OPENAI_API_VERSION__" },
+    "openAiApiKeySecretUri": { "value": "__AZURE_OPENAI_API_KEY_SECRET_URI__" }
   }
 }

@@ -110,7 +110,7 @@ addresses four things the original architecture left open:
 | Decision gateway | Split into a per-document orchestration and a per-driver orchestration, serialized per driver | In the original design, two documents finishing at the same time either both stood down (outcome never posted) or both proceeded (conflicting outcomes posted). See [Driver Orchestration](stages/06-driver-orchestration.md#why-serialization-is-required). |
 | Waiting state | "Not all documents ready" is an explicit `driver_evaluation` row, not an implicit do-nothing branch | A row can be found by a sweeper and reported on; a silent return cannot. |
 | Ingest | Split into a Page Poller and a per-document Ingest Function | One bad document in a page of fifty shouldn't fail/re-download the other forty-nine. |
-| Driver resolution | Moved from the decision gateway into Extraction | Documents must be grouped by driver from the start, including when Mercury supplies no driver object. |
+| Driver resolution | Architecture doc moved it into Extraction; **reversed 2026-09-23**: moved to a Resolve Driver activity at the start of Document Orchestration | Must happen before `driver-decision` (which requires `driver_key`). Extraction records `licence_number_read` only. See [Document Orchestration](stages/03-document-orchestration.md#activity-resolve-driver). |
 | Cut-off detection | Performed in Extraction, persisted as three flags (`has_header`/`has_signature`/`is_cutoff`) | Cheap geometric check on OCR output; needed as a Decision Gateway input, not a late re-read. |
 | Normalizer | A Durable Functions activity calling Azure OpenAI directly — **not a Container App** | The endpoint is reachable with a key; a container adds deployment/networking with no benefit. |
 | Rule engine | An in-process library (GoRules/Zen) inside a Durable activity — **not a separate service** | It's a library, not a service. |
@@ -134,8 +134,6 @@ The current state of the codebase, verified against the placeholder folders and 
   (`BlobClient`), `doc_intelligence/client.py`, `openai_client/client.py`, `config/__init__.py`.
   Needs rework: `db/{documents,status}.py` (wrong table/schema — see
   [data-model.md](data-model.md#alignment-gaps-vs-current-code)),
-  `storage/{containers,paths}.py` (wrong container layout — see
-  [azure-blob-storage.md](services/azure-blob-storage.md#alignment-gaps-vs-current-code)),
   `dto/messages.py` (wrong queues/shape — see
   [message-contracts.md](message-contracts.md#alignment-gaps-vs-current-code)). Empty stubs needing
   real implementation: `mercury_client/__init__.py`, `auth/__init__.py`.
@@ -156,7 +154,7 @@ testable and the riskiest unknowns are hit early:
 | Phase | Scope | Exit criteria |
 |---|---|---|
 | 1 | Schema, Mercury integration spike, [Ingest](stages/01-ingest.md) | Poller and Ingest Function move documents from the batch API into `raw-dmer` and Postgres idempotently; re-running the poller creates no duplicates; questions M-1 to M-4 answered. |
-| 2 | [Extraction](stages/02-extraction.md) | Combined JSON produced for a representative sample including cut-off and handwriting-heavy forms; cut-off flags validated against a manually labelled set; `driver_key` resolution working when Mercury returns no driver. |
+| 2 | [Extraction](stages/02-extraction.md) | Combined JSON produced for a representative sample including cut-off and handwriting-heavy forms; cut-off flags validated against a manually labelled set; `licence_number_read` recorded. (`driver_key` resolution is no longer part of this phase.) |
 | 3 | [Document Orchestration](stages/03-document-orchestration.md) | Normalize and Rule Engine activities running end to end; `rule_evaluation` populated with full outcome lists and `rules_version`. |
 | 4 | [Driver Orchestration](stages/06-driver-orchestration.md) | The join proven **under concurrency**: a driver with several documents finishing simultaneously produces exactly one evaluation and one set of decisions. Test this deliberately with a load harness, not incidentally. |
 | 5 | [Reliability](stages/09-reliability-components.md), [DLQ Drain](stages/10-dlq-drain.md) | Mercury outage simulated and recovered with no lost outcome; a **permanent-business** poison document (unreadable PDF) dead-lettered, drained, and delivered as fallback `IN`; a **transient** dead-letter (e.g. lock expiry) drained to `MANUAL_REVIEW` with **no** decision and redriven successfully. |

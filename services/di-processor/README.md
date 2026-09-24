@@ -2,9 +2,9 @@
 # di-processor
 
 Azure Container App for the **extraction** stage of the DMER pipeline. Consumes
-`raw-dmer-queue`, runs the custom-model top-level extraction + tiled OCR + LLM
+`dmer-raw`, runs the custom-model top-level extraction + tiled OCR + LLM
 handwritten reconstruction, merges them into a combined extraction, persists the
-artifacts, and publishes to `extracted-dmer-queue`. See
+artifacts under the `extracted-dmer` container, and publishes to `dmer-extracted`. See
 `docs/services/di-processor.md` for full responsibilities and dependencies.
 
 ## Configuration
