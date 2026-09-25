@@ -12,8 +12,12 @@ artifacts under the `extracted-dmer` container, and publishes to `dmer-extracted
 All configuration is read from environment variables sourced from App
 Configuration / Key Vault references (see `.env.example` for the full list):
 
-- `APP_CONFIGURATION_ENDPOINT`, `SERVICE_BUS_NAMESPACE_FQDN`, `POSTGRES_HOST`,
-  `BLOB_ACCOUNT_URL`
+- `SERVICE_BUS_NAMESPACE_FQDN`, `BLOB_ACCOUNT_URL` (`APP_CONFIGURATION_ENDPOINT` is
+  optional and not read yet)
+- `POSTGRES_HOST`, `POSTGRES_USER` (the Managed Identity's name; logs in with an
+  Entra token per connection), optional `POSTGRES_DATABASE` / `POSTGRES_PORT` /
+  `POSTGRES_SSLMODE`; `POSTGRES_PASSWORD` for local development only.
+  The identity's database role and grants: `apply_roles.sh` (this directory)
 - `DOC_INTELLIGENCE_ENDPOINT`, `DI_CUSTOM_MODEL_ID` (Managed Identity)
 - `AZURE_OPENAI_*` (external endpoint; API key via Key Vault — the one documented
   Managed-Identity exception)
