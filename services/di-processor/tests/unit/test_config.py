@@ -12,7 +12,6 @@ from di_processor.config import load_settings
 from dmer_common.config import ConfigError
 
 _REQUIRED = {
-    "APP_CONFIGURATION_ENDPOINT": "https://appcfg.example",
     "SERVICE_BUS_NAMESPACE_FQDN": "sb.example.servicebus.windows.net",
     "POSTGRES_HOST": "pg.example",
     "POSTGRES_USER": "id-rsbc-dmer-di-processor-dev-001",
@@ -27,6 +26,7 @@ def _set_required(monkeypatch):
         monkeypatch.setenv(key, value)
     # Ensure optional/defaulted vars are unset for a clean baseline.
     for key in (
+        "APP_CONFIGURATION_ENDPOINT",
         "DMER_RAW_QUEUE",
         "DMER_EXTRACTED_QUEUE",
         "LLM_PROMPT_VERSION",
@@ -57,6 +57,8 @@ def test_loads_required_and_applies_defaults(monkeypatch):
     assert settings.postgres_port == 5432
     assert settings.postgres_sslmode == "require"
     assert settings.postgres_password is None
+    # unused and no store exists yet: optional, not a startup failure
+    assert settings.app_configuration_endpoint is None
 
 
 def test_overrides_defaults_from_env(monkeypatch):
@@ -104,5 +106,5 @@ def test_postgres_password_is_not_in_repr(monkeypatch):
 
     settings = load_settings()
 
-    assert settings.postgres_password == "FAKE-local-pw"
+    assert settings.postgres_password == "FAKE-local-pw"  # pragma: allowlist secret
     assert "FAKE-local-pw" not in repr(settings)

@@ -25,7 +25,9 @@ class Settings:
     Attributes
     ----------
     app_configuration_endpoint:
-        App Configuration endpoint the runtime bootstraps config from.
+        Optional App Configuration endpoint. Not read by any code path today
+        (all settings arrive as environment variables) and no App
+        Configuration store exists yet, so it is not required.
     service_bus_namespace_fqdn:
         Fully-qualified Service Bus namespace (Managed Identity auth).
     dmer_raw_queue:
@@ -61,7 +63,7 @@ class Settings:
         deployed environment) a fresh Entra token is fetched per connection.
     """
 
-    app_configuration_endpoint: str
+    app_configuration_endpoint: str | None
     service_bus_namespace_fqdn: str
     dmer_raw_queue: str
     dmer_extracted_queue: str
@@ -86,7 +88,7 @@ def load_settings() -> Settings:
     """
     port = config.get("HEALTH_PORT", "8080") or "8080"
     return Settings(
-        app_configuration_endpoint=config.require("APP_CONFIGURATION_ENDPOINT"),
+        app_configuration_endpoint=config.get("APP_CONFIGURATION_ENDPOINT") or None,
         service_bus_namespace_fqdn=config.require("SERVICE_BUS_NAMESPACE_FQDN"),
         dmer_raw_queue=config.get("DMER_RAW_QUEUE", "dmer-raw") or "dmer-raw",
         dmer_extracted_queue=config.get("DMER_EXTRACTED_QUEUE", "dmer-extracted")

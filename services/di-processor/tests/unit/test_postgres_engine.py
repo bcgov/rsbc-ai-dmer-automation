@@ -92,8 +92,8 @@ def test_fresh_entra_token_on_every_connection():
     first = _connect_params(engine)
     second = _connect_params(engine)
 
-    assert first["password"] == "FAKE-token-1"
-    assert second["password"] == "FAKE-token-2"
+    assert first["password"] == "FAKE-token-1"  # pragma: allowlist secret
+    assert second["password"] == "FAKE-token-2"  # pragma: allowlist secret
     assert credential.scopes == [AAD_POSTGRES_SCOPE, AAD_POSTGRES_SCOPE]
 
 
@@ -102,10 +102,14 @@ def test_local_password_skips_token():
     the credential is never asked for a token."""
     credential = _FakeCredential()
     engine = build_postgres_engine(
-        replace(_SETTINGS, postgres_password="FAKE-local-pw"), credential
+        replace(
+            _SETTINGS, postgres_password="FAKE-local-pw"  # pragma: allowlist secret
+        ),
+        credential,
     )
 
-    assert _connect_params(engine)["password"] == "FAKE-local-pw"
+    params = _connect_params(engine)
+    assert params["password"] == "FAKE-local-pw"  # pragma: allowlist secret
     assert credential.scopes == []
 
 
