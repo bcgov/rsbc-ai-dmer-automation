@@ -15,6 +15,7 @@ _REQUIRED = {
     "APP_CONFIGURATION_ENDPOINT": "https://appcfg.example",
     "SERVICE_BUS_NAMESPACE_FQDN": "sb.example.servicebus.windows.net",
     "POSTGRES_HOST": "pg.example",
+    "POSTGRES_USER": "id-rsbc-dmer-di-processor-dev-001",
     "BLOB_ACCOUNT_URL": "https://acct.blob.core.windows.net",
     "DOC_INTELLIGENCE_ENDPOINT": "https://di.example",
     "DI_CUSTOM_MODEL_ID": "rsbc-ocr-dmer-v9",
@@ -31,6 +32,9 @@ def _set_required(monkeypatch):
         "LLM_PROMPT_VERSION",
         "HEALTH_PORT",
         "POSTGRES_DATABASE",
+        "POSTGRES_PORT",
+        "POSTGRES_SSLMODE",
+        "POSTGRES_PASSWORD",
     ):
         monkeypatch.delenv(key, raising=False)
 
@@ -48,6 +52,11 @@ def test_loads_required_and_applies_defaults(monkeypatch):
     assert settings.health_port == 8080
     # the pipeline schema lives in the "dmer" database (Flyway + Ingest)
     assert settings.postgres_database == "dmer"
+    # deployed default: Entra token auth over TLS, no password
+    assert settings.postgres_user == "id-rsbc-dmer-di-processor-dev-001"
+    assert settings.postgres_port == 5432
+    assert settings.postgres_sslmode == "require"
+    assert settings.postgres_password is None
 
 
 def test_overrides_defaults_from_env(monkeypatch):
@@ -75,3 +84,25 @@ def test_missing_required_raises_config_error(monkeypatch):
 
     with pytest.raises(ConfigError):
         load_settings()
+
+
+def test_missing_postgres_user_raises_config_error(monkeypatch):
+    """GIVEN no POSTGRES_USER WHEN load_settings THEN ConfigError (no silent
+    fallback to a role the Managed Identity isn't registered as)."""
+    _set_required(monkeypatch)
+    monkeypatch.delenv("POSTGRES_USER", raising=False)
+
+    with pytest.raises(ConfigError):
+        load_settings()
+
+
+def test_postgres_password_is_not_in_repr(monkeypatch):
+    """GIVEN a local-dev POSTGRES_PASSWORD WHEN settings are printed THEN the
+    password is not."""
+    _set_required(monkeypatch)
+    monkeypatch.setenv("POSTGRES_PASSWORD", "FAKE-local-pw")
+
+    settings = load_settings()
+
+    assert settings.postgres_password == "FAKE-local-pw"
+    assert "FAKE-local-pw" not in repr(settings)
