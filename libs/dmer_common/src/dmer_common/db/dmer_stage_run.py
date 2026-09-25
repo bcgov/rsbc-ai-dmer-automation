@@ -96,14 +96,31 @@ class DmerStageRunRepository:
             return result.scalar_one()
 
     async def succeed(
-        self, run_id: int, *, ended_at: datetime, output_blob_url: str | None = None
+        self,
+        run_id: int,
+        *,
+        ended_at: datetime,
+        output_blob_url: str | None = None,
+        model_version: str | None = None,
     ) -> None:
-        """Mark a run ``SUCCEEDED``."""
+        """Mark a run ``SUCCEEDED``.
+
+        ``model_version`` is optional (Ingest/Extract have no model to
+        record) -- Normalize sets it to the OpenAI deployment name *and*
+        the normalization schema version together (e.g.
+        ``"gpt-5.1@normalization-schema-v1"``), per
+        docs/development/stages/04-activity-normalize.md's Database writes
+        table: "model_version (deployment name and normalization schema
+        version)".
+        """
         stmt = (
             dmer_stage_run.update()
             .where(dmer_stage_run.c.id == run_id)
             .values(
-                status="SUCCEEDED", ended_at=ended_at, output_blob_url=output_blob_url
+                status="SUCCEEDED",
+                ended_at=ended_at,
+                output_blob_url=output_blob_url,
+                model_version=model_version,
             )
         )
         async with self._engine.begin() as conn:

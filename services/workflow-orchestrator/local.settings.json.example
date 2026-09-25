@@ -5,6 +5,21 @@
     "AzureWebJobsStorage": "UseDevelopmentStorage=true",
     "APP_CONFIGURATION_ENDPOINT": "",
     "SERVICE_BUS_NAMESPACE_FQDN": "",
-    "POSTGRES_HOST": ""
+    "ServiceBusConnection__fullyQualifiedNamespace": "",
+    "DMER_EXTRACTED_QUEUE": "dmer-extracted",
+    "POSTGRES_HOST": "",
+    "POSTGRES_PORT": "5432",
+    "POSTGRES_DATABASE": "dmer",
+    "POSTGRES_USER": "",
+    "POSTGRES_PASSWORD": "",
+    "POSTGRES_SSLMODE": "require",
+    "BLOB_ACCOUNT_URL": "",
+    "NORMALIZED_DMER_CONTAINER": "normalized-dmer",
+    "AZURE_OPENAI_ENDPOINT": "",
+    "AZURE_OPENAI_API_KEY": "",
+    "AZURE_OPENAI_DEPLOYMENT": "",
+    "AZURE_OPENAI_API_VERSION": "",
+    "NORMALIZATION_CATEGORY_TEMPERATURE": "0.0",
+    "NORMALIZATION_ANALYZE_TEMPERATURE": "0.0"
   }
 }

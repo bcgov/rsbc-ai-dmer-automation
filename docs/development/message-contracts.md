@@ -75,7 +75,7 @@ because it's the other message-shaped contract in the system:
 
 | Operation | Purpose |
 |---|---|
-| `UPDATE_OUTCOME` | Write the outcome code (`CP`/`IN`/`PR`/`PU`/`PCM`/`CR`) and reason back to the DMER record. A **fallback** `UPDATE_OUTCOME` (`IN`, `decided_by = FALLBACK`, carrying `fallback_reason_code` + the "AI could not process" comment) is written **only** by the DLQ Drain for a `PERMANENT_BUSINESS` failure — never for a transient/processing/unknown failure. |
+| `UPDATE_OUTCOME` | Write the outcome code (`CP`/`IN`/`PR`/`PU`/`TCM`/`CR`) and reason back to the DMER record. A **fallback** `UPDATE_OUTCOME` (`IN`, `decided_by = FALLBACK`, carrying `fallback_reason_code` + the "AI could not process" comment) is written **only** by the DLQ Drain for a `PERMANENT_BUSINESS` failure — never for a transient/processing/unknown failure. |
 | `MARK_DUPLICATE` | Flag a document as a duplicate of another — Mercury's `Rejected` status per question I-7. |
 | `MAP_DRIVER` | Attach the proposed driver to the DMER record (question I-11: AI may do this automatically). |
 | `CREATE_CASE` | Create a case where none exists, or attach to an existing open case (question I-13). |

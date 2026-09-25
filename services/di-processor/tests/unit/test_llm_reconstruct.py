@@ -59,8 +59,9 @@ def test_reconstruct_returns_validated_extraction():
     result = reconstruct(client, img, _ocr_json())
     assert isinstance(result, HandwrittenExtraction)
     assert result.fields["endocrine.HbA1C"].value == "6.5"
-    # all 67 keys filled by sanitize
-    assert len(result.fields) == 67
+    # all 65 keys filled by sanitize (67 originally; see
+    # test_sanitize.py::test_load_field_keys_has_65_keys for why)
+    assert len(result.fields) == 65
 
 
 def test_reconstruct_sanitizes_binary_confidence_before_validation():

@@ -53,7 +53,7 @@ EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 -- referenced throughout the architecture doc but never defined there.
 -- Source from Intake before this enum is relied on for real decisions.
 DO $$ BEGIN
-    CREATE TYPE dmer_outcome_code AS ENUM ('CP', 'IN', 'PR', 'PU', 'PCM', 'CR');
+    CREATE TYPE dmer_outcome_code AS ENUM ('CP', 'IN', 'PR', 'PU', 'TCM', 'CR');
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 DO $$ BEGIN

@@ -43,7 +43,7 @@ document's current position in the pipeline.
 | `document_guid` | uuid, **UNIQUE** | Mercury's identifier. See [`document_guid` is not a content key](#document_guid-is-not-a-content-key) below — this uniqueness guards against redelivery, not duplicate content. |
 | `document_name` | text | As received from Mercury. |
 | `mercury_document_status` | text | Mercury's own status field (`Uploaded`, `Rejected`, ...). Refreshed only by the driver orchestration's completeness call ([Decision Gateway](stages/07-decision-gateway.md)), never by the poller. |
-| `document_priority` | text | From Mercury. Per question I-3, does **not** override the rule engine's PR/PU/PCM/CR selection. |
+| `document_priority` | text | From Mercury. Per question I-3, does **not** override the rule engine's PR/PU/TCM/CR selection. |
 | `received_date` / `dps_date` | timestamptz | `dps_date` empty = "not yet triaged" (question I-9, confirmed reliable signal). Refreshed at decision time only. |
 | `queue` / `business_area` | text | DPS General / DPS Unknown, etc. |
 | `mercury_case_id` | text, nullable | Set when Mercury supplied a case. |
@@ -165,7 +165,7 @@ The final per-document outcome. Written **once, atomically with the outbox row**
 | `id` | uuid PK | |
 | `document_id` | uuid FK → `dmer_document.id` | |
 | `driver_evaluation_id` | uuid FK → `driver_evaluation.id` | |
-| `outcome_code` | enum | `CP`, `IN`, `PR`, `PU`, `PCM`, `CR` — Mercury/business outcome codes. **Definitions are not in the architecture document**; source them from Intake/business-rules documentation before building the rule engine's outcome table. Flagged in [Open Questions](#open-questions--decisions-required). |
+| `outcome_code` | enum | `CP`, `IN`, `PR`, `PU`, `TCM`, `CR` — Mercury/business outcome codes. **Definitions are not in the architecture document**; source them from Intake/business-rules documentation before building the rule engine's outcome table. Flagged in [Open Questions](#open-questions--decisions-required). |
 | `is_duplicate` | bool | |
 | `duplicate_of_document_id` | uuid FK → `dmer_document.id`, nullable | Self-referencing via `dmer_decision`; see the `duplicate_of` edge on the ERD. |
 | `duplicate_reason` | text, nullable | Human-readable, for Intake to inspect when they disagree. |
@@ -334,7 +334,7 @@ for the new `pipeline_status` and `driver_evaluation.status` state machines.
   on `status NOT IN ('DECIDED', 'POSTED')`?). Needs a decision before the migration is written.
   Related to question I-10 (a new DMER after a batch is posted is "treated separately" — implying a
   *new* `driver_evaluation` row per batch, not a reopened one).
-- **Outcome code definitions** (`CP`, `IN`, `PR`, `PU`, `PCM`, `CR`) are referenced throughout the
+- **Outcome code definitions** (`CP`, `IN`, `PR`, `PU`, `TCM`, `CR`) are referenced throughout the
   architecture document but never defined there. Source the business definitions from Intake before
   building the rule engine's outcome table and `dmer_decision.outcome_code` enum.
 - **Normalized clinical JSON in Postgres** (question I-17 answered "30–90 days" for blob retention,

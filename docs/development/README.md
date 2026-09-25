@@ -177,7 +177,7 @@ implements them — don't re-litigate them without a reason:
   **only** for a permanent-business failure (an un-processable DMER), never for a transient,
   processing, or unknown failure (see [ADR-0002](../architecture/decision-records/0002-dlq-fallback-decisions-gated-by-failure-category.md)).
 - AI never revises a decision after a human has reviewed it (I-2).
-- Rule engine decides PR/PU/PCM/CR entirely from medical content; `document_priority` never
+- Rule engine decides PR/PU/TCM/CR entirely from medical content; `document_priority` never
   overrides it (I-3).
 - Cut-off precedence: clear scan wins over a newer cut-off one *if content agrees*; disagreement
   routes to manual review (I-4).
@@ -248,7 +248,7 @@ instantiations, and CODEOWNERS.
 
 - `driver_evaluation (driver_key, open)` conflict target — what "open" means is unspecified. See
   [data-model.md](data-model.md#open-questions--decisions-required).
-- `dmer_decision.outcome_code` values (`CP`, `IN`, `PR`, `PU`, `PCM`, `CR`) are never defined in the
+- `dmer_decision.outcome_code` values (`CP`, `IN`, `PR`, `PU`, `TCM`, `CR`) are never defined in the
   architecture document — source definitions from Intake before building the rule engine's outcome
   table.
 - Normalized clinical JSON in Postgres — needs privacy/security sign-off before adding the column.

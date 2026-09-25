@@ -4,10 +4,11 @@ plus the di-processor extracted-dmer/combined-extracted-dmer containers)."""
 
 from . import containers
 from .client import BlobClient
-from .containers import combined_extracted_dmer, extracted_dmer
+from .containers import combined_extracted_dmer, extracted_dmer, normalized_dmer
 from .paths import (
     combined_path,
     handwritten_path,
+    normalized_path,
     ocr_path,
     top_level_path,
 )
@@ -19,6 +20,8 @@ __all__ = [
     "containers",
     "extracted_dmer",
     "handwritten_path",
+    "normalized_dmer",
+    "normalized_path",
     "ocr_path",
     "top_level_path",
 ]

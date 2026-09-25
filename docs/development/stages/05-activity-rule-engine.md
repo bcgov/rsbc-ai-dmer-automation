@@ -53,7 +53,7 @@ that question unanswerable after the fact.
 
 ## Precedence: document_priority vs. rule engine
 
-Question I-3 (answered): **the rule engine decides PR/PU/PCM/CR entirely from medical content.**
+Question I-3 (answered): **the rule engine decides PR/PU/TCM/CR entirely from medical content.**
 `dmer_document.document_priority` (from Mercury) does not override the outcome selection.
 
 ## Failure handling

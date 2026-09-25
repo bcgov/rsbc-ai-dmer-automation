@@ -33,3 +33,15 @@ def handwritten_path(document_id: str) -> str:
 def combined_path(document_id: str) -> str:
     """Stage D: unified combined extraction JSON (in ``combined-extracted-dmer``)."""
     return f"{_doc(document_id)}/combined.json"
+
+
+def normalized_path(document_id: str, *, run_id: int | None = None) -> str:
+    """Keep attempts separate so failed/replayed work cannot replace an audit artifact.
+
+    The unversioned path remains available for older stored artifacts.
+    """
+    if run_id is not None:
+        if type(run_id) is not int or run_id < 1:
+            raise ValueError("run_id must be a positive integer")
+        return f"{_doc(document_id)}/runs/{run_id}/normalized.json"
+    return f"{_doc(document_id)}/normalized.json"

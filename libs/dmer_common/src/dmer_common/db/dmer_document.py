@@ -220,3 +220,24 @@ class DmerDocumentRepository:
         )
         async with self._engine.begin() as conn:
             await conn.execute(stmt)
+
+    async def mark_normalized(self, document_id: str, *, now: datetime) -> None:
+        """Advance a row to ``NORMALIZED``/``RULES`` after the Document
+        Orchestration's Normalize activity writes ``normalized-dmer`` (see
+        docs/development/stages/04-activity-normalize.md's Database writes
+        table). There is no blob-URL column to set here the way
+        :meth:`mark_downloaded` sets ``raw_blob_url`` -- the normalized
+        blob's URL is recorded on the ``dmer_stage_run`` row instead
+        (``output_blob_url``), not duplicated onto this table.
+        """
+        stmt = (
+            dmer_document.update()
+            .where(dmer_document.c.id == document_id)
+            .values(
+                pipeline_status="NORMALIZED",
+                current_stage="RULES",
+                updated_at=now,
+            )
+        )
+        async with self._engine.begin() as conn:
+            await conn.execute(stmt)

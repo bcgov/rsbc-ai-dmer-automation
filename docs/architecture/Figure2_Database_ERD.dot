@@ -154,7 +154,7 @@ digraph erd {
       <TR><TD ALIGN="LEFT"><B>id</B></TD><TD ALIGN="LEFT">uuid PK</TD></TR>
       <TR><TD ALIGN="LEFT">document_id</TD><TD ALIGN="LEFT">uuid FK</TD></TR>
       <TR><TD ALIGN="LEFT">driver_evaluation_id</TD><TD ALIGN="LEFT">uuid FK</TD></TR>
-      <TR><TD ALIGN="LEFT">outcome_code</TD><TD ALIGN="LEFT">CP/IN/PR/PU/PCM/CR</TD></TR>
+      <TR><TD ALIGN="LEFT">outcome_code</TD><TD ALIGN="LEFT">CP/IN/PR/PU/TCM/CR</TD></TR>
       <TR><TD ALIGN="LEFT">is_duplicate</TD><TD ALIGN="LEFT">bool</TD></TR>
       <TR><TD ALIGN="LEFT">duplicate_of_document_id</TD><TD ALIGN="LEFT">uuid FK NULL</TD></TR>
       <TR><TD ALIGN="LEFT">duplicate_reason</TD><TD ALIGN="LEFT">text NULL</TD></TR>
