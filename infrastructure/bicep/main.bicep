@@ -183,7 +183,10 @@ var postgresServerName = resourceName('psql', 'shared', environment, instance)
 var dmerIngestQueueName = 'dmer-ingest'
 var dmerRawQueueName = 'dmer-raw'
 var dmerExtractedQueueName = 'dmer-extracted'
-var diProcessorContainerAppName = resourceName('ca', 'di-processor', environment, instance)
+// Container App names are limited to 32 characters: 'di-processor' would make
+// ca-rsbc-dmer-di-processor-<env>-<instance> 33+ characters, so it's
+// abbreviated here (and only here -- the identity and image keep the full name).
+var diProcessorContainerAppName = resourceName('ca', 'di-proc', environment, instance)
 var deployDiProcessorContainerApp = !empty(containerAppsEnvironmentId)
 
 // di-processor runtime settings (services/di-processor/src/di_processor/config.py

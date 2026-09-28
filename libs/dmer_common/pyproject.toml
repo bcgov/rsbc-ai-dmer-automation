@@ -11,7 +11,10 @@ dependencies = [
     "azure-ai-documentintelligence>=1.0,<2",
     "openai>=1.40",
     "tenacity>=8,<10",
-    "SQLAlchemy>=2.0,<3",
+    # [asyncio] pulls in greenlet, which the async engine needs; plain
+    # SQLAlchemy no longer installs it, and without it the service fails at
+    # import ("requires that the Python 'greenlet' library is installed").
+    "SQLAlchemy[asyncio]>=2.0,<3",
     "asyncpg>=0.29",
 ]
 
