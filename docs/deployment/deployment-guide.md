@@ -607,7 +607,7 @@ ask the owning workstream to grant
 |---|---|---|
 | Key Vault holding the OpenAI key | Key Vault Secrets User | The Container App cannot resolve the secret reference; the revision fails to start |
 | App Configuration | App Configuration Data Reader | Configuration reads fail |
-| PostgreSQL (`dmer` database) | An Entra ID database user for the identity | Every status write fails (`DB_WRITE_FAILED`). **Note:** the app does not yet acquire a Managed Identity token for PostgreSQL — deferred; see the di-processor spec |
+| PostgreSQL (`dmer` database) | An Entra ID database role named after the identity, with per-table grants: run `services/di-processor/apply_roles.sh <env> <postgres-host> <your-entra-email>` as a server Entra admin, **after** migrations V0001–V0003 | Login fails, so the first status read fails (`DB_READ_FAILED`) and every message is retried then dead-lettered. The app logs in as `POSTGRES_USER` (set by `main.bicep` to the identity's name) with a Managed Identity token fetched per connection |
 | Container registry (if `containerRegistryServer` is set) | AcrPull | Image pull fails |
 
 ### Build and push the image

@@ -30,6 +30,10 @@ from dmer_common.messaging import (
 from dmer_common.openai_client import OpenAIClient
 from dmer_common.storage import BlobClient
 from dmer_common.telemetry import get_logger
+from sqlalchemy import event
+from sqlalchemy.engine import URL
+from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy.pool import NullPool
 
 from .config import Settings, load_settings
 from .consumer import idempotency_scope, make_handler
@@ -37,6 +41,50 @@ from .health import HealthServer
 from .pipeline import Pipeline, PipelineConfig
 
 _log = get_logger(__name__)
+
+# Token scope for Microsoft Entra (Managed Identity) auth against Azure Database
+# for PostgreSQL Flexible Server — the same scope Ingest uses.
+AAD_POSTGRES_SCOPE = "https://ossrdbms-aad.database.windows.net/.default"
+
+
+def build_postgres_engine(settings: Settings, credential: Any) -> AsyncEngine:
+    """Build the async engine for the pipeline database.
+
+    Deployed, the password is a Microsoft Entra token for the di-processor
+    Managed Identity, fetched on **every new connection** (``do_connect``)
+    rather than once at startup: this is a long-running consumer and tokens
+    expire, so a startup token would stop working mid-run. With ``NullPool``
+    every operation opens a fresh connection; ``azure-identity`` caches the
+    token until near expiry, so this does not call Entra per operation.
+
+    ``POSTGRES_PASSWORD`` (local development only) replaces the token.
+
+    NullPool: each message runs in its own event loop (``asyncio.run``), and
+    pooled asyncpg connections are bound to the loop that created them —
+    reusing one from the next message fails.
+    """
+    url = URL.create(
+        "postgresql+asyncpg",
+        username=settings.postgres_user,
+        password=settings.postgres_password,
+        host=settings.postgres_host,
+        port=settings.postgres_port,
+        database=settings.postgres_database,
+    )
+    connect_args = (
+        {}
+        if settings.postgres_sslmode == "disable"
+        else {"ssl": settings.postgres_sslmode}
+    )
+    engine = create_async_engine(url, poolclass=NullPool, connect_args=connect_args)
+
+    if not settings.postgres_password:
+
+        @event.listens_for(engine.sync_engine, "do_connect")
+        def _entra_token(dialect, conn_rec, cargs, cparams):
+            cparams["password"] = credential.get_token(AAD_POSTGRES_SCOPE).token
+
+    return engine
 
 
 @dataclass
@@ -136,8 +184,6 @@ def main() -> None:  # pragma: no cover - thin production wiring
     """
     from azure.identity import DefaultAzureCredential
     from azure.servicebus import ServiceBusClient
-    from sqlalchemy.ext.asyncio import create_async_engine
-    from sqlalchemy.pool import NullPool
 
     settings = load_settings()
     credential = DefaultAzureCredential()
@@ -146,14 +192,7 @@ def main() -> None:  # pragma: no cover - thin production wiring
     receiver = sb_client.get_queue_receiver(settings.dmer_raw_queue)
     sender = sb_client.get_queue_sender(settings.dmer_extracted_queue)
 
-    # NullPool: each message runs in its own event loop (asyncio.run), and pooled
-    # asyncpg connections are bound to the loop that created them — reusing one
-    # from the next message fails. A fresh connection per operation avoids that
-    # (and suits per-connection Managed Identity tokens, still to be added).
-    engine = create_async_engine(
-        f"postgresql+asyncpg://{settings.postgres_host}/{settings.postgres_database}",
-        poolclass=NullPool,
-    )
+    engine = build_postgres_engine(settings, credential)
 
     app = build_application(
         settings,

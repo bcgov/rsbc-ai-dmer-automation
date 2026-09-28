@@ -199,6 +199,9 @@ var diProcessorEnvironmentVariables = concat(
     { name: 'SERVICE_BUS_NAMESPACE_FQDN', value: serviceBusNamespace.outputs.fullyQualifiedNamespace }
     { name: 'POSTGRES_HOST', value: postgresServer.outputs.fullyQualifiedDomainName }
     { name: 'POSTGRES_DATABASE', value: postgresDatabase.outputs.name }
+    // Postgres role = the identity's name (registered by
+    // services/di-processor/create-principal.sql); password = Entra token.
+    { name: 'POSTGRES_USER', value: diProcessorIdentityName }
     { name: 'BLOB_ACCOUNT_URL', value: storage.outputs.blobEndpoint }
     { name: 'DOC_INTELLIGENCE_ENDPOINT', value: documentIntelligence.outputs.endpoint }
     { name: 'DI_CUSTOM_MODEL_ID', value: diCustomModelId }

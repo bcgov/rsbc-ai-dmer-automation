@@ -50,6 +50,7 @@ def _settings() -> Settings:
         dmer_raw_queue="dmer-raw",
         dmer_extracted_queue="dmer-extracted",
         postgres_host="pg.example",
+        postgres_user="id-rsbc-dmer-di-processor-test",
         blob_account_url="https://acct.blob.core.windows.net",
         doc_intelligence_endpoint="https://di.example",
         custom_model_id="rsbc-ocr-dmer-v9",
