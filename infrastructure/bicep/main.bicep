@@ -146,7 +146,7 @@ param containerRegistryServer string = ''
 @description('Optional Log Analytics Workspace resource ID for di-processor Container App diagnostics (shared resource, passed in by ID). Empty = diagnostics not attached here.')
 param logAnalyticsWorkspaceId string = ''
 
-@description('App Configuration endpoint, e.g. https://appcs-rsbc-dmer-shared-dev-001.azconfig.io (shared resource, other workstream). Required when containerAppsEnvironmentId is supplied.')
+@description('Optional App Configuration endpoint, e.g. https://appcs-rsbc-dmer-shared-dev-001.azconfig.io. di-processor does not read it yet and no App Configuration store exists; leave empty.')
 param appConfigurationEndpoint string = ''
 
 @description('Document Intelligence custom DMER model id di-processor analyzes with, e.g. rsbc-ocr-dmer-v9. Required when containerAppsEnvironmentId is supplied.')

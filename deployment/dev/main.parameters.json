@@ -1,0 +1,50 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "environment": { "value": "dev" },
+    "location": { "value": "canadacentral" },
+    "instance": { "value": "001" },
+
+    "privateEndpointSubnetId": {
+      "value": "/subscriptions/e34c5ef8-e2f1-4a67-a94f-29cb158155c2/resourceGroups/f11861-dev-networking/providers/Microsoft.Network/virtualNetworks/f11861-dev-vwan-spoke/subnets/snet-rsbc-dmer-pe-dev-001"
+    },
+    "privateDnsZoneIdCognitiveServices": { "value": "" },
+    "privateDnsZoneIdBlob": { "value": "" },
+    "privateDnsZoneIdServiceBus": { "value": "" },
+    "privateDnsZoneIdPostgres": { "value": "" },
+
+    "documentIntelligenceSku": { "value": "S0" },
+    "disableLocalAuthDocumentIntelligence": { "value": false },
+    "storageSkuName": { "value": "Standard_LRS" },
+    "blobContainerNames": { "value": ["raw", "extracted-dmer"] },
+    "allowSharedKeyAccess": { "value": true },
+    "serviceBusSkuName": { "value": "Premium" },
+    "postgresAdministratorLogin": { "value": "rsbc_dmer_admin" },
+    "postgresSkuName": { "value": "Standard_B2s" },
+    "postgresSkuTier": { "value": "Burstable" },
+    "postgresStorageSizeGB": { "value": 32 },
+
+    "costCenter": { "value": "RSBC" },
+    "owner": { "value": "RSBC-DMER" },
+    "dataClassification": { "value": "protected-b" },
+
+    "containerAppsEnvironmentId": {
+      "value": "/subscriptions/e34c5ef8-e2f1-4a67-a94f-29cb158155c2/resourceGroups/rg-rsbc-dmer-dev/providers/Microsoft.App/managedEnvironments/cae-rsbc-dmer-shared-dev-001"
+    },
+    "containerRegistryServer": { "value": "crrsbcdmersharedtools001.azurecr.io" },
+    "diProcessorImage": { "value": "crrsbcdmersharedtools001.azurecr.io/di-processor:0.1.0" },
+    "logAnalyticsWorkspaceId": {
+      "value": "/subscriptions/e34c5ef8-e2f1-4a67-a94f-29cb158155c2/resourceGroups/DefaultResourceGroup-CCAN/providers/Microsoft.OperationalInsights/workspaces/DefaultWorkspace-e34c5ef8-e2f1-4a67-a94f-29cb158155c2-CCAN"
+    },
+    "appConfigurationEndpoint": { "value": "" },
+    "diCustomModelId": { "value": "rsbc-ocr-dmer-v9" },
+    "llmPromptVersion": { "value": "" },
+    "openAiEndpoint": { "value": "https://test.aihub.gov.bc.ca/rsbc-dmer-ai-optimization" },
+    "openAiDeployment": { "value": "gpt-5.1" },
+    "openAiApiVersion": { "value": "2024-12-01-preview" },
+    "openAiApiKeySecretUri": {
+      "value": "https://kv-rsbc-dmer-dev-001.vault.azure.net/secrets/azure-openai-api-key"
+    }
+  }
+}
