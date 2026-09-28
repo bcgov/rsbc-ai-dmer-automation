@@ -164,6 +164,15 @@ param openAiDeployment string = ''
 @description('Azure OpenAI API version. Required when containerAppsEnvironmentId is supplied.')
 param openAiApiVersion string = ''
 
+@description('Optional: storage account Ingest writes source PDFs to, when it is not this template\'s account (dev: rsbcstorage). di-processor gets Storage Blob Data Reader on ingestRawContainerName there. Empty = skipped.')
+param ingestRawStorageAccountName string = ''
+
+@description('Resource group of ingestRawStorageAccountName (dev: rsbc-dmer-ai-optimization-rg).')
+param ingestRawStorageResourceGroup string = ''
+
+@description('Container Ingest writes source PDFs to in ingestRawStorageAccountName.')
+param ingestRawContainerName string = 'raw-dmer'
+
 @description('Key Vault secret URI of the external Azure OpenAI API key (the documented Managed Identity exception), e.g. https://kv-rsbc-dmer-dev-001.vault.azure.net/secrets/azure-openai-api-key. Resolved by the Container App via the di-processor identity, which needs Key Vault Secrets User on that vault (granted by the Key Vault workstream). Required when containerAppsEnvironmentId is supplied.')
 param openAiApiKeySecretUri string = ''
 
@@ -344,6 +353,20 @@ resource diProcessorRawBlobDataReader 'Microsoft.Authorization/roleAssignments@2
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', storageBlobDataReaderRoleId)
     principalId: diProcessorIdentity.outputs.principalId
     principalType: 'ServicePrincipal'
+  }
+}
+
+// Ingest (intake-processor) writes source PDFs to its own storage account in
+// dev (rsbcstorage / raw-dmer, rsbc-dmer-ai-optimization-rg), and dmer-raw
+// messages point there. Read-only, container-scoped, and only when configured.
+module diProcessorIngestRawBlobDataReader 'modules/storage/container-role-assignment.bicep' = if (!empty(ingestRawStorageAccountName)) {
+  name: '${deployment().name}-ingest-raw-reader'
+  scope: resourceGroup(ingestRawStorageResourceGroup)
+  params: {
+    storageAccountName: ingestRawStorageAccountName
+    containerName: ingestRawContainerName
+    principalId: diProcessorIdentity.outputs.principalId
+    roleDefinitionId: storageBlobDataReaderRoleId
   }
 }
 

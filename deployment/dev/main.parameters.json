@@ -33,7 +33,7 @@
       "value": "/subscriptions/e34c5ef8-e2f1-4a67-a94f-29cb158155c2/resourceGroups/rg-rsbc-dmer-dev/providers/Microsoft.App/managedEnvironments/cae-rsbc-dmer-shared-dev-001"
     },
     "containerRegistryServer": { "value": "crrsbcdmersharedtools001.azurecr.io" },
-    "diProcessorImage": { "value": "crrsbcdmersharedtools001.azurecr.io/di-processor:0.1.1" },
+    "diProcessorImage": { "value": "crrsbcdmersharedtools001.azurecr.io/di-processor:0.1.2" },
     "logAnalyticsWorkspaceId": {
       "value": "/subscriptions/e34c5ef8-e2f1-4a67-a94f-29cb158155c2/resourceGroups/DefaultResourceGroup-CCAN/providers/Microsoft.OperationalInsights/workspaces/DefaultWorkspace-e34c5ef8-e2f1-4a67-a94f-29cb158155c2-CCAN"
     },
@@ -43,6 +43,9 @@
     "openAiEndpoint": { "value": "https://test.aihub.gov.bc.ca/rsbc-dmer-ai-optimization" },
     "openAiDeployment": { "value": "gpt-5.1" },
     "openAiApiVersion": { "value": "2024-12-01-preview" },
+    "ingestRawStorageAccountName": { "value": "rsbcstorage" },
+    "ingestRawStorageResourceGroup": { "value": "rsbc-dmer-ai-optimization-rg" },
+    "ingestRawContainerName": { "value": "raw-dmer" },
     "openAiApiKeySecretUri": {
       "value": "https://kv-rsbc-dmer-dev-001.vault.azure.net/secrets/azure-openai-api-key"
     }
