@@ -571,6 +571,23 @@ resource diProcessorDmerRawReceiver 'Microsoft.Authorization/roleAssignments@202
   }
 }
 
+// The KEDA scale rule authenticates as the same identity and reads dmer-raw's
+// message count through the Service Bus management API, which needs the Manage
+// right -- only Data Owner grants it (Data Receiver alone can't see the queue
+// depth, so the app never scales up from zero). Queue-scoped.
+var serviceBusDataOwnerRoleId = '090c5cfd-751d-490a-894a-3ce6f1109419'
+
+@description('Lets the di-processor KEDA scaler read dmer-raw\'s message count (Manage right; queue-scoped).')
+resource diProcessorDmerRawScalerOwner 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(dmerRawQueueExisting.id, diProcessorIdentityName, serviceBusDataOwnerRoleId)
+  scope: dmerRawQueueExisting
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', serviceBusDataOwnerRoleId)
+    principalId: diProcessorIdentity.outputs.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
 @description('Lets id-rsbc-dmer-di-processor publish its result to dmer-extracted (queue-scoped).')
 resource diProcessorDmerExtractedSender 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(dmerExtractedQueueExisting.id, diProcessorIdentityName, serviceBusDataSenderRoleId)

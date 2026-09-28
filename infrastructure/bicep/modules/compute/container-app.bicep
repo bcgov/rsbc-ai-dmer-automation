@@ -109,7 +109,11 @@ var scaleRules = [
       type: 'azure-servicebus'
       metadata: {
         queueName: scaleQueueName
-        namespace: serviceBusNamespaceFqdn
+        // KEDA wants the namespace NAME and appends .servicebus.windows.net
+        // itself; passing the FQDN made it look up
+        // "<ns>.servicebus.windows.net.servicebus.windows.net" (KEDAScalerFailed:
+        // no such host), so the app never scaled up from zero.
+        namespace: split(serviceBusNamespaceFqdn, '.')[0]
         messageCount: string(scaleMessageCount)
       }
       identity: userAssignedIdentityId
