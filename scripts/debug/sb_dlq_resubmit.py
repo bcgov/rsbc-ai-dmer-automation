@@ -15,6 +15,10 @@ Data Sender, on the queue):
     ~/sbvenv/bin/python sb_dlq_resubmit.py dmer-raw            # list only
     ~/sbvenv/bin/python sb_dlq_resubmit.py dmer-raw --resubmit # move back
 
+Each run moves only the messages that were dead-lettered when it started, once
+each: a message that fails again after resubmitting stays in the dead-letter
+queue for the next run.
+
 Message bodies are never printed (they can carry document identifiers); only
 message_id, delivery count and dead-letter reason.
 """
@@ -62,14 +66,25 @@ def main() -> None:
                     f"{len(peeked)} message(s) in the dead-letter queue (listed only)"
                 )
                 return
+            # Snapshot what is dead-lettered NOW, by sequence number. A resubmitted
+            # message that fails again is dead-lettered with a NEW sequence
+            # number, so it is never picked up again by this run -- without
+            # this, a message that keeps failing ping-pongs until --max.
+            targets = {
+                m.sequence_number for m in dlq.peek_messages(max_message_count=args.max)
+            }
             handled = 0
-            while handled < args.max:
+            while targets:
                 batch = dlq.receive_messages(
-                    max_message_count=min(10, args.max - handled), max_wait_time=10
+                    max_message_count=min(10, len(targets)), max_wait_time=10
                 )
                 if not batch:
                     break
                 for msg in batch:
+                    if msg.sequence_number not in targets:
+                        dlq.abandon_message(msg)  # dead-lettered after we started
+                        continue
+                    targets.discard(msg.sequence_number)
                     handled += 1
                     _describe(msg)
                     sender.send_messages(
