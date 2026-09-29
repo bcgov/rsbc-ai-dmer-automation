@@ -86,6 +86,29 @@ def parse_llm_json(text: str) -> dict[str, Any]:
         return json.loads(repair_json_text(stripped))
 
 
+_CONFIDENCES = frozenset({"high", "low"})
+_SOURCES = frozenset({"both", "image", "ocr", "none"})
+
+
+def _normalize_entry_types(entry: dict[str, Any]) -> None:
+    """Coerce one field entry to the schema's types, in place.
+
+    A single odd field (``null`` value, ``"medium"`` confidence, a capitalised
+    source) would otherwise fail validation for the whole document.
+    """
+    value = entry.get("value")
+    if value is None:
+        entry["value"] = ""
+    elif not isinstance(value, str):
+        entry["value"] = str(value)
+    confidence = str(entry.get("confidence") or "").strip().lower()
+    entry["confidence"] = confidence if confidence in _CONFIDENCES else "low"
+    source = str(entry.get("source") or "").strip().lower()
+    entry["source"] = source if source in _SOURCES else "none"
+    notes = entry.get("notes")
+    entry["notes"] = "" if notes is None else str(notes)
+
+
 def sanitize_fields(
     result: dict[str, Any],
     field_keys: tuple[str, ...] | None = None,
@@ -93,8 +116,12 @@ def sanitize_fields(
 ) -> dict[str, Any]:
     """Post-process raw LLM output.
 
+    - Normalize each entry to the schema's types: ``value`` null/number -> string,
+      unknown ``confidence`` -> ``low``, unknown ``source`` -> ``none``.
     - Blank any value that matches a printed form label (and flag it ``low``).
-    - Force ``low`` confidence whenever ``source != "both"``.
+    - Force ``low`` confidence whenever ``source != "both"`` -- including BLANK
+      fields: the model often marks a field it is sure is empty as ``high`` with
+      ``source: none``, which the schema rejects (a real reply has dozens).
     - Add any missing field keys as empty ``low``/``none`` entries.
 
     Returns the mutated ``result`` for convenience.
@@ -111,6 +138,7 @@ def sanitize_fields(
         if not isinstance(entry, dict):
             continue
 
+        _normalize_entry_types(entry)
         value = entry.get("value", "") or ""
         if isinstance(value, str) and _normalize_label(value) in labels and value:
             entry["value"] = ""
@@ -120,17 +148,13 @@ def sanitize_fields(
                 note + " | Auto-corrected: value was a printed form label."
             ).strip(" |")
 
-        source = str(entry.get("source", "")).lower()
-        if (
-            (entry.get("value") or "")
-            and source != "both"
-            and entry.get("confidence") != "low"
-        ):
+        if entry["source"] != "both" and entry["confidence"] != "low":
             entry["confidence"] = "low"
-            note = entry.get("notes", "") or ""
-            entry["notes"] = (
-                note + " | Confidence set to low: image and OCR did not both agree."
-            ).strip(" |")
+            if entry.get("value"):  # a blank field needs no explanation
+                note = entry.get("notes", "") or ""
+                entry["notes"] = (
+                    note + " | Confidence set to low: image and OCR did not both agree."
+                ).strip(" |")
 
     for key in keys:
         if key not in fields:
