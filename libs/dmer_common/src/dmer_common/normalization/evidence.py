@@ -26,6 +26,8 @@ or fabricated quotation is insufficient. Respect negation, history, and causalit
 do not turn symptoms caused by a primary disease into independent diagnoses.
 Recognizable abbreviations and unambiguous OCR corrections are acceptable.
 Numbers, scores, and dates must agree with the source after format conversion.
+A partial source date (year or month only) is resolved to the latest day of
+that period, e.g. "2025" -> 2025-12-31; that resolution is supported.
 A true checkbox is affirmative source evidence. An unchecked checkbox alone is
 not evidence that a condition is absent; explicit source narrative may support it.
 For concern fields, a condition name, a measurement/date/score alone, or statements

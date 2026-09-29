@@ -32,12 +32,13 @@ for how these were verified, not assumed):
 
 from __future__ import annotations
 
+import calendar
 import json
 import math
 import os
 import re
 from copy import deepcopy
-from datetime import datetime
+from datetime import UTC, date, datetime
 
 from dateutil import parser as dateparser
 
@@ -63,12 +64,14 @@ _log = get_logger(__name__)
 # Schema version recorded on the dmer_stage_run row (model_version =
 # "<deployment>@<this>") -- versioned independently of the extraction
 # structuring prompt, per 04-activity-normalize.md's own recommendation.
-NORMALIZATION_SCHEMA_VERSION = "normalization-schema-v2"
+NORMALIZATION_SCHEMA_VERSION = "normalization-schema-v3"
 
 # LLM temperature for each stage -- both default to 0.0 (deterministic
 # structured extraction); overridable via env var for experimentation
 # without a code change, matching this codebase's general config convention.
-CATEGORY_TEMPERATURE = float(os.environ.get("NORMALIZATION_CATEGORY_TEMPERATURE", "0.0"))
+CATEGORY_TEMPERATURE = float(
+    os.environ.get("NORMALIZATION_CATEGORY_TEMPERATURE", "0.0")
+)
 ANALYZE_TEMPERATURE = float(os.environ.get("NORMALIZATION_ANALYZE_TEMPERATURE", "0.0"))
 
 
@@ -133,7 +136,7 @@ def _find_parent_field(concern_field: str, known_fields: set[str]) -> str | None
             alt = parts[0] + "." + parts[1].replace("_", "")
             if alt in known_fields:
                 return alt
-        return None          # suffix matched but parent not found → category-level
+        return None  # suffix matched but parent not found → category-level
     return None
 
 
@@ -190,7 +193,9 @@ def _parse_categories(raw_categories: list[object]) -> list[ConditionCategory]:
     return categories
 
 
-def categorize_conditions(openai: OpenAIClient, slim_json: dict) -> list[ConditionCategory]:
+def categorize_conditions(
+    openai: OpenAIClient, slim_json: dict
+) -> list[ConditionCategory]:
     """First LLM call: choose which condition categories need analysis."""
     json_str = json.dumps(slim_json, indent=2)
 
@@ -205,8 +210,12 @@ def categorize_conditions(openai: OpenAIClient, slim_json: dict) -> list[Conditi
 
     result = model_object(raw)
     raw_categories = result.get("categories")
-    if not isinstance(raw_categories, list) or any(not isinstance(c, str) for c in raw_categories):
-        raise NormalizationValidationError("Normalization categories must be a list of strings")
+    if not isinstance(raw_categories, list) or any(
+        not isinstance(c, str) for c in raw_categories
+    ):
+        raise NormalizationValidationError(
+            "Normalization categories must be a list of strings"
+        )
     categories = _parse_categories(raw_categories)
     seen = set(categories)
     _force_categories_from_keywords(slim_json, categories, seen)
@@ -248,8 +257,7 @@ def filter_fields_for_category(
         # output fields yet, e.g. vestibular.vertigo -> recurrent_vertigo.
         if any(key == prefix or key.startswith(prefix) for prefix in category_prefixes):
             if category is ConditionCategory.CNS and any(
-                key == prefix or key.startswith(prefix)
-                for prefix in cognition_prefixes
+                key == prefix or key.startswith(prefix) for prefix in cognition_prefixes
             ):
                 continue
             filtered[key] = value
@@ -283,7 +291,9 @@ def analyze_condition_category(
     if "dmer" not in result:
         result = {"dmer": result}
     if not isinstance(result["dmer"], dict):
-        raise NormalizationValidationError("Normalization analysis fields must be an object")
+        raise NormalizationValidationError(
+            "Normalization analysis fields must be an object"
+        )
 
     allowed_fields = set(CATEGORY_CONDITIONS[category])
     filtered: dict = {}
@@ -356,6 +366,7 @@ def _has_priority_details_signal(slim_json: dict) -> bool:
 # Deterministic conflict-resolution
 # ---------------------------------------------------------------------------
 
+
 def resolve_conflicts(dmer_result: dict) -> dict:
     """Apply deterministic field-conflict rules that must not be left to the LLM.
 
@@ -364,9 +375,6 @@ def resolve_conflicts(dmer_result: dict) -> dict:
 
     Rules
     -----
-    - ``visual_field.abnormal = True`` → ``vision.field_and_acuity_meet_standard``
-      is forced to ``False`` regardless of any free-text statement.  An abnormal
-      visual field is a hard disqualifier; the LLM must not override this.
     - ``psychotropic_drugs.alcohol_withdrawal_seizure = True`` → ``cns.epilepsy``
       and ``cns.provoked_seizure`` are forced to ``True``. An alcohol
       withdrawal seizure is still a seizure -- it must not be recorded only
@@ -374,14 +382,6 @@ def resolve_conflicts(dmer_result: dict) -> dict:
       that matters for a driving-fitness decision.
     """
     dmer = dmer_result.get("dmer", dmer_result)
-
-    if (dmer.get("visual_field.abnormal") is True
-            and dmer.get("vision.field_and_acuity_meet_standard") is not False):
-        dmer["vision.field_and_acuity_meet_standard"] = False
-        dmer["vision.field_and_acuity_meet_standard_evidence"] = (
-            "visual_field.abnormal: true — abnormal visual field overrides "
-            "any statement that field and acuity meet standard"
-        )
 
     # Loss of consciousness in the context of carotid stenosis maps to
     # pvd.carotid_stenosis_loss_consciousness, not to cardiovascular.syncope/loc.
@@ -487,24 +487,31 @@ def parse_cognitive_score(raw: object) -> int | None:
     return None
 
 
-def normalize_restrictions(raw: object) -> list:
-    """Coerce the restrictions field to a list, whatever shape the source
-    JSON gave it in. Real DI extraction can produce a single scalar (an
-    int restriction code) or a comma/semicolon-separated string of
-    multiple codes -- normalize all shapes to a list.
+_RESTRICTION_CODE_RE = re.compile(r"\d+")
+
+
+def normalize_restrictions(raw: object) -> list[int]:
+    """Coerce the restrictions field to a list of integer restriction codes,
+    whatever shape the source JSON gave it in (a scalar, a list, or a
+    comma/semicolon-separated string). Integers, not strings: the rule
+    engine tests membership with integer literals (``20 in dmer.restrictions``)
+    and its input schema requires integer items. Parts with no digits are
+    dropped; a part like "R20" yields 20.
     """
-    if raw is None or raw == "":
+    if raw is None or isinstance(raw, bool):
         return []
-    if isinstance(raw, list):
-        return raw
-    if isinstance(raw, (int, float)):
-        return [raw]
-    text = str(raw).strip()
-    if not text:
-        return []
-    if "," in text or ";" in text:
-        return [part.strip() for part in re.split(r"[,;]", text) if part.strip()]
-    return [text]
+    parts = raw if isinstance(raw, list) else re.split(r"[,;]", str(raw))
+    codes: list[int] = []
+    for part in parts:
+        if isinstance(part, bool) or part is None:
+            continue
+        if isinstance(part, (int, float)):
+            codes.append(int(part))
+            continue
+        match = _RESTRICTION_CODE_RE.search(str(part))
+        if match:
+            codes.append(int(match.group(0)))
+    return codes
 
 
 def apply_deterministic_field_formats(dmer_result: dict) -> dict:
@@ -519,13 +526,261 @@ def apply_deterministic_field_formats(dmer_result: dict) -> dict:
     dmer = dmer_result.get("dmer", dmer_result)
 
     if "cardiovascular.nyha_class" in dmer:
-        dmer["cardiovascular.nyha_class"] = parse_nyha_class(dmer["cardiovascular.nyha_class"])
+        dmer["cardiovascular.nyha_class"] = parse_nyha_class(
+            dmer["cardiovascular.nyha_class"]
+        )
     if "cns.mmse_score" in dmer:
         dmer["cns.mmse_score"] = parse_cognitive_score(dmer["cns.mmse_score"])
     if "cns.moca_score" in dmer:
         dmer["cns.moca_score"] = parse_cognitive_score(dmer["cns.moca_score"])
     if "restrictions" in dmer:
         dmer["restrictions"] = normalize_restrictions(dmer["restrictions"])
+
+    if "dmer" in dmer_result:
+        dmer_result["dmer"] = dmer
+    return dmer_result
+
+
+_ACUITY_FRACTION_RE = re.compile(r"(\d+)\s*/\s*(\d+)")
+
+
+def parse_visual_acuity_denominator(raw: object) -> int | None:
+    """Extract the Snellen denominator from a raw visual acuity value
+    (e.g. "20/50", "20/50cf", "20/50^cf^", "20 / 50"), ignoring any
+    trailing superscript/footnote annotation (counting-fingers, hand
+    motion, etc.) appended directly after the fraction -- the digit run
+    for the denominator stops at the first non-digit character, so
+    "50cf" and "50^cf^" both yield 50. Returns None when no numerator/
+    denominator fraction is present.
+
+    Known limitation, not handled: a *purely numeric* suffix with no
+    separator (e.g. a hypothetical "20/502" meaning "20/50" plus a "2"
+    superscript) is inherently ambiguous and is read as denominator 502 --
+    every real example seen in the BC Guide uses a letter code (cf/hm/lp),
+    not a bare digit, for this annotation.
+    """
+    if raw is None or raw == "" or isinstance(raw, bool):
+        return None
+    match = _ACUITY_FRACTION_RE.search(str(raw))
+    return int(match.group(2)) if match else None
+
+
+# ---------------------------------------------------------------------------
+# visual_acuity threshold fields -- deterministic, not the LLM's judgment
+# call. Recomputed from the raw corrected_*/uncorrected_* strings after
+# every LLM pass, overwriting whatever the model itself attempted for
+# these fields (same "Python is authoritative" precedent as
+# apply_deterministic_field_formats, kept separate from it because this is
+# a different kind of operation -- deriving new composite fields from
+# other raw fields, with its own evidence bookkeeping -- not reformatting
+# a field into its own canonical form).
+#
+#   corrected_only  -- True: only ever look at corrected_*; a field whose
+#                      name says "corrected" must not silently fall back
+#                      to an uncorrected measurement.
+#                      False: corrected_* first, falling back to
+#                      uncorrected_* only when NO corrected value exists
+#                      at all (not "both", not "left", not "right").
+#   worse_eye       -- False: the "_both" (binocular) value if present,
+#                      else the better (lower-denominator) of left/right.
+#                      True (bad_eye_20/100_or_worse only): the worse of
+#                      left/right; "_both" is never used, because a
+#                      binocular reading reflects the better eye and would
+#                      hide the bad one.
+#   op / denom      -- the threshold comparison: "worse_or_equal" (>=),
+#                      "better_or_equal" (<=), or "strictly_worse" (>).
+# ---------------------------------------------------------------------------
+_ACUITY_THRESHOLD_FIELDS: dict[str, dict] = {
+    "visual_acuity.corrected_vision_20/80_or_worse": {
+        "corrected_only": True,
+        "worse_eye": False,
+        "op": "worse_or_equal",
+        "denom": 80,
+    },
+    "visual_acuity.corrected_vision_20/60_or_worse": {
+        "corrected_only": True,
+        "worse_eye": False,
+        "op": "worse_or_equal",
+        "denom": 60,
+    },
+    "visual_acuity.corrected_vision_20/50_or_better": {
+        "corrected_only": True,
+        "worse_eye": False,
+        "op": "better_or_equal",
+        "denom": 50,
+    },
+    "visual_acuity.corrected_vision_20/30_or_better": {
+        "corrected_only": True,
+        "worse_eye": False,
+        "op": "better_or_equal",
+        "denom": 30,
+    },
+    "visual_acuity.corrected_vision_20/20_or_better": {
+        "corrected_only": True,
+        "worse_eye": False,
+        "op": "better_or_equal",
+        "denom": 20,
+    },
+    "visual_acuity.vision_20/60_or_worse": {
+        "corrected_only": False,
+        "worse_eye": False,
+        "op": "worse_or_equal",
+        "denom": 60,
+    },
+    "visual_acuity.vision_20/40_or_worse": {
+        "corrected_only": False,
+        "worse_eye": False,
+        "op": "worse_or_equal",
+        "denom": 40,
+    },
+    "visual_acuity.vision_20/50_or_better": {
+        "corrected_only": False,
+        "worse_eye": False,
+        "op": "better_or_equal",
+        "denom": 50,
+    },
+    "visual_acuity.vision_20/30_or_better": {
+        "corrected_only": False,
+        "worse_eye": False,
+        "op": "better_or_equal",
+        "denom": 30,
+    },
+    "visual_acuity.vision_20/20_or_better": {
+        "corrected_only": False,
+        "worse_eye": False,
+        "op": "better_or_equal",
+        "denom": 20,
+    },
+    "visual_acuity.bad_eye_20/100_or_worse": {
+        "corrected_only": False,
+        "worse_eye": True,
+        "op": "worse_or_equal",
+        "denom": 100,
+    },
+}
+
+
+def _resolve_eye_group_denominator(
+    dmer: dict, prefix: str, *, worse_eye: bool
+) -> tuple[int | None, str | None]:
+    """Resolve one correction state's ("corrected" or "uncorrected")
+    denominator: the "_both" (binocular) value if present, else the better
+    of "_left"/"_right" -- or, when worse_eye is True, always the worse of
+    "_left"/"_right", ignoring "_both".
+    Returns (denominator, source_field_name) so callers can cite exactly
+    which raw field the value came from as evidence.
+    """
+    if not worse_eye:
+        both_field = f"visual_acuity.{prefix}_both"
+        both = parse_visual_acuity_denominator(dmer.get(both_field))
+        if both is not None:
+            return both, both_field
+
+    left_field = f"visual_acuity.{prefix}_left"
+    right_field = f"visual_acuity.{prefix}_right"
+    candidates = [
+        (value, field_name)
+        for value, field_name in (
+            (parse_visual_acuity_denominator(dmer.get(left_field)), left_field),
+            (parse_visual_acuity_denominator(dmer.get(right_field)), right_field),
+        )
+        if value is not None
+    ]
+    if not candidates:
+        return None, None
+    chosen = (
+        max(candidates, key=lambda item: item[0])
+        if worse_eye
+        else min(candidates, key=lambda item: item[0])
+    )
+    return chosen
+
+
+def _resolve_acuity_denominator(
+    dmer: dict, *, corrected_only: bool, worse_eye: bool
+) -> tuple[int | None, str | None]:
+    """Resolve the denominator to compare against a threshold: corrected
+    first, falling back to uncorrected only when corrected_only is False
+    and no corrected value is present at all (see _ACUITY_THRESHOLD_FIELDS'
+    per-field corrected_only setting).
+    """
+    denom, source = _resolve_eye_group_denominator(
+        dmer, "corrected", worse_eye=worse_eye
+    )
+    if denom is not None or corrected_only:
+        return denom, source
+    return _resolve_eye_group_denominator(dmer, "uncorrected", worse_eye=worse_eye)
+
+
+def _meets_acuity_threshold(cfg: dict, denom: int) -> bool:
+    threshold = cfg["denom"]
+    if cfg["op"] == "worse_or_equal":
+        return denom >= threshold
+    if cfg["op"] == "better_or_equal":
+        return denom <= threshold
+    return denom > threshold  # strictly_worse
+
+
+_BAD_EYE_FIELD = "visual_acuity.bad_eye_20/100_or_worse"
+
+
+def flag_monocular_from_bad_eye(dmer_result: dict) -> dict:
+    """Set ``vision.monocular`` true when the bad eye is 20/100 or worse.
+
+    The BC Guide treats that acuity as monocularity, like the checkbox.
+    Called on the input before the LLM pass, so the analysis prompt sees
+    the condition and can judge ``vision.monocular_has_concerns`` from
+    Section D, and again after the final threshold pass, which uses the
+    LLM's OCR-corrected acuity strings. Never clears an existing true.
+    """
+    dmer = dmer_result.get("dmer", dmer_result)
+    cfg = _ACUITY_THRESHOLD_FIELDS[_BAD_EYE_FIELD]
+    denom, source_field = _resolve_acuity_denominator(
+        dmer, corrected_only=cfg["corrected_only"], worse_eye=cfg["worse_eye"]
+    )
+    if (
+        denom is not None
+        and _meets_acuity_threshold(cfg, denom)
+        and dmer.get("vision.monocular") is not True
+    ):
+        dmer["vision.monocular"] = True
+        dmer["vision.monocular_evidence"] = (
+            f"{source_field}=20/{denom} (bad eye 20/100 or worse)"
+        )
+    if "dmer" in dmer_result:
+        dmer_result["dmer"] = dmer
+    return dmer_result
+
+
+def apply_visual_acuity_thresholds(dmer_result: dict) -> dict:
+    """Deterministically computes every field in _ACUITY_THRESHOLD_FIELDS
+    from the raw corrected/uncorrected acuity strings, overwriting
+    whatever the LLM itself may have set for them -- these are pure
+    numeric comparisons, not judgment calls, so this pass is authoritative
+    regardless of what the model attempted on its own (catches any error
+    in the model's own arithmetic the same way apply_deterministic_field_formats
+    does for NYHA/MMSE/MoCA/restrictions).
+
+    Sets {field}_evidence (citing the exact source field and resolved
+    denominator) whenever a field is set True, since validate_evidence_present
+    requires it unconditionally for every true boolean CONDITIONS field --
+    this is not optional bookkeeping, normalize_document raises without it.
+    A field left False needs no evidence.
+    """
+    dmer = dmer_result.get("dmer", dmer_result)
+
+    for field_name, cfg in _ACUITY_THRESHOLD_FIELDS.items():
+        denom, source_field = _resolve_acuity_denominator(
+            dmer, corrected_only=cfg["corrected_only"], worse_eye=cfg["worse_eye"]
+        )
+        if denom is None:
+            dmer[field_name] = False
+            continue
+
+        is_true = _meets_acuity_threshold(cfg, denom)
+        dmer[field_name] = is_true
+        if is_true:
+            dmer[f"{field_name}_evidence"] = f"{source_field}=20/{denom}"
 
     if "dmer" in dmer_result:
         dmer_result["dmer"] = dmer
@@ -548,11 +803,15 @@ def apply_deterministic_field_formats(dmer_result: dict) -> dict:
 # (e.g. "aortic" → cardiovascular, "IQ" → cognition) when the schema places
 # them elsewhere.  These rules correct that before the second-stage analysis.
 # ---------------------------------------------------------------------------
-_KEYWORD_CATEGORY_RULES: list[tuple[re.Pattern, re.Pattern | None, ConditionCategory, str]] = [
+_KEYWORD_CATEGORY_RULES: list[
+    tuple[re.Pattern, re.Pattern | None, ConditionCategory, str]
+] = [
     # Generic "plegia" (no specific type) → CNS; specific types → musculoskeletal
     (
         re.compile(r"\bplegia\b", re.IGNORECASE),
-        re.compile(r"\b(paraplegia|quadriplegia|tetraplegia|hemiplegia)\b", re.IGNORECASE),
+        re.compile(
+            r"\b(paraplegia|quadriplegia|tetraplegia|hemiplegia)\b", re.IGNORECASE
+        ),
         ConditionCategory.CNS,
         "generic 'plegia' (unspecified type)",
     ),
@@ -612,7 +871,9 @@ def _force_categories_from_keywords(
             continue
         if exclude_re is not None and exclude_re.search(details):
             continue
-        _log.info("keyword-forced category", extra={"category": category.value, "rule": label})
+        _log.info(
+            "keyword-forced category", extra={"category": category.value, "rule": label}
+        )
         categories.append(category)
         seen.add(category)
 
@@ -638,12 +899,8 @@ def analyze_conditions(openai: OpenAIClient, dmer_json: dict) -> dict:
         category_updates = analyze_condition_category(openai, slim_json, category)
         updates["dmer"].update(category_updates.get("dmer", {}))
 
-    if (
-        ConditionCategory.PRIORITY in categories
-        or priority_details_signal
-    ) and (
-        priority_details_signal
-        or not _has_non_priority_condition_match(updates)
+    if (ConditionCategory.PRIORITY in categories or priority_details_signal) and (
+        priority_details_signal or not _has_non_priority_condition_match(updates)
     ):
         category_updates = analyze_condition_category(
             openai,
@@ -684,10 +941,22 @@ def apply_updates(dmer_data: dict, updates: dict) -> dict:
 # dateutil raises ParserError on "l2-3O-2O25", "O2/O5/2O25", etc.).
 _OCR_DIGIT_MAP = str.maketrans({"O": "0", "o": "0", "I": "1", "l": "1"})
 _ALPHA_RUN_RE = re.compile(r"[A-Za-z]+")
-_MONTH_ABBREVIATIONS = frozenset({
-    "JAN", "FEB", "MAR", "APR", "MAY", "JUN",
-    "JUL", "AUG", "SEP", "OCT", "NOV", "DEC",
-})
+_MONTH_ABBREVIATIONS = frozenset(
+    {
+        "JAN",
+        "FEB",
+        "MAR",
+        "APR",
+        "MAY",
+        "JUN",
+        "JUL",
+        "AUG",
+        "SEP",
+        "OCT",
+        "NOV",
+        "DEC",
+    }
+)
 
 
 def _fix_ocr_digit_confusion(text: str) -> str:
@@ -705,7 +974,7 @@ def _fix_ocr_digit_confusion(text: str) -> str:
     pieces: list[str] = []
     last_end = 0
     for match in _ALPHA_RUN_RE.finditer(text):
-        pieces.append(text[last_end:match.start()].translate(_OCR_DIGIT_MAP))
+        pieces.append(text[last_end : match.start()].translate(_OCR_DIGIT_MAP))
         run = match.group()
         if len(run) >= 3 and run[:3].upper() in _MONTH_ABBREVIATIONS:
             pieces.append(run[:3])
@@ -717,40 +986,89 @@ def _fix_ocr_digit_confusion(text: str) -> str:
     return "".join(pieces)
 
 
-def _parse_date_with_ocr_fallback(raw: str) -> datetime | None:
-    """Try dateutil as-is first; only apply the OCR-confusion fix (and
-    re-attempt) if the first parse fails. Returns None, never raises, when
-    neither attempt succeeds -- caller decides what to do with that (this
-    module leaves the original value in place, per normalize_dates' own
-    documented behaviour).
+# Two defaults that differ in every component: whichever components come out
+# different between the two parses were not written in the source text.
+_DATE_DEFAULT_A = datetime(2000, 1, 1, tzinfo=UTC)
+_DATE_DEFAULT_B = datetime(2004, 12, 28, tzinfo=UTC)
+
+
+def _parse_date_parts(raw: str) -> tuple[int | None, int | None, int | None] | None:
+    """Parse *raw* into (year, month, day), with None for any component
+    not present in the text (e.g. "2019" -> (2019, None, None)). Tries
+    dateutil as-is first, then with the OCR-confusion fix. Returns None,
+    never raises, when neither attempt succeeds.
     """
     for candidate in (raw, _fix_ocr_digit_confusion(raw)):
         try:
-            return dateparser.parse(candidate, dayfirst=False)
+            a = dateparser.parse(candidate, dayfirst=False, default=_DATE_DEFAULT_A)
+            b = dateparser.parse(candidate, dayfirst=False, default=_DATE_DEFAULT_B)
         except (ValueError, OverflowError, TypeError):
             continue
+        return (
+            a.year if a.year == b.year else None,
+            a.month if a.month == b.month else None,
+            a.day if a.day == b.day else None,
+        )
     return None
 
 
-def normalize_dates(dmer_result: dict) -> dict:
+def _latest_possible_date(
+    year: int | None, month: int | None, day: int | None, reference: date
+) -> date | None:
+    """Resolve a possibly-partial date to the MOST RECENT day it could mean.
+
+    More recent onset means higher risk, so an imprecise date must never
+    look older than it could be: "2025" -> 2025-12-31, "June 2026" ->
+    2026-06-30, "June" (no year) -> the most recent June not after
+    *reference*. A partial date is never resolved past *reference*; a
+    fully written date is kept as-is.
+    Returns None when neither year nor month was written.
+    """
+    if year is None and month is None:
+        return None
+    if year is None:
+        # Month (and maybe day) only: the most recent occurrence.
+        year = reference.year
+        if (month, day or 1) > (reference.month, reference.day):
+            year -= 1
+    last_month = month or 12
+    last_day = day or calendar.monthrange(year, last_month)[1]
+    try:
+        latest = date(year, last_month, last_day)
+    except ValueError:
+        return None
+    if None in (month, day):
+        earliest = date(year, month or 1, day or 1)
+        if earliest <= reference < latest:
+            latest = reference
+    return latest
+
+
+def normalize_dates(dmer_result: dict, *, today: date | None = None) -> dict:
     """Normalize all date fields in the output to YYYY-MM-DD format.
 
     Scans every key containing 'date' (case-insensitive) and attempts to
-    parse the value into ISO 8601, falling back to a deterministic
-    OCR-digit-confusion fix (see _fix_ocr_digit_confusion) when the raw
-    value doesn't parse as-is. Unparseable values (even after the fallback)
-    are left as-is -- this function never raises and never guesses.
+    parse the value, falling back to a deterministic OCR-digit-confusion
+    fix (see _fix_ocr_digit_confusion) when the raw value doesn't parse
+    as-is. Partial dates resolve to the latest possible day, never later
+    than *today* (see _latest_possible_date). Unparseable values are left
+    as-is -- this function never raises.
     """
     dmer = dmer_result.get("dmer", dmer_result)
+    today = today or datetime.now(UTC).date()
+
+    def resolve(val: object, reference: date) -> date | None:
+        if not isinstance(val, str) or not val.strip():
+            return None
+        parts = _parse_date_parts(val)
+        return _latest_possible_date(*parts, reference) if parts else None
 
     for key, val in dmer.items():
         if "date" not in key.lower():
             continue
-        if not isinstance(val, str) or not val.strip():
-            continue
-        parsed = _parse_date_with_ocr_fallback(val)
-        if parsed is not None:
-            dmer[key] = parsed.strftime("%Y-%m-%d")
+        resolved = resolve(val, today)
+        if resolved is not None:
+            dmer[key] = resolved.isoformat()
 
     if "dmer" in dmer_result:
         dmer_result["dmer"] = dmer
@@ -821,7 +1139,7 @@ def flag_concerns(dmer_result: dict) -> dict:
 
         parent = _find_parent_field(field_name, all_known)
         if not parent:
-            continue   # category-level concern — leave to LLM
+            continue  # category-level concern — leave to LLM
 
         # Parent condition must be active
         if dmer.get(parent) is not True:
@@ -849,16 +1167,31 @@ def flag_concerns(dmer_result: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 
-_NO_OTHER_CONDITIONS_EXCLUDED_FIELDS = frozenset({
-    # TOP_LEVEL CONDITIONS fields that are administrative/demographic, not
-    # a medical condition -- must not make no_other_conditions False just
-    # because e.g. a licence class or a restriction code is on file.
-    "current_licence_class",
-    "blood_pressure",
-    "restrictions",
-    "medical_examination_date",
-    "details_of_condition",  # checked separately, against Section D text
-})
+_NO_OTHER_CONDITIONS_EXCLUDED_FIELDS = frozenset(
+    {
+        # TOP_LEVEL CONDITIONS fields that are administrative/demographic, not
+        # a medical condition -- must not make no_other_conditions False just
+        # because e.g. a licence class or a restriction code is on file.
+        "current_licence_class",
+        "blood_pressure",
+        "restrictions",
+        "medical_examination_date",
+        "details_of_condition",  # checked separately, against Section D text
+    }
+)
+# Exam measurements (acuity readings, thresholds, field results), and the
+# physician's opinion / recommendations / priority flags and relationship
+# details -- none of them name a medical condition. Rules pair several of
+# these with no_other_conditions (e.g. "should not drive" or "road test box
+# checked" with nothing else on the DMER), so they must not make it False.
+_NO_OTHER_CONDITIONS_EXCLUDED_PREFIXES = (
+    "visual_acuity.",
+    "visual_field.",
+    "opinion.",
+    "priority.",
+    "recommendations.",
+    "relationship_with_patient.",
+)
 
 
 def _is_empty_value(value: object) -> bool:
@@ -877,35 +1210,61 @@ def _is_empty_value(value: object) -> bool:
     return False
 
 
+_PROGRESSIVE_EYE_SOURCE_FIELDS = ("vision.cataracts", "vision.retinopathy")
+
+
+def flag_progressive_eye_condition(dmer_result: dict) -> dict:
+    """Set ``vision.progressive_eye_condition`` true when cataracts or
+    retinopathy is true. Never clears an existing true."""
+    dmer = dmer_result.get("dmer", dmer_result)
+    source = next(
+        (f for f in _PROGRESSIVE_EYE_SOURCE_FIELDS if dmer.get(f) is True), None
+    )
+    if source is not None and dmer.get("vision.progressive_eye_condition") is not True:
+        dmer["vision.progressive_eye_condition"] = True
+        dmer["vision.progressive_eye_condition_evidence"] = f"{source}: true"
+    if "dmer" in dmer_result:
+        dmer_result["dmer"] = dmer
+    return dmer_result
+
+
 def check_no_other_conditions(dmer_result: dict) -> dict:
     """Sets no_other_conditions = True when nothing was checked and nothing
     was written: every CONDITIONS boolean is false, every CONDITIONS value
     field is empty, and details_of_condition (Section D) itself is blank.
 
     Administrative/demographic CONDITIONS fields (current_licence_class,
-    blood_pressure, restrictions, medical_examination_date) are excluded --
-    none of them represent a medical condition, so their presence or
-    absence doesn't affect whether "no other conditions" is true. `guide`
+    blood_pressure, restrictions, medical_examination_date) and every
+    visual_acuity.* / visual_field.* exam result are excluded -- none of
+    them represent a medical condition, so their presence or absence
+    doesn't affect whether "no other conditions" is true. `guide`
     isn't excluded here because it isn't in CONDITIONS at all (see
     META_FIELD_DEFAULTS' module comment in schema.py).
+
+    Also sets non_vision_condition_indicated: some condition field outside
+    vision.* is active. The rule engine's catch-all ("a condition is on the
+    DMER but no chapter rule matched it -> IN") needs this, since the vision
+    table fires on acuity alone and a vision-only DMER must not trigger it.
+    Section D text alone doesn't count -- the conditions it names are
+    extracted into their own fields.
     """
     dmer = dmer_result.get("dmer", dmer_result)
     details = dmer.get("details_of_condition")
 
-    any_condition_active = False
+    active_fields = []
     for field_name, cfg in CONDITIONS.items():
-        if field_name in _NO_OTHER_CONDITIONS_EXCLUDED_FIELDS:
+        if field_name in _NO_OTHER_CONDITIONS_EXCLUDED_FIELDS or field_name.startswith(
+            _NO_OTHER_CONDITIONS_EXCLUDED_PREFIXES
+        ):
             continue
         value = dmer.get(field_name)
-        if cfg["type"] == "bool":
-            if value is True:
-                any_condition_active = True
-                break
-        elif not _is_empty_value(value):
-            any_condition_active = True
-            break
+        if (value is True) if cfg["type"] == "bool" else not _is_empty_value(value):
+            active_fields.append(field_name)
 
-    dmer["no_other_conditions"] = not any_condition_active and _is_empty_value(details)
+    dmer["no_other_conditions"] = not active_fields and _is_empty_value(details)
+    dmer["non_vision_condition_indicated"] = any(
+        not f.startswith("vision.") for f in active_fields
+    )
 
     if "dmer" in dmer_result:
         dmer_result["dmer"] = dmer
@@ -1060,7 +1419,9 @@ def check_diabetes_guide_9_1(dmer_result: dict) -> dict:
         if raw is None or raw == "" or isinstance(raw, bool)
         else _GUIDE_SUBSECTION_RE.search(str(raw))
     )
-    dmer["diabetes_guide_9_1"] = bool(match) and match.group(1) == "9" and match.group(2) == "1"
+    dmer["diabetes_guide_9_1"] = (
+        bool(match) and match.group(1) == "9" and match.group(2) == "1"
+    )
 
     if "dmer" in dmer_result:
         dmer_result["dmer"] = dmer
@@ -1076,7 +1437,7 @@ _DIABETES_TREATMENT_CHECKBOX_FIELDS = (
 
 
 def check_diabetes_treatment_not_indicated(dmer_result: dict) -> dict:
-    """Sets diabetes_treatment_not_indicated: True when none of the
+    """Sets endocrine.diabetes_treatment_not_indicated: True when none of the
     diabetes treatment checkboxes are set AND Section D text does not
     otherwise mention a diabetes treatment/medication (per the LLM-set
     endocrine.diabetes_treatment_mentioned_in_text) -- BC Guide Sec. 9
@@ -1087,8 +1448,57 @@ def check_diabetes_treatment_not_indicated(dmer_result: dict) -> dict:
     """
     dmer = dmer_result.get("dmer", dmer_result)
     any_checkbox = any(dmer.get(f) is True for f in _DIABETES_TREATMENT_CHECKBOX_FIELDS)
-    mentioned_in_text = dmer.get("endocrine.diabetes_treatment_mentioned_in_text") is True
-    dmer["diabetes_treatment_not_indicated"] = not any_checkbox and not mentioned_in_text
+    mentioned_in_text = (
+        dmer.get("endocrine.diabetes_treatment_mentioned_in_text") is True
+    )
+    dmer["endocrine.diabetes_treatment_not_indicated"] = (
+        not any_checkbox and not mentioned_in_text
+    )
+
+    if "dmer" in dmer_result:
+        dmer_result["dmer"] = dmer
+    return dmer_result
+
+
+_GUIDE_NUMBER_RE = re.compile(r"(\d+)(?:\.(\d+))?")
+
+
+def parse_guide_number(raw: object) -> int | float | None:
+    """The BC Guide reference as the number the rule engine compares against
+    (``dmer['guide'] == 17``): "BC GUIDE 17 GENERAL DEBILITY" -> 17,
+    "BC GUIDE 9.1A DIABETES" -> 9.1. A letter suffix is dropped -- anything
+    that needs it (diabetes_guide_9_1) reads the raw text before this runs.
+    None when no number is present.
+    """
+    if raw is None or isinstance(raw, bool) or raw == "":
+        return None
+    if isinstance(raw, (int, float)):
+        return raw
+    match = _GUIDE_NUMBER_RE.search(str(raw))
+    if not match:
+        return None
+    section, subsection = match.groups()
+    return float(f"{section}.{subsection}") if subsection else int(section)
+
+
+def apply_rule_engine_input_formats(dmer_result: dict) -> dict:
+    """Final shape fixes so the output passes the rule engine's input schema.
+
+    - ``restrictions``: always a list of integer codes, including when the
+      field was never set (ensure_all_fields' ``str`` default would be "").
+    - ``guide``: a number. The schema allows neither "" nor null, so a DMER
+      without a guide number has the key removed rather than blanked.
+
+    Must run after every step that reads the raw guide text
+    (check_guide_matching, check_diabetes_guide_9_1).
+    """
+    dmer = dmer_result.get("dmer", dmer_result)
+    dmer["restrictions"] = normalize_restrictions(dmer.get("restrictions"))
+    guide = parse_guide_number(dmer.get("guide"))
+    if guide is None:
+        dmer.pop("guide", None)
+    else:
+        dmer["guide"] = guide
 
     if "dmer" in dmer_result:
         dmer_result["dmer"] = dmer
@@ -1132,15 +1542,21 @@ def validate_schema(dmer: dict) -> None:
         if override is not None:
             if not isinstance(value, override):
                 expected = " or ".join(t.__name__ for t in override)
-                violations.append(f"{field_name}: expected {expected}, got {type(value).__name__}")
+                violations.append(
+                    f"{field_name}: expected {expected}, got {type(value).__name__}"
+                )
             continue
         field_type = cfg["type"]
         if field_type == "bool":
             if not isinstance(value, bool):
-                violations.append(f"{field_name}: expected bool, got {type(value).__name__}")
+                violations.append(
+                    f"{field_name}: expected bool, got {type(value).__name__}"
+                )
         elif field_type == "str":
             if not isinstance(value, str):
-                violations.append(f"{field_name}: expected str, got {type(value).__name__}")
+                violations.append(
+                    f"{field_name}: expected str, got {type(value).__name__}"
+                )
         elif field_type in ("int", "float"):
             allowed_types = (int,) if field_type == "int" else (int, float)
             if value is not None and (
@@ -1186,7 +1602,9 @@ def validate_evidence_present(dmer: dict) -> None:
 # ---------------------------------------------------------------------------
 
 
-def normalize_document(openai: OpenAIClient, extracted_fields: dict[str, object]) -> dict:
+def normalize_document(
+    openai: OpenAIClient, extracted_fields: dict[str, object]
+) -> dict:
     """Full Normalize pipeline entry point -- the one function the
     Normalize activity calls.
 
@@ -1201,23 +1619,31 @@ def normalize_document(openai: OpenAIClient, extracted_fields: dict[str, object]
     docs/development/stages/04-activity-normalize.md); the caller should
     route the document to MANUAL_REVIEW rather than retry.
     """
-    dmer_input = adapt_combined_fields(extracted_fields)
+    dmer_input = flag_monocular_from_bad_eye(adapt_combined_fields(extracted_fields))
     updates = analyze_conditions(openai, dmer_input)
     result = apply_updates(dmer_input, updates)
     result = apply_deterministic_field_formats(result)
+    result = apply_visual_acuity_thresholds(result)
+    result = flag_monocular_from_bad_eye(result)
     result = resolve_conflicts(result)
     result = ensure_all_fields(result)
+    result = flag_progressive_eye_condition(result)
     result = check_no_other_conditions(result)
     result = check_guide_matching(result)
     result = check_diabetes_guide_9_1(result)
     result = check_diabetes_treatment_not_indicated(result)
+    result = apply_rule_engine_input_formats(result)
     result = normalize_dates(result)
 
     dmer = result["dmer"]
     # Checked source fields already have direct, deterministic provenance.
     # The analysis prompt returns changed fields only, so it need not echo them.
     for field, cfg in CONDITIONS.items():
-        if cfg["type"] == "bool" and dmer_input["dmer"].get(field) is True and dmer.get(field) is True:
+        if (
+            cfg["type"] == "bool"
+            and dmer_input["dmer"].get(field) is True
+            and dmer.get(field) is True
+        ):
             dmer.setdefault(f"{field}_evidence", f"{field}: true")
     validate_schema(dmer)
     validate_evidence_present(dmer)
@@ -1228,9 +1654,13 @@ def normalize_document(openai: OpenAIClient, extracted_fields: dict[str, object]
         extra={
             "field_count": len(dmer),
             "no_other_conditions": dmer.get("no_other_conditions"),
-            "guide_with_no_matching_condition": dmer.get("guide_with_no_matching_condition"),
+            "guide_with_no_matching_condition": dmer.get(
+                "guide_with_no_matching_condition"
+            ),
             "diabetes_guide_9_1": dmer.get("diabetes_guide_9_1"),
-            "diabetes_treatment_not_indicated": dmer.get("diabetes_treatment_not_indicated"),
+            "endocrine.diabetes_treatment_not_indicated": dmer.get(
+                "endocrine.diabetes_treatment_not_indicated"
+            ),
         },
     )
     return dmer

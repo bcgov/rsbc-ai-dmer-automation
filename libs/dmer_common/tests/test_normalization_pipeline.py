@@ -17,6 +17,8 @@ import pytest
 from dmer_common.normalization.pipeline import (
     NormalizationValidationError,
     adapt_combined_fields,
+    apply_rule_engine_input_formats,
+    apply_visual_acuity_thresholds,
     check_diabetes_guide_9_1,
     check_diabetes_treatment_not_indicated,
     check_guide_matching,
@@ -24,9 +26,11 @@ from dmer_common.normalization.pipeline import (
     normalize_dates,
     normalize_restrictions,
     parse_cognitive_score,
+    parse_guide_number,
     parse_guide_section,
     parse_guide_subsection,
     parse_nyha_class,
+    parse_visual_acuity_denominator,
     resolve_conflicts,
     validate_evidence_present,
     validate_schema,
@@ -36,14 +40,19 @@ from dmer_common.normalization.pipeline import (
 # adapt_combined_fields -- di-processor's real CombinedExtraction shape
 # ---------------------------------------------------------------------------
 
+
 def test_adapt_combined_fields_coerces_checkbox_strings_to_bool():
-    adapted = adapt_combined_fields({"vision.cataracts": "true", "vestibular.drop_attacks": "false"})
+    adapted = adapt_combined_fields(
+        {"vision.cataracts": "true", "vestibular.drop_attacks": "false"}
+    )
     assert adapted["dmer"]["vision.cataracts"] is True
     assert adapted["dmer"]["vestibular.drop_attacks"] is False
 
 
 def test_adapt_combined_fields_passes_through_non_bool_fields_unchanged():
-    adapted = adapt_combined_fields({"cardiovascular.nyha_class": "3", "vision.other": "some text"})
+    adapted = adapt_combined_fields(
+        {"cardiovascular.nyha_class": "3", "vision.other": "some text"}
+    )
     assert adapted["dmer"]["cardiovascular.nyha_class"] == "3"
     assert adapted["dmer"]["vision.other"] == "some text"
 
@@ -66,9 +75,20 @@ def test_adapt_combined_fields_accepts_real_bool_too():
 # NYHA class
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.parametrize(
     "raw,expected",
-    [("III", 3), ("iv", 4), ("3", 3), (3, 3), ("", None), (None, None), ("V", None), (5, None), (0, None)],
+    [
+        ("III", 3),
+        ("iv", 4),
+        ("3", 3),
+        (3, 3),
+        ("", None),
+        (None, None),
+        ("V", None),
+        (5, None),
+        (0, None),
+    ],
 )
 def test_parse_nyha_class(raw, expected):
     assert parse_nyha_class(raw) == expected
@@ -77,6 +97,7 @@ def test_parse_nyha_class(raw, expected):
 # ---------------------------------------------------------------------------
 # MMSE / MoCA
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.parametrize(
     "raw,expected",
@@ -90,25 +111,33 @@ def test_parse_cognitive_score(raw, expected):
 # restrictions
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.parametrize(
     "raw,expected",
     [
         ([20], [20]),
+        (["20", "21"], [20, 21]),
         (20, [20]),
-        ("20", ["20"]),
-        ("20,21", ["20", "21"]),
-        ("20; 21", ["20", "21"]),
+        (20.0, [20]),
+        ("20", [20]),
+        ("20,21", [20, 21]),
+        ("20; 21", [20, 21]),
+        ("R20, R21", [20, 21]),
+        ("none", []),
         ("", []),
         (None, []),
     ],
 )
 def test_normalize_restrictions(raw, expected):
+    # Integers, because the rule engine tests `20 in dmer.restrictions` and its
+    # input schema requires integer items -- strings would silently never match.
     assert normalize_restrictions(raw) == expected
 
 
 # ---------------------------------------------------------------------------
 # Date OCR fallback
 # ---------------------------------------------------------------------------
+
 
 def test_normalize_dates_leaves_normal_dates_alone():
     result = normalize_dates({"dmer": {"cns.seizure_date": "24APR1932"}})
@@ -138,22 +167,30 @@ def test_normalize_dates_leaves_unparseable_value_as_is():
 # alcohol_withdrawal_seizure -> epilepsy/provoked_seizure
 # ---------------------------------------------------------------------------
 
+
 def test_alcohol_withdrawal_seizure_forces_epilepsy_and_provoked_seizure():
-    result = resolve_conflicts({
-        "dmer": {
-            "psychotropic_drugs.alcohol_withdrawal_seizure": True,
-            "cns.epilepsy": False,
-            "cns.provoked_seizure": False,
+    result = resolve_conflicts(
+        {
+            "dmer": {
+                "psychotropic_drugs.alcohol_withdrawal_seizure": True,
+                "cns.epilepsy": False,
+                "cns.provoked_seizure": False,
+            }
         }
-    })
+    )
     assert result["dmer"]["cns.epilepsy"] is True
     assert result["dmer"]["cns.provoked_seizure"] is True
 
 
 def test_alcohol_withdrawal_seizure_rule_does_not_fire_when_false():
-    result = resolve_conflicts({
-        "dmer": {"psychotropic_drugs.alcohol_withdrawal_seizure": False, "cns.epilepsy": False}
-    })
+    result = resolve_conflicts(
+        {
+            "dmer": {
+                "psychotropic_drugs.alcohol_withdrawal_seizure": False,
+                "cns.epilepsy": False,
+            }
+        }
+    )
     assert result["dmer"]["cns.epilepsy"] is False
 
 
@@ -161,31 +198,113 @@ def test_alcohol_withdrawal_seizure_rule_does_not_fire_when_false():
 # no_other_conditions
 # ---------------------------------------------------------------------------
 
+
 def test_no_other_conditions_true_when_nothing_active():
-    result = check_no_other_conditions({"dmer": {"vision.cataracts": False, "details_of_condition": ""}})
+    result = check_no_other_conditions(
+        {"dmer": {"vision.cataracts": False, "details_of_condition": ""}}
+    )
     assert result["dmer"]["no_other_conditions"] is True
 
 
 def test_no_other_conditions_false_when_a_checkbox_is_true():
-    result = check_no_other_conditions({"dmer": {"vision.cataracts": True, "details_of_condition": ""}})
+    result = check_no_other_conditions(
+        {"dmer": {"vision.cataracts": True, "details_of_condition": ""}}
+    )
     assert result["dmer"]["no_other_conditions"] is False
 
 
 def test_no_other_conditions_administrative_fields_dont_count():
-    result = check_no_other_conditions({
-        "dmer": {
-            "restrictions": [20],
-            "current_licence_class": "5",
-            "blood_pressure": "120/80",
-            "details_of_condition": "",
+    result = check_no_other_conditions(
+        {
+            "dmer": {
+                "restrictions": [20],
+                "current_licence_class": "5",
+                "blood_pressure": "120/80",
+                "details_of_condition": "",
+            }
         }
-    })
+    )
     assert result["dmer"]["no_other_conditions"] is True
+
+
+def test_no_other_conditions_ignores_opinion_priority_and_recommendations():
+    result = check_no_other_conditions(
+        {
+            "dmer": {
+                "opinion.yes": True,
+                "priority.should_not_drive": True,
+                "recommendations.road_test_to_assess": True,
+                "details_of_condition": "",
+            }
+        }
+    )
+    assert result["dmer"]["no_other_conditions"] is True
+
+
+def test_non_vision_condition_indicated_true_for_a_non_vision_condition():
+    result = check_no_other_conditions(
+        {"dmer": {"psychiatric.bipolar": True, "details_of_condition": ""}}
+    )
+    assert result["dmer"]["non_vision_condition_indicated"] is True
+
+
+def test_non_vision_condition_indicated_false_for_vision_only_or_section_d_only():
+    vision_only = check_no_other_conditions(
+        {"dmer": {"vision.color_blindness": True, "details_of_condition": ""}}
+    )
+    assert vision_only["dmer"]["non_vision_condition_indicated"] is False
+    assert vision_only["dmer"]["no_other_conditions"] is False
+    text_only = check_no_other_conditions(
+        {"dmer": {"details_of_condition": "cataracts both eyes"}}
+    )
+    assert text_only["dmer"]["non_vision_condition_indicated"] is False
+
+
+def test_non_vision_condition_indicated_ignores_opinion_and_priority():
+    result = check_no_other_conditions(
+        {
+            "dmer": {
+                "opinion.yes": True,
+                "priority.has_concerns": True,
+                "details_of_condition": "",
+            }
+        }
+    )
+    assert result["dmer"]["non_vision_condition_indicated"] is False
+
+
+def test_no_other_conditions_ignores_acuity_and_field_results():
+    result = check_no_other_conditions(
+        {
+            "dmer": {
+                "visual_acuity.corrected_both": "20/200",
+                "visual_acuity.corrected_vision_20/80_or_worse": True,
+                "visual_field.abnormal": True,
+                "visual_field.meet_criteria_for_licence_class_yes": True,
+                "details_of_condition": "",
+            }
+        }
+    )
+    assert result["dmer"]["no_other_conditions"] is True
+
+
+def test_cataracts_or_retinopathy_mark_progressive_eye_condition():
+    from dmer_common.normalization.pipeline import flag_progressive_eye_condition
+
+    for source in ("vision.cataracts", "vision.retinopathy"):
+        dmer = flag_progressive_eye_condition({"dmer": {source: True}})["dmer"]
+        assert dmer["vision.progressive_eye_condition"] is True
+        assert dmer["vision.progressive_eye_condition_evidence"] == f"{source}: true"
+    assert (
+        "vision.progressive_eye_condition"
+        not in flag_progressive_eye_condition({"dmer": {}})["dmer"]
+    )
 
 
 # ---------------------------------------------------------------------------
 # guide_with_no_matching_condition
 # ---------------------------------------------------------------------------
+
 
 def test_parse_guide_section_from_free_text_and_number():
     assert parse_guide_section("BC GUIDE 9.1 DIABETES") == 9
@@ -194,45 +313,69 @@ def test_parse_guide_section_from_free_text_and_number():
 
 
 def test_guide_matched_via_checkbox():
-    result = check_guide_matching({
-        "dmer": {"guide": "BC GUIDE 9.1 DIABETES", "endocrine.diabetes": True, "details_of_condition": ""}
-    })
+    result = check_guide_matching(
+        {
+            "dmer": {
+                "guide": "BC GUIDE 9.1 DIABETES",
+                "endocrine.diabetes": True,
+                "details_of_condition": "",
+            }
+        }
+    )
     assert result["dmer"]["guide_with_no_matching_condition"] is False
 
 
 def test_guide_flagged_when_no_matching_condition_anywhere():
-    result = check_guide_matching({
-        "dmer": {"guide": "BC GUIDE 9.1 DIABETES", "endocrine.diabetes": False, "details_of_condition": "patient has vertigo"}
-    })
+    result = check_guide_matching(
+        {
+            "dmer": {
+                "guide": "BC GUIDE 9.1 DIABETES",
+                "endocrine.diabetes": False,
+                "details_of_condition": "patient has vertigo",
+            }
+        }
+    )
     assert result["dmer"]["guide_with_no_matching_condition"] is True
 
 
 def test_guide_not_flagged_when_absent():
-    result = check_guide_matching({"dmer": {"details_of_condition": "patient has vertigo"}})
+    result = check_guide_matching(
+        {"dmer": {"details_of_condition": "patient has vertigo"}}
+    )
     assert result["dmer"]["guide_with_no_matching_condition"] is False
 
 
 def test_guide_not_flagged_for_unrecognized_section():
-    result = check_guide_matching({"dmer": {"guide": "BC GUIDE 16.1 UNKNOWN", "details_of_condition": ""}})
+    result = check_guide_matching(
+        {"dmer": {"guide": "BC GUIDE 16.1 UNKNOWN", "details_of_condition": ""}}
+    )
     assert result["dmer"]["guide_with_no_matching_condition"] is False
 
 
 def test_guide_section_7_matches_via_any_of_its_five_categories():
-    result = check_guide_matching({
-        "dmer": {"guide": "BC GUIDE 7.2 VERTIGO", "vestibular.recurrent_vertigo": True, "details_of_condition": ""}
-    })
+    result = check_guide_matching(
+        {
+            "dmer": {
+                "guide": "BC GUIDE 7.2 VERTIGO",
+                "vestibular.recurrent_vertigo": True,
+                "details_of_condition": "",
+            }
+        }
+    )
     assert result["dmer"]["guide_with_no_matching_condition"] is False
 
 
 def test_guide_word_boundary_regression_otherwise_does_not_match_other():
     # "other" (the generic .other field's local name) must not match inside "otherwise"
-    result = check_guide_matching({
-        "dmer": {
-            "guide": "BC GUIDE 9.1 DIABETES",
-            "endocrine.diabetes": False,
-            "details_of_condition": "occasional vertigo, otherwise unremarkable",
+    result = check_guide_matching(
+        {
+            "dmer": {
+                "guide": "BC GUIDE 9.1 DIABETES",
+                "endocrine.diabetes": False,
+                "details_of_condition": "occasional vertigo, otherwise unremarkable",
+            }
         }
-    })
+    )
     assert result["dmer"]["guide_with_no_matching_condition"] is True
 
 
@@ -278,21 +421,81 @@ def test_diabetes_guide_9_1_false_when_absent():
 
 
 # ---------------------------------------------------------------------------
+# rule-engine input formats (guide number, integer restrictions)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("BC GUIDE 17 GENERAL DEBILITY", 17),
+        ("BC GUIDE 9.1 DIABETES", 9.1),
+        ("BC GUIDE 9.1A DIABETES", 9.1),
+        ("1.5", 1.5),
+        (1.5, 1.5),
+        (17, 17),
+        ("", None),
+        (None, None),
+        ("no guide", None),
+    ],
+)
+def test_parse_guide_number(raw, expected):
+    assert parse_guide_number(raw) == expected
+
+
+def test_rule_engine_formats_convert_guide_to_a_number():
+    dmer = apply_rule_engine_input_formats(
+        {"dmer": {"guide": "BC GUIDE 17 GENERAL DEBILITY"}}
+    )["dmer"]
+    assert dmer["guide"] == 17 and isinstance(dmer["guide"], int)
+
+
+def test_rule_engine_formats_drop_guide_when_absent():
+    # The rule engine's input schema allows neither "" nor null for guide.
+    for raw in ("", None, "no number here"):
+        dmer = apply_rule_engine_input_formats({"dmer": {"guide": raw}})["dmer"]
+        assert "guide" not in dmer
+
+
+def test_rule_engine_formats_make_restrictions_integer_list():
+    assert apply_rule_engine_input_formats({"dmer": {"restrictions": "20, 21"}})[
+        "dmer"
+    ]["restrictions"] == [20, 21]
+    # never set, or left as ensure_all_fields' str default
+    assert apply_rule_engine_input_formats({"dmer": {}})["dmer"]["restrictions"] == []
+    assert (
+        apply_rule_engine_input_formats({"dmer": {"restrictions": ""}})["dmer"][
+            "restrictions"
+        ]
+        == []
+    )
+
+
+def test_diabetes_guide_9_1_still_sees_letter_suffix_before_guide_becomes_a_number():
+    result = check_diabetes_guide_9_1({"dmer": {"guide": "BC GUIDE 9.1A DIABETES"}})
+    result = apply_rule_engine_input_formats(result)
+    assert result["dmer"]["diabetes_guide_9_1"] is True
+    assert result["dmer"]["guide"] == 9.1
+
+
+# ---------------------------------------------------------------------------
 # diabetes_treatment_not_indicated
 # ---------------------------------------------------------------------------
 
 
 def test_diabetes_treatment_not_indicated_true_when_no_checkbox_and_no_text_mention():
-    result = check_diabetes_treatment_not_indicated({
-        "dmer": {
-            "endocrine.diabetes.diet": False,
-            "endocrine.diabetes.oral_meds": False,
-            "endocrine.diabetes.insulin": False,
-            "endocrine.diabetes.insulin_secretagogues": False,
-            "endocrine.diabetes_treatment_mentioned_in_text": False,
+    result = check_diabetes_treatment_not_indicated(
+        {
+            "dmer": {
+                "endocrine.diabetes.diet": False,
+                "endocrine.diabetes.oral_meds": False,
+                "endocrine.diabetes.insulin": False,
+                "endocrine.diabetes.insulin_secretagogues": False,
+                "endocrine.diabetes_treatment_mentioned_in_text": False,
+            }
         }
-    })
-    assert result["dmer"]["diabetes_treatment_not_indicated"] is True
+    )
+    assert result["dmer"]["endocrine.diabetes_treatment_not_indicated"] is True
 
 
 @pytest.mark.parametrize(
@@ -314,32 +517,313 @@ def test_diabetes_treatment_not_indicated_false_when_any_checkbox_true(checkbox_
         checkbox_field: True,
     }
     result = check_diabetes_treatment_not_indicated({"dmer": dmer})
-    assert result["dmer"]["diabetes_treatment_not_indicated"] is False
+    assert result["dmer"]["endocrine.diabetes_treatment_not_indicated"] is False
 
 
 def test_diabetes_treatment_not_indicated_false_when_mentioned_only_in_text():
     # No checkbox marked, but the LLM found treatment language in Section D --
     # must still count as "indicated", not just a bare checkbox check.
-    result = check_diabetes_treatment_not_indicated({
-        "dmer": {
-            "endocrine.diabetes.diet": False,
-            "endocrine.diabetes.oral_meds": False,
-            "endocrine.diabetes.insulin": False,
-            "endocrine.diabetes.insulin_secretagogues": False,
-            "endocrine.diabetes_treatment_mentioned_in_text": True,
+    result = check_diabetes_treatment_not_indicated(
+        {
+            "dmer": {
+                "endocrine.diabetes.diet": False,
+                "endocrine.diabetes.oral_meds": False,
+                "endocrine.diabetes.insulin": False,
+                "endocrine.diabetes.insulin_secretagogues": False,
+                "endocrine.diabetes_treatment_mentioned_in_text": True,
+            }
         }
-    })
-    assert result["dmer"]["diabetes_treatment_not_indicated"] is False
+    )
+    assert result["dmer"]["endocrine.diabetes_treatment_not_indicated"] is False
 
 
 def test_diabetes_treatment_not_indicated_true_when_fields_absent():
     result = check_diabetes_treatment_not_indicated({"dmer": {}})
-    assert result["dmer"]["diabetes_treatment_not_indicated"] is True
+    assert result["dmer"]["endocrine.diabetes_treatment_not_indicated"] is True
+
+
+# ---------------------------------------------------------------------------
+# parse_visual_acuity_denominator
+# ---------------------------------------------------------------------------
+
+
+def test_parse_visual_acuity_denominator_plain_fraction():
+    assert parse_visual_acuity_denominator("20/50") == 50
+
+
+def test_parse_visual_acuity_denominator_tolerates_surrounding_spaces():
+    assert parse_visual_acuity_denominator("20 / 50") == 50
+
+
+@pytest.mark.parametrize(
+    "raw",
+    ["20/50cf", "20/50CF", "20/50 cf", "20/50^cf^", "20/50 CF (counting fingers)"],
+)
+def test_parse_visual_acuity_denominator_strips_letter_superscripts(raw):
+    # "cf" (counting fingers) and similar letter-coded annotations must not
+    # affect the extracted denominator -- the digit run stops at the first
+    # non-digit character.
+    assert parse_visual_acuity_denominator(raw) == 50
+
+
+def test_parse_visual_acuity_denominator_embeds_in_longer_text():
+    assert parse_visual_acuity_denominator("Best corrected acuity 20/40 OD") == 40
+
+
+@pytest.mark.parametrize("raw", [None, "", "no fraction here", "20-50", False, True])
+def test_parse_visual_acuity_denominator_none_when_absent_or_malformed(raw):
+    assert parse_visual_acuity_denominator(raw) is None
+
+
+def test_parse_visual_acuity_denominator_numeric_suffix_is_a_known_limitation():
+    # Documented limitation, not a bug: a bare numeric suffix with no
+    # separator is ambiguous and is read as part of the denominator, not a
+    # superscript -- every real BC Guide example uses a letter code instead.
+    assert parse_visual_acuity_denominator("20/502") == 502
+
+
+# ---------------------------------------------------------------------------
+# apply_visual_acuity_thresholds
+# ---------------------------------------------------------------------------
+
+
+def test_corrected_only_field_ignores_uncorrected_when_no_corrected_value():
+    # corrected_vision_20/80_or_worse must never fall back to uncorrected --
+    # its name says "corrected" for a reason.
+    result = apply_visual_acuity_thresholds(
+        {"dmer": {"visual_acuity.uncorrected_both": "20/200"}}
+    )
+    assert result["dmer"]["visual_acuity.corrected_vision_20/80_or_worse"] is False
+    assert (
+        "visual_acuity.corrected_vision_20/80_or_worse_evidence" not in result["dmer"]
+    )
+
+
+def test_corrected_only_field_true_from_corrected_both():
+    result = apply_visual_acuity_thresholds(
+        {"dmer": {"visual_acuity.corrected_both": "20/80"}}
+    )
+    assert result["dmer"]["visual_acuity.corrected_vision_20/80_or_worse"] is True
+    assert result["dmer"]["visual_acuity.corrected_vision_20/80_or_worse_evidence"] == (
+        "visual_acuity.corrected_both=20/80"
+    )
+
+
+def test_both_eyes_value_wins_over_left_and_right_when_present():
+    result = apply_visual_acuity_thresholds(
+        {
+            "dmer": {
+                "visual_acuity.corrected_both": "20/20",
+                "visual_acuity.corrected_left": "20/200",
+                "visual_acuity.corrected_right": "20/200",
+            }
+        }
+    )
+    # "both" says great vision; if left/right (bad) were consulted instead,
+    # this would wrongly come out True.
+    assert result["dmer"]["visual_acuity.vision_20/60_or_worse"] is False
+
+
+def test_falls_back_to_better_eye_of_left_and_right_when_both_is_absent():
+    result = apply_visual_acuity_thresholds(
+        {
+            "dmer": {
+                "visual_acuity.corrected_left": "20/100",
+                "visual_acuity.corrected_right": "20/40",
+            }
+        }
+    )
+    # "or_better" thresholds should use the BETTER eye (20/40), not the worse.
+    assert result["dmer"]["visual_acuity.vision_20/50_or_better"] is True
+
+
+def test_bad_eye_field_falls_back_to_worse_eye_not_better_eye():
+    result = apply_visual_acuity_thresholds(
+        {
+            "dmer": {
+                "visual_acuity.corrected_left": "20/50",
+                "visual_acuity.corrected_right": "20/150",
+            }
+        }
+    )
+    # bad_eye_20/100_or_worse must pick the WORSE eye (20/150), unlike
+    # every other threshold field's better-eye fallback.
+    assert result["dmer"]["visual_acuity.bad_eye_20/100_or_worse"] is True
+
+
+def test_bad_eye_field_false_when_worse_eye_still_meets_threshold():
+    result = apply_visual_acuity_thresholds(
+        {
+            "dmer": {
+                "visual_acuity.corrected_left": "20/50",
+                "visual_acuity.corrected_right": "20/90",
+            }
+        }
+    )
+    assert result["dmer"]["visual_acuity.bad_eye_20/100_or_worse"] is False
+
+
+def test_non_corrected_field_falls_back_to_uncorrected_when_no_corrected_at_all():
+    result = apply_visual_acuity_thresholds(
+        {"dmer": {"visual_acuity.uncorrected_both": "20/70"}}
+    )
+    assert result["dmer"]["visual_acuity.vision_20/60_or_worse"] is True
+
+
+def test_non_corrected_field_does_not_mix_corrected_and_uncorrected():
+    # A corrected_both value exists (even though it doesn't meet the
+    # threshold on its own) -- uncorrected must not be consulted at all.
+    result = apply_visual_acuity_thresholds(
+        {
+            "dmer": {
+                "visual_acuity.corrected_both": "20/30",
+                "visual_acuity.uncorrected_both": "20/400",
+            }
+        }
+    )
+    assert result["dmer"]["visual_acuity.vision_20/60_or_worse"] is False
+
+
+@pytest.mark.parametrize(
+    ("field", "boundary_raw", "expected"),
+    [
+        ("visual_acuity.vision_20/60_or_worse", "20/60", True),
+        ("visual_acuity.vision_20/60_or_worse", "20/50", False),
+        ("visual_acuity.vision_20/30_or_better", "20/30", True),
+        ("visual_acuity.vision_20/30_or_better", "20/40", False),
+        ("visual_acuity.vision_20/20_or_better", "20/20", True),
+        ("visual_acuity.vision_20/20_or_better", "20/30", False),
+        ("visual_acuity.bad_eye_20/100_or_worse", "20/100", True),
+        ("visual_acuity.bad_eye_20/100_or_worse", "20/99", False),
+    ],
+)
+def test_threshold_boundaries_are_exact(field, boundary_raw, expected):
+    # The bad-eye field reads individual eyes only, never the both-eyes value.
+    source = "corrected_right" if "bad_eye" in field else "corrected_both"
+    result = apply_visual_acuity_thresholds(
+        {"dmer": {f"visual_acuity.{source}": boundary_raw}}
+    )
+    assert result["dmer"][field] is expected
+
+
+def test_bad_eye_field_ignores_both_eyes_value_that_hides_the_bad_eye():
+    result = apply_visual_acuity_thresholds(
+        {
+            "dmer": {
+                "visual_acuity.corrected_both": "20/20",
+                "visual_acuity.corrected_left": "20/20",
+                "visual_acuity.corrected_right": "20/400",
+            }
+        }
+    )
+    dmer = result["dmer"]
+    assert dmer["visual_acuity.bad_eye_20/100_or_worse"] is True
+    assert (
+        dmer["visual_acuity.bad_eye_20/100_or_worse_evidence"]
+        == "visual_acuity.corrected_right=20/400"
+    )
+    # Other thresholds still use the both-eyes value.
+    assert dmer["visual_acuity.vision_20/60_or_worse"] is False
+
+
+def test_all_threshold_fields_false_and_evidence_free_when_no_acuity_data_at_all():
+    result = apply_visual_acuity_thresholds({"dmer": {}})
+    dmer = result["dmer"]
+    for field in (
+        "visual_acuity.corrected_vision_20/80_or_worse",
+        "visual_acuity.corrected_vision_20/60_or_worse",
+        "visual_acuity.corrected_vision_20/50_or_better",
+        "visual_acuity.corrected_vision_20/30_or_better",
+        "visual_acuity.corrected_vision_20/20_or_better",
+        "visual_acuity.vision_20/60_or_worse",
+        "visual_acuity.vision_20/40_or_worse",
+        "visual_acuity.vision_20/50_or_better",
+        "visual_acuity.vision_20/30_or_better",
+        "visual_acuity.vision_20/20_or_better",
+        "visual_acuity.bad_eye_20/100_or_worse",
+    ):
+        assert dmer[field] is False
+        assert f"{field}_evidence" not in dmer
+
+
+@pytest.mark.parametrize(
+    ("corrected_raw", "expected"),
+    [
+        # (20/50_or_better, 20/30_or_better, 20/20_or_better)
+        ("20/15", (True, True, True)),
+        ("20/20", (True, True, True)),
+        ("20/25", (True, True, False)),
+        ("20/30", (True, True, False)),
+        ("20/40", (True, False, False)),
+        ("20/50", (True, False, False)),
+        ("20/60", (False, False, False)),
+    ],
+)
+def test_corrected_or_better_fields_band_the_corrected_value(corrected_raw, expected):
+    dmer = apply_visual_acuity_thresholds(
+        {"dmer": {"visual_acuity.corrected_both": corrected_raw}}
+    )["dmer"]
+    got = tuple(
+        dmer[f"visual_acuity.corrected_vision_20/{n}_or_better"] for n in (50, 30, 20)
+    )
+    assert got == expected
+
+
+def test_corrected_or_better_fields_never_use_uncorrected():
+    # Progressive-eye rules rely on these meaning "a CORRECTED value is in
+    # this band" -- an uncorrected-only DMER must leave all three false.
+    dmer = apply_visual_acuity_thresholds(
+        {"dmer": {"visual_acuity.uncorrected_both": "20/20"}}
+    )["dmer"]
+    for n in (50, 30, 20):
+        assert dmer[f"visual_acuity.corrected_vision_20/{n}_or_better"] is False
+    assert (
+        dmer["visual_acuity.vision_20/20_or_better"] is True
+    )  # the generic field still falls back
+
+
+def test_corrected_or_better_fields_use_better_eye_when_both_absent():
+    dmer = apply_visual_acuity_thresholds(
+        {
+            "dmer": {
+                "visual_acuity.corrected_left": "20/100",
+                "visual_acuity.corrected_right": "20/25",
+            }
+        }
+    )["dmer"]
+    assert dmer["visual_acuity.corrected_vision_20/30_or_better"] is True
+    assert (
+        dmer["visual_acuity.corrected_vision_20/30_or_better_evidence"]
+        == "visual_acuity.corrected_right=20/25"
+    )
+
+
+def test_superscript_annotation_does_not_break_threshold_comparison():
+    # "20/50cf" must compare as 50, not fail to parse and silently drop
+    # out of the True case.
+    result = apply_visual_acuity_thresholds(
+        {"dmer": {"visual_acuity.corrected_both": "20/50cf"}}
+    )
+    assert result["dmer"]["visual_acuity.vision_20/50_or_better"] is True
+
+
+def test_overwrites_whatever_the_llm_itself_had_set():
+    # The whole point: a wrong LLM guess must not survive this pass.
+    result = apply_visual_acuity_thresholds(
+        {
+            "dmer": {
+                "visual_acuity.corrected_both": "20/200",
+                "visual_acuity.vision_20/30_or_better": True,  # LLM's (wrong) guess
+            }
+        }
+    )
+    assert result["dmer"]["visual_acuity.vision_20/30_or_better"] is False
 
 
 # ---------------------------------------------------------------------------
 # Output validation
 # ---------------------------------------------------------------------------
+
 
 def test_validate_schema_raises_on_type_mismatch():
     with pytest.raises(NormalizationValidationError):
@@ -386,13 +870,18 @@ def test_validate_evidence_present_ignores_false_fields():
 
 
 # Source-grounding boundary: controlled analysis output, separate verifier call.
-def test_normalization_verifies_derived_conditions_and_score_against_original_source(monkeypatch):
+def test_normalization_verifies_derived_conditions_and_score_against_original_source(
+    monkeypatch,
+):
     import json
     from unittest.mock import Mock
 
     from dmer_common.normalization import pipeline
 
-    fields = {"details_of_condition": "BIL CATARACT EXTRACTIONS", "cns.moca_score": "26/30"}
+    fields = {
+        "details_of_condition": "BIL CATARACT EXTRACTIONS",
+        "cns.moca_score": "26/30",
+    }
     updates = {
         "vision.cataracts": True,
         "vision.cataracts_evidence": "details_of_condition: BIL CATARACT EXTRACTIONS",
@@ -402,9 +891,15 @@ def test_normalization_verifies_derived_conditions_and_score_against_original_so
     }
     monkeypatch.setattr(pipeline, "analyze_conditions", lambda *_: {"dmer": updates})
     client = Mock()
-    client.complete.return_value = json.dumps({"supported": {
-        "vision.cataracts": True, "vision.cataracts_had_surgery": True, "cns.moca_score": True,
-    }})
+    client.complete.return_value = json.dumps(
+        {
+            "supported": {
+                "vision.cataracts": True,
+                "vision.cataracts_had_surgery": True,
+                "cns.moca_score": True,
+            }
+        }
+    )
     result = pipeline.normalize_document(client, fields)
     assert result["details_of_condition"] == fields["details_of_condition"]
     assert result["cns.moca_score"] == 26
@@ -418,9 +913,16 @@ def test_nonblank_evidence_does_not_bypass_source_verification(monkeypatch):
 
     from dmer_common.normalization import pipeline
 
-    monkeypatch.setattr(pipeline, "analyze_conditions", lambda *_: {"dmer": {
-        "vision.cataracts": True, "vision.cataracts_evidence": "fabricated justification",
-    }})
+    monkeypatch.setattr(
+        pipeline,
+        "analyze_conditions",
+        lambda *_: {
+            "dmer": {
+                "vision.cataracts": True,
+                "vision.cataracts_evidence": "fabricated justification",
+            }
+        },
+    )
     client = Mock()
     client.complete.return_value = '{"supported": {"vision.cataracts": false}}'
     with pytest.raises(NormalizationValidationError, match="unsupported"):
@@ -435,14 +937,18 @@ def test_grounding_requires_complete_boolean_verdicts():
     client = Mock()
     source = {"details_of_condition": "synthetic narrative"}
     proposed = {"vision.cataracts": True, "vision.cataracts_had_surgery": True}
-    for response in ('{"supported": {"vision.cataracts": true}}',
-                     '{"supported": {"vision.cataracts": "true", "vision.cataracts_had_surgery": true}}'):
+    for response in (
+        '{"supported": {"vision.cataracts": true}}',
+        '{"supported": {"vision.cataracts": "true", "vision.cataracts_had_surgery": true}}',
+    ):
         client.complete.return_value = response
         with pytest.raises(NormalizationValidationError, match="verdicts"):
             validate_derived_values(client, source, proposed, proposed)
 
 
-def test_unchanged_checked_source_field_gets_direct_evidence_without_verifier(monkeypatch):
+def test_unchanged_checked_source_field_gets_direct_evidence_without_verifier(
+    monkeypatch,
+):
     from unittest.mock import Mock
 
     from dmer_common.normalization import pipeline
@@ -460,7 +966,90 @@ def test_malformed_model_json_is_a_sanitized_validation_error():
     from dmer_common.normalization.pipeline import categorize_conditions
 
     client = Mock()
-    client.complete.return_value = 'private model response'
+    client.complete.return_value = "private model response"
     with pytest.raises(NormalizationValidationError) as error:
         categorize_conditions(client, {"dmer": {}})
     assert "private model response" not in str(error.value)
+
+
+def test_eye_nerve_palsy_concern_is_analyzed_with_vision_and_requires_evidence():
+    from dmer_common.normalization.prompts import build_analysis_prompt
+    from dmer_common.normalization.schema import CATEGORY_CONDITIONS, ConditionCategory
+
+    field = "vision.eye_nerve_palsy_has_concerns"
+    assert field in CATEGORY_CONDITIONS[ConditionCategory.VISION]
+    assert field in build_analysis_prompt(ConditionCategory.VISION)
+    with pytest.raises(NormalizationValidationError):
+        validate_evidence_present({"vision.eye_nerve_palsy": False, field: True})
+
+
+# ---------------------------------------------------------------------------
+# Partial dates resolve to the most recent possible day (higher risk)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("2025", "2025-12-31"),  # could have been Dec 2025
+        ("March 2019", "2019-03-31"),
+        ("June", "2026-06-30"),  # most recent June
+        ("October", "2025-10-31"),  # October 2026 hasn't happened yet
+        ("2026", "2026-09-25"),  # never past today
+        ("September 2026", "2026-09-25"),
+        ("2026-09-30", "2026-09-30"),  # a fully written date is kept as-is
+    ],
+)
+def test_partial_dates_resolve_to_latest_possible_day(raw, expected):
+    from datetime import date
+
+    result = normalize_dates(
+        {"dmer": {"vision.monocular_date": raw}}, today=date(2026, 9, 25)
+    )
+    assert result["dmer"]["vision.monocular_date"] == expected
+
+
+def test_bad_eye_20_100_or_worse_marks_monocular_with_evidence():
+    from dmer_common.normalization.pipeline import flag_monocular_from_bad_eye
+
+    result = flag_monocular_from_bad_eye(
+        {
+            "dmer": {
+                "visual_acuity.corrected_left": "20/20",
+                "visual_acuity.corrected_right": "20/100",
+            }
+        }
+    )
+    assert result["dmer"]["vision.monocular"] is True
+    assert (
+        "visual_acuity.corrected_right=20/100"
+        in result["dmer"]["vision.monocular_evidence"]
+    )
+    unaffected = flag_monocular_from_bad_eye(
+        {"dmer": {"visual_acuity.corrected_right": "20/80"}}
+    )
+    assert "vision.monocular" not in unaffected["dmer"]
+
+
+def test_monocular_from_acuity_reaches_the_concerns_analysis(monkeypatch):
+    from unittest.mock import Mock
+
+    from dmer_common.normalization import pipeline
+
+    seen = {}
+
+    def analyze(_openai, dmer_input):
+        seen.update(dmer_input["dmer"])
+        return {"dmer": {}}
+
+    monkeypatch.setattr(pipeline, "analyze_conditions", analyze)
+    result = pipeline.normalize_document(
+        Mock(),
+        {
+            "visual_acuity.corrected_left": "20/20",
+            "visual_acuity.corrected_right": "20/200",
+        },
+    )
+    assert seen["vision.monocular"] is True
+    assert result["vision.monocular"] is True
+    assert result["visual_acuity.bad_eye_20/100_or_worse"] is True

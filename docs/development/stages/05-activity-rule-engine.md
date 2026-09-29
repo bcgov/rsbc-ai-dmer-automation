@@ -77,7 +77,7 @@ Document Orchestrator publishes to `driver-decision` for — see
 |---|---|
 | `RULES_CONTAINER` | Default `rules`. |
 | `RULES_ACTIVE_PATH` | Default `rules/active/rules.json`. |
-| `RULE_ENGINE_LIBRARY` | GoRules/Zen binding — confirm Python package name during Phase 3 build (not pinned in any `requirements.txt` yet). |
+| `RULE_ENGINE_LIBRARY` | GoRules ZEN Python binding: `zen-engine` (imported as `zen`), pinned `>=0.51,<0.52` in `libs/dmer_common/pyproject.toml`. |
 
 ## Idempotency requirements
 
@@ -95,11 +95,14 @@ DB row, not the log stream).
 
 ## Implementation considerations for Claude Code
 
-- No GoRules/Zen dependency is pinned in `services/rule-engine/requirements.txt` yet (placeholder
-  comment only) — confirm the Python binding package name before starting Phase 3.
-- `services/rule-engine/rules/README.md` already documents the intended local sample `rules.json`
-  convention (mirrors `rules/active/rules.json` in Blob Storage) — keep using it for local dev/test
-  fixtures regardless of where the evaluation code itself ends up living.
+- The evaluation library is `dmer_common.rules` (`Ruleset(content).evaluate(dmer, received_date=...)`
+  returns every candidate plus the selected outcome). `received_date` comes from
+  `dmer_document.received_date`, not the normalized document -- the monocular rules measure DMER
+  age from it. A clean pass that any Drugs, Alcohol and Driving row fired for is selected as `IN`
+  (the 5-year driving record needs a human check); the engine's own outcome is kept as
+  `rule_engine_outcome_code`. No rows fired at all selects `IN`.
+- The ruleset lives at `services/rule-engine/rules/rules.json` (mirrors `rules/active/rules.json`
+  in Blob Storage) and is exercised by `libs/dmer_common/tests/test_rules_engine.py`.
 - This activity's code should live alongside the Document Orchestrator — see
   `03-document-orchestration.md#implementation-considerations-for-claude-code` for the recommended
   module boundary (library code in `libs/`, thin activity trigger in `workflow-orchestrator`).
