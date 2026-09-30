@@ -39,8 +39,8 @@ scripts/            Developer, CI, and database utility scripts
 
 | Service | Azure compute | Responsibility |
 |---|---|---|
-| `intake-processor` | Azure Functions | Batch poll + webhook intake from Mercury, publish to `raw-dmer-queue` |
-| `di-processor` | Azure Container Apps | OCR via Document Intelligence, hashing, publish to `extracted-dmer-queue` |
+| `intake-processor` | Azure Functions | Batch poll + webhook intake from Mercury, publish to `dmer-raw` |
+| `di-processor` | Azure Container Apps | Extraction (Document Intelligence custom model + OCR + LLM handwriting, cut-off check) from `dmer-raw`, publish to `dmer-extracted` |
 | `workflow-orchestrator` | Durable Functions | End-to-end orchestration: dedupe, case mgmt, normalization, rules, Mercury update |
 | `normalizer-service` | Azure Container Apps | Structured extraction & evidence validation via an externally-hosted Azure OpenAI model |
 | `rule-engine` | Azure Functions | GoRules/Zen rule evaluation against `rules.json` |

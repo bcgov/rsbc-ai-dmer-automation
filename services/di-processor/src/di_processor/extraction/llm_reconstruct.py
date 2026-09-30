@@ -18,6 +18,7 @@ from dmer_common.openai_client import OpenAIClient
 from dmer_common.telemetry import get_logger
 from PIL import Image
 
+from ..failures import FailureCode, failure_step
 from .render import image_to_png_bytes
 from .sanitize import (
     load_field_keys,
@@ -119,10 +120,15 @@ def reconstruct(
     messages = build_messages(
         load_prompt(), ocr_json, _image_data_url(page_image), field_keys
     )
-    raw_text = client.complete(messages, max_completion_tokens=MAX_COMPLETION_TOKENS)
-    parsed = parse_llm_json(raw_text)
-    sanitized = sanitize_fields(parsed, field_keys, load_known_form_labels())
-    result = validate_llm_output(sanitized)
+    with failure_step(FailureCode.LLM_CALL_FAILED):
+        raw_text = client.complete(
+            messages, max_completion_tokens=MAX_COMPLETION_TOKENS
+        )
+    # Unparseable or schema-violating output is the model's fault, not the call's.
+    with failure_step(FailureCode.LLM_OUTPUT_INVALID):
+        parsed = parse_llm_json(raw_text)
+        sanitized = sanitize_fields(parsed, field_keys, load_known_form_labels())
+        result = validate_llm_output(sanitized)
     _log.info(
         "handwritten reconstruction complete",
         extra={

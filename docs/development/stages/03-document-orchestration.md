@@ -3,12 +3,14 @@
 Source: architecture doc §4.3. Figure: `docs/architecture/Figure1_Revised_Architecture.png`
 ("Stage 3 — Document Orchestration, Durable Function, one instance per document"). Data model:
 `../data-model.md`. Messages: `../message-contracts.md`. Activities:
-[Normalize](04-activity-normalize.md), [Rule Engine](05-activity-rule-engine.md).
+[Resolve Driver](#activity-resolve-driver) (below), [Normalize](04-activity-normalize.md),
+[Rule Engine](05-activity-rule-engine.md).
 
 ## Purpose
 
 A Durable Functions orchestration with `instanceId` set to `document_guid`, started from the
-`dmer-extracted` queue. It runs two activities in sequence and then signals the driver. Using an
+`dmer-extracted` queue. It runs three activities in sequence (Resolve Driver, Normalize, Rule
+Engine) and then signals the driver. Using an
 orchestration (rather than two more queue-triggered functions) buys automatic per-activity retry
 semantics, a durable record of where the document reached, and the ability to add steps later
 without adding queues.
@@ -18,8 +20,8 @@ without adding queues.
 | | |
 |---|---|
 | Type | Durable Functions orchestrator, started by a `dmer-extracted` queue trigger |
-| Reads | Message: `{ document_id, driver_key, extracted_blob_url }` |
-| Runs | `Activity: Normalize` → `Activity: Rule Engine`, in sequence |
+| Reads | Message: `{ document_id, driver_key, extracted_blob_url }` (`driver_key` may be null) |
+| Runs | `Activity: Resolve Driver` → `Activity: Normalize` → `Activity: Rule Engine`, in sequence |
 | Publishes | `driver-decision`, with `SessionId = driver_key`, at the end |
 
 ## How Durable Functions actually move work
@@ -52,16 +54,63 @@ table to skip work already done. Three consequences follow:
 ## Orchestration flow
 
 1. Receive `{ document_id, driver_key, extracted_blob_url }` from `dmer-extracted`.
-2. `CallActivityAsync("NormalizeDmer", ...)` — see [Activity: Normalize](04-activity-normalize.md).
-3. `CallActivityAsync("RunRuleEngine", ...)` — see [Activity: Rule Engine](05-activity-rule-engine.md).
-4. Publish to `driver-decision` with `SessionId = driver_key` — this is the hand-off to
-   [Driver Orchestration](06-driver-orchestration.md); the per-document orchestration's job ends
-   here.
+2. `CallActivityAsync("ResolveDriver", ...)` — see [Activity: Resolve Driver](#activity-resolve-driver).
+   Returns the resolved `driver_key`, or routes the document to `MANUAL_REVIEW` (the orchestration
+   then ends without publishing). **Must run first**: the Rule Engine activity increments the
+   driver's `driver_evaluation.completed_document_count`, so the driver and its evaluation must
+   exist before it runs.
+3. `CallActivityAsync("NormalizeDmer", ...)` — see [Activity: Normalize](04-activity-normalize.md).
+4. `CallActivityAsync("RunRuleEngine", ...)` — see [Activity: Rule Engine](05-activity-rule-engine.md).
+5. Publish to `driver-decision` with `SessionId = driver_key` (the one resolved in step 2) — this
+   is the hand-off to [Driver Orchestration](06-driver-orchestration.md); the per-document
+   orchestration's job ends here.
 
 Two conventions apply to every activity in this orchestration (and to every stage in the pipeline)
 and are not repeated per-activity: each activity writes its own `dmer_stage_run` row
 (`RUNNING` → `SUCCEEDED`/`FAILED`), and each activity updates `dmer_document.current_stage` /
 `pipeline_status` on success. See `../data-model.md`.
+
+## Activity: Resolve Driver
+
+**Decided (2026-09-23):** driver identification and document counting run here, not in
+[Extraction](02-extraction.md#driver-resolution-is-not-performed-in-extraction), so they complete
+before `driver-decision` (which requires `driver_key`) is published.
+
+| | |
+|---|---|
+| Type | Durable activity, first in the orchestration |
+| Reads | `dmer_document.driver_key` (from Ingest, when Mercury supplied a driver), `dmer_extraction.licence_number_read` (canonical 8-digit, from Extraction), Mercury `GET by driver_licence` |
+| Writes | `driver`, `driver_evaluation`, `dmer_document.driver_key` |
+| Returns | The resolved `driver_key` (never the licence number, per §9.2) |
+
+Steps:
+
+1. **Mercury supplied a driver** (`driver_key` already set by Ingest): if `licence_number_read` is
+   present and differs from `driver.licence_number`, record the discrepancy; keep Mercury's driver.
+2. **Mercury supplied none**: use `licence_number_read`.
+   - Null (unreadable, invalid, or the top of the page cut off) → route to `MANUAL_REVIEW` (I-12).
+   - Look it up with Mercury `GET by driver_licence`. Exactly one driver → upsert `driver` on
+     `licence_number` (`INSERT ... ON CONFLICT (licence_number) DO UPDATE`) and attach its
+     `driver_key` to `dmer_document`. Flag the document so [Decision Gateway](07-decision-gateway.md)
+     step 6 records `proposed_driver_key` / `MAP_DRIVER` (I-11: the AI may map automatically).
+   - No match, or more than one → route to `MANUAL_REVIEW`, carrying the licence information and
+     reason for the Mercury comment (I-12).
+3. **Create or attach the driver's open `driver_evaluation`** and set `expected_document_count`
+   from the same Mercury `GET by driver_licence` response (`status = WAITING`,
+   `last_mercury_check_at`). Applies to both branches above.
+
+Licences are compared in the canonical form from `dmer_common.licence.normalize_licence`, the same
+one Ingest uses for `driver.licence_number`. Never log the licence or put it in an activity return
+value or queue message; use `driver_key`.
+
+Idempotency: an activity retry must not create a second driver or evaluation, or double-count.
+`driver` upserts on `licence_number`; `driver_evaluation` upserts on its open-evaluation conflict
+target; `expected_document_count` is **set** from Mercury, not incremented, so a retry rewrites the
+same value.
+
+**Blocked on:** the meaning of "open" for the `driver_evaluation (driver_key, open)` conflict target
+(`../data-model.md#open-questions--decisions-required`), and the Mercury `GET by driver_licence`
+API contract (response shape, auth); `libs/dmer_common/src/dmer_common/mercury_client/` is a stub.
 
 ## Failure handling
 
@@ -74,6 +123,11 @@ an activity without custom code. Distinguish, same as every other stage:
   `MANUAL_REVIEW` (`pipeline_status`) rather than letting the orchestration instance fail silently.
   This is what "retries exhausted → MANUAL_REVIEW" means on
   `docs/architecture/Figure3_Status_Lifecycle.png`.
+- Driver not resolvable (Resolve Driver: no readable licence, no match, or ambiguous match) → the
+  activity routes the document to `MANUAL_REVIEW` (I-12) and the orchestrator ends **without**
+  publishing to `driver-decision`; a document with no `driver_key` can never join a driver batch.
+- Mercury `GET by driver_licence` failure → transient; activity-level retry with backoff. Never
+  guess a driver on retry exhaustion; route to `MANUAL_REVIEW`.
 
 ## Interaction with upstream/downstream stages
 
@@ -87,11 +141,13 @@ fully-parallel stage — everything after this point is serialized per driver.
 |---|---|
 | `AzureWebJobsStorage` / task hub storage account | Durable Functions history/control-queue storage — separate from `dmer_common`'s own storage client. |
 | `SERVICEBUS_NAMESPACE`, `DMER_EXTRACTED_QUEUE`, `DRIVER_DECISION_QUEUE` | See `../message-contracts.md`. |
+| `MERCURY_DRIVER_LICENCE_API_BASE_URL` + Mercury credentials | Resolve Driver's `GET by driver_licence` call; shared with [Decision Gateway](07-decision-gateway.md). |
 
 ## Authentication / identity
 
-Managed identity for the task hub storage account, Service Bus, PostgreSQL. No direct external
-calls from the orchestrator itself — those live in the activities.
+Managed identity for the task hub storage account, Service Bus, PostgreSQL. Mercury credentials
+(Key Vault) for the Resolve Driver activity. No direct external calls from the orchestrator itself
+— those live in the activities.
 
 ## Idempotency requirements
 
@@ -142,6 +198,10 @@ for the recommended folder).
 
 ## Open Questions / Decisions Required
 
+- **`driver_evaluation (driver_key, open)`**: what "open" means (blocks Resolve Driver step 3).
+- **Mercury `GET by driver_licence` contract**: response shape and auth (blocks Resolve Driver).
+- **Discrepancy recording**: where a Mercury-driver vs page-licence mismatch is stored (a flag on
+  `dmer_extraction`, or a `processing_error` row); no column is defined yet.
 - Whether Normalize and Rule Engine activity code lives as Python functions directly inside
   `services/workflow-orchestrator/`, or as importable modules in `libs/dmer_common` invoked from
   there — the architecture document specifies them as "a Durable Functions activity" and "a library

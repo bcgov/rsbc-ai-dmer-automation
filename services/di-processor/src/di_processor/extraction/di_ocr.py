@@ -12,11 +12,13 @@ dicts, so line/word parsing here operates on dicts (not raw SDK objects).
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from dmer_common.doc_intelligence import DocumentIntelligenceClient
 from dmer_common.telemetry import get_logger
 
+from ..failures import FailureCode, PipelineFailure
 from .render import image_to_png_bytes
 from .splitter import TILE_HEIGHT, Tile
 
@@ -125,7 +127,9 @@ def ocr_tiles(
     """OCR every tile with ``prebuilt-read`` and assemble the rows/segments JSON.
 
     A tile that fails to analyze is skipped (its lines are simply absent), so a
-    single bad tile does not abort the whole page.
+    single bad tile does not abort the whole page. If **every** tile fails, the
+    page has no OCR at all and raises ``OCR_FAILED`` rather than letting the LLM
+    reconstruct handwriting from the image alone.
     """
     tile_results: list[dict[str, Any]] = []
     failed = 0
@@ -151,8 +155,15 @@ def ocr_tiles(
             }
         )
 
+    if tiles and failed == len(tiles):
+        raise PipelineFailure(
+            FailureCode.OCR_FAILED,
+            f"error=AllTilesFailed; failed_tiles={failed}; tiles={len(tiles)}",
+        )
+
     rows = tiles_to_rows(tile_results)
-    _log.info(
+    _log.log(
+        logging.WARNING if failed else logging.INFO,
         "tiled OCR complete",
         extra={"tiles": len(tiles), "failed_tiles": failed, "rows": len(rows)},
     )

@@ -2,7 +2,8 @@
 
 Every consumer in the pipeline must:
 - propagate ``documentId`` from the message into logs and downstream messages,
-- be **idempotent** on ``messageId`` (no-op, not error, on an already-completed id),
+- be **idempotent** on ``messageId`` via a durable, atomic claim in an
+  :class:`IdempotencyStore` (no-op, not error, on an already-completed id),
 - ``complete`` on success and ``dead_letter`` on unrecoverable failure.
 
 Every publisher emits the standard envelope (``messageId``/``documentId``/
@@ -16,12 +17,23 @@ a fake bus, and idempotency is pluggable via :class:`IdempotencyStore`.
 from __future__ import annotations
 
 from .consumer import ServiceBusConsumer
-from .idempotency import IdempotencyStore, InMemoryIdempotencyStore
+from .idempotency import (
+    DEFAULT_LEASE_SECONDS,
+    Claim,
+    ClaimOutcome,
+    IdempotencyStore,
+    InMemoryIdempotencyStore,
+)
+from .postgres_idempotency import PostgresIdempotencyStore
 from .publisher import ServiceBusPublisher
 
 __all__ = [
+    "DEFAULT_LEASE_SECONDS",
+    "Claim",
+    "ClaimOutcome",
     "IdempotencyStore",
     "InMemoryIdempotencyStore",
+    "PostgresIdempotencyStore",
     "ServiceBusConsumer",
     "ServiceBusPublisher",
 ]

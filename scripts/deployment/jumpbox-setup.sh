@@ -137,7 +137,7 @@ cat > "${HOME_DIR}/.local/share/applications/sb-queue-viewer.desktop" << DESKTOP
 [Desktop Entry]
 Type=Application
 Name=SB Queue Viewer
-Comment=Peek/receive raw-dmer-queue and extracted-dmer-queue messages
+Comment=Peek/receive DMER pipeline Service Bus queue messages
 Exec=${HOME_DIR}/sbvenv/bin/python ${HOME_DIR}/sb_queue_viewer.py
 Icon=utilities-terminal
 Terminal=false

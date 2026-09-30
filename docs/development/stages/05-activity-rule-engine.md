@@ -30,7 +30,9 @@ orchestrator — see [Alignment gaps](#alignment-gaps-vs-current-code).
 2. Evaluate the normalized document against it, producing a list of candidate outcomes.
 3. Select the highest-priority outcome per the validation step.
 4. Persist **all** candidate outcomes, not just the winner, to `rule_evaluation`.
-5. Increment the driver's `completed_document_count`.
+5. Increment the driver's `completed_document_count` (the `driver_evaluation` row was created or
+   attached earlier in the same orchestration by
+   [Resolve Driver](03-document-orchestration.md#activity-resolve-driver)).
 6. Signal the driver by publishing to `driver-decision` (this happens at the orchestrator level, at
    the end of the whole document orchestration — see
    [Document Orchestration](03-document-orchestration.md#orchestration-flow)).

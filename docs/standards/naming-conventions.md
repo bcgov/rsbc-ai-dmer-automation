@@ -26,10 +26,9 @@ topics (`dmer-lifecycle-events`), `sub-<consumer>` for subscriptions (`sub-post-
 Lowercase, singular-noun, matching pipeline stage: `raw`, `ocr`, `normalized`, `rules`,
 `audit`, `failed`, `archive`.
 
-Documented exception: the two di-processor extraction-output containers `extracted-dmer`
-(intermediate top-level/OCR/handwritten artifacts) and `combined-extracted-dmer` (the unified
-combined extraction) deliberately deviate from the singular-noun rule to match the pipeline
-stage names. See the di-processor ADR and `docs/architecture/repository-design.md` §10/§11.
+Documented exception: the di-processor extraction-output container `extracted-dmer` (all
+per-document extraction artifacts, including the combined extraction) deliberately deviates
+from the singular-noun rule to match the pipeline stage name. See the di-processor ADR and `docs/architecture/repository-design.md` §10/§11.
 
 ## PostgreSQL
 

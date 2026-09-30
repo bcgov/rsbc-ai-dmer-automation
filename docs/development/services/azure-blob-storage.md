@@ -12,7 +12,7 @@ Four containers, one per pipeline artifact stage — this is the revised archite
 | Container | Written by | Contents | Immutable? |
 |---|---|---|---|
 | `raw-dmer` | [Ingest](../stages/01-ingest.md) | Source PDFs, path `{yyyy}/{MM}/{document_guid}.pdf` | Yes — the evidentiary copy, never rewritten by a later stage. |
-| `extracted-dmer` | [Extraction](../stages/02-extraction.md) | One combined JSON per document (`{document_id}.json`), with the custom-model result and handwriting result as **named sections within one object** | Overwritten on replay of the same document only. |
+| `extracted-dmer` | [Extraction](../stages/02-extraction.md) | Four files per document under `{document_id}/`: `top_level.json`, `ocr.json`, `handwritten.json`, and `combined.json` (the merged result downstream reads) — see [Extraction §Blob writes](../stages/02-extraction.md#blob-writes) | Overwritten on replay of the same document only. |
 | `normalized-dmer` | [Activity: Normalize](../stages/04-activity-normalize.md) | One normalized JSON per document | Overwritten on replay. |
 | `rules` | Rule authoring/publishing process (not a pipeline stage) | Versioned `rules.json` — see [Versioning](#versioning-rules) below | Versions immutable; `active` pointer mutable. |
 
@@ -62,13 +62,9 @@ Contributor on `raw-dmer` (read) and `extracted-dmer` (write), but no access to 
 
 ## Alignment gaps vs. current code
 
-`libs/dmer_common/src/dmer_common/storage/containers.py` currently defines
-`EXTRACTED_DMER_CONTAINER` (default `extracted-dmer`) and `COMBINED_EXTRACTED_DMER_CONTAINER`
-(default `combined-extracted-dmer`) — a two-container split for extraction sub-stages
-(`top_level.json`, `ocr.json`, `handwritten.json` in `extracted-dmer`; `combined.json` in
-`combined-extracted-dmer`), per `paths.py`. The revised architecture merges these into **one**
-`extracted-dmer` container holding one combined JSON per document with named sections — see
-[Extraction §Blob writes](../stages/02-extraction.md#blob-writes). There is also no `raw-dmer`,
+`libs/dmer_common/src/dmer_common/storage/containers.py` defines a single
+`EXTRACTED_DMER_CONTAINER` (default `extracted-dmer`), and `paths.py` writes the four per-document
+files under it — matching the decided layout above. There is also no `raw-dmer`,
 `normalized-dmer`, or `rules` container defined in `dmer_common` yet, and
 `docs/architecture/repository-design.md`'s seven-container list (`raw`, `ocr`, `normalized`,
 `rules`, `audit`, `failed`, `archive`) is superseded by the four-container list above — `audit`,

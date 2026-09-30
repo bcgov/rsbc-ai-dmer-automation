@@ -36,19 +36,15 @@ def test_path_builders_reject_empty_document_id(bad):
         combined_path(bad)
 
 
-def test_container_defaults(monkeypatch):
-    # GIVEN no container env overrides
+def test_container_default(monkeypatch):
+    # GIVEN no container env override
     monkeypatch.delenv("EXTRACTED_DMER_CONTAINER", raising=False)
-    monkeypatch.delenv("COMBINED_EXTRACTED_DMER_CONTAINER", raising=False)
-    # THEN the getters return the contracted default names
+    # THEN the getter returns the contracted default name (single container)
     assert containers.extracted_dmer() == "extracted-dmer"
-    assert containers.combined_extracted_dmer() == "combined-extracted-dmer"
 
 
-def test_container_names_configurable_via_env(monkeypatch):
-    # GIVEN env overrides for the container names
+def test_container_name_configurable_via_env(monkeypatch):
+    # GIVEN an env override for the container name
     monkeypatch.setenv("EXTRACTED_DMER_CONTAINER", "extracted-custom")
-    monkeypatch.setenv("COMBINED_EXTRACTED_DMER_CONTAINER", "combined-custom")
-    # THEN the getters reflect the overrides
+    # THEN the getter reflects the override
     assert containers.extracted_dmer() == "extracted-custom"
-    assert containers.combined_extracted_dmer() == "combined-custom"

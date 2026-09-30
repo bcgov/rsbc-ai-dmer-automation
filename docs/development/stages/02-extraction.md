@@ -6,8 +6,10 @@ Source: architecture doc §4.2. Figure: `docs/architecture/Figure1_Revised_Archi
 
 ## Purpose
 
-Turn a scanned page into structured data and — just as importantly — establish which driver the
-document belongs to. This is **the only Container App in the design**. It earns that because it
+Turn a scanned page into structured data, and record the licence number as read from the page.
+Establishing which driver the document belongs to is **not** done here (see
+[Driver resolution is not performed in Extraction](#driver-resolution-is-not-performed-in-extraction)).
+This is **the only Container App in the design**. It earns that because it
 runs for tens of seconds to minutes per document, loads models, splits images, and scales on a
 completely different curve from the rest of the pipeline (bounded by Document Intelligence/OpenAI
 quota, not by cost). See `../services/azure-container-apps.md` for the KEDA scale rule.
@@ -18,7 +20,7 @@ quota, not by cost). See `../services/azure-container-apps.md` for the KEDA scal
 |---|---|
 | Type | Azure Container App, Service Bus queue consumer on `dmer-raw`, KEDA scale rule on queue depth |
 | Reads | `raw-dmer` blob; Document Intelligence custom model + `prebuilt-ocr`; Azure OpenAI GPT-5.1 |
-| Writes | `extracted-dmer` blob, `dmer_extraction`, `driver`, `driver_evaluation`, `dmer_document`, `dmer_stage_run` |
+| Writes | `extracted-dmer` blob, `dmer_extraction`, `dmer_document`, `dmer_stage_run` |
 | Publishes | `dmer-extracted` |
 | Concurrency | Max replicas bounded by Document Intelligence and Azure OpenAI quota, not cost |
 
@@ -44,17 +46,17 @@ quota, not by cost). See `../services/azure-container-apps.md` for the KEDA scal
 6. **Cut-off detection.** Determine whether the top and bottom bands of the form survived the
    fax/scan. Persist **three separate booleans** — `has_header`, `has_signature`, `is_cutoff` —
    rather than one collapsed flag, because Intake needs to know which half was missing.
-7. **Driver resolution.** Read the licence number from the page.
-   - If the document already carries a `driver_key` from Mercury, verify the two agree; record a
-     discrepancy if they don't.
-   - If it doesn't, resolve or create the `driver` row from the licence read, and attach
-     `driver_key`.
-   - Then create or attach the `driver_evaluation` row for that driver and **increment its expected
-     count**.
+7. **Licence read.** Record the licence number as read from the page on
+   `dmer_extraction.licence_number_read` (canonical 8-digit form). This step only *records* the
+   read — it does not resolve a `driver`, attach a `driver_key`, or touch `driver_evaluation`.
 8. **Combine and hash.** Merge the custom-model result and the handwriting result into one JSON,
    write it to `extracted-dmer`, and compute the canonical comparison hash used later for duplicate
    detection.
-9. **Publish.** Send to `dmer-extracted` with `document_id`, `driver_key`, and the extracted blob URL.
+9. **Publish.** Send to `dmer-extracted` with `document_id`, the `driver_key` as received on
+   `dmer-raw` (null when Mercury supplied none), and the extracted blob URL. `message_id` is
+   `event_message_id("dmer-extracted", document_id)` — the same for every publish or replay of
+   this document's extraction, and never the incoming `dmer-raw` ID (see
+   [message-contracts.md](../message-contracts.md#message-envelope)).
 
 ### Cut-off detection in practice
 
@@ -67,38 +69,56 @@ save quota — but still extract the content, because a cut-off document's field
 duplicate comparison even when its outcome is superseded (see
 [Decision Gateway](07-decision-gateway.md), step 2).
 
-### Why driver resolution moved here
+> **As implemented** (`services/di-processor/src/di_processor/extraction/cutoff.py`): the check
+> reads the **custom-model** call's page layout, not the tiled `prebuilt-read` output — the tiled
+> path runs on an image with the top Protected B band cropped off, so it can never see the header.
+> A band is present when ≥ 2 of its printed labels fuzzy-match (≥ 0.80) inside its expected
+> vertical band (header: top 20%; examiner/signature block: bottom 40%). The bottom band is also
+> present if the model *located* one of its fields (`doctor_signature`, `medical_examination_date`,
+> `physician_or_np_fax_present`) — located means a value or bounding region; an absent field still
+> carries a high confidence, so confidence is ignored. The fax-machine banner is not an anchor. No
+> page layout → all three flags `null` (undeterminable). Flags are written to `dmer_extraction` and
+> to `combined.json` (`cutoff` section, with the matched evidence).
 
-In the original architecture the licence was only used at the decision gateway. Moving it into
-extraction has three effects:
+### Driver resolution is not performed in Extraction
 
-- Documents can be grouped by driver from the moment they're extracted, including when Mercury
-  returned no driver object.
-- The expected document count is established while the batch is still being assembled, so the wait
-  is measurable rather than discovered at the end.
-- The Mercury `GET by driver_licence` call can be made once early and cached, rather than once per
-  document at decision time.
+**Decided (2026-09-23):** Extraction does **not** do driver identification (resolving/creating the
+`driver` row and attaching `driver_key` when Mercury supplied none) or document counting (creating
+or attaching `driver_evaluation` and setting `expected_document_count`). This reverses the
+architecture document's placement of driver resolution in this stage.
+
+**Now owned by** [Document Orchestration's Resolve Driver activity](03-document-orchestration.md#activity-resolve-driver)
+(the first activity, so it completes before `driver-decision`, which requires `driver_key`, is
+published).
+
+What Extraction provides for it: `dmer_extraction.licence_number_read`, normalized with
+`dmer_common.licence.normalize_licence` so it matches `driver.licence_number` exactly.
+`dmer-extracted` carries `driver_key` only when Ingest set it from Mercury; otherwise it is null.
 
 ## Database writes
 
 | Table | Operation | Fields |
 |---|---|---|
 | `dmer_extraction` | `INSERT` (one row per document) | `document_id`, `licence_number_read`, `exam_date`, `physician_name`, `has_header`, `has_signature`, `is_cutoff`, `page_count`, `confidence_avg`, `comparison_fields` (jsonb, canonicalized subset), `comparison_hash` (sha256 of the canonicalized subset). |
-| `driver` | `INSERT ... ON CONFLICT (licence_number) DO UPDATE` | Only when the licence was read from the page and no driver row existed. |
-| `driver_evaluation` | `INSERT ... ON CONFLICT (driver_key, open) DO UPDATE` | `id`, `driver_key`, `status = WAITING`, `expected_document_count` (from Mercury `GET by driver_licence`), `completed_document_count` (unchanged here), `last_mercury_check_at`. See `../data-model.md#open-questions--decisions-required` re: the `(driver_key, open)` conflict target. |
-| `dmer_document` | `UPDATE` | `driver_key` (if resolved here), `pipeline_status = EXTRACTED`, `current_stage = NORMALIZE`, `updated_at`. |
+| `dmer_document` | `UPDATE` | `pipeline_status = EXTRACTED`, `current_stage = NORMALIZE`, `updated_at`. |
 | `dmer_stage_run` | `INSERT` then `UPDATE` | `stage = EXTRACT`, `status`, `attempt_no`, `started_at`, `ended_at`, `output_blob_url` = the combined extraction blob, `model_version` (custom DI model version **and** the GPT prompt/schema version — record both), error fields on failure. |
 
 ## Blob writes
 
-One object in `extracted-dmer`, holding the **combined** JSON. Write the custom-model result and
-the handwriting result as **named sections within that one object**, not as separate blobs —
-keeping them together means a replay of normalization has everything it needs from a single fetch.
+**Decided:** four separate files per document, under a `document_id` path in `extracted-dmer`:
 
-> Do not replicate the older per-file layout (`top_level.json` / `ocr.json` / `handwritten.json` in
-> one container, `combined.json` in a second `combined-extracted-dmer` container) that
-> `libs/dmer_common/src/dmer_common/storage/paths.py` currently implements — see
-> [Alignment gaps](#alignment-gaps-vs-current-code).
+```
+extracted-dmer/<document_id>/top_level.json    custom-model fields (+ cut-off flags)
+extracted-dmer/<document_id>/ocr.json          tiled prebuilt-read OCR
+extracted-dmer/<document_id>/handwritten.json  LLM-reconstructed handwritten fields
+extracted-dmer/<document_id>/combined.json     merged result — the one downstream reads
+```
+
+`combined.json` is self-contained (merged fields, cut-off flags, model and prompt versions), so a
+replay of normalization still needs a single fetch; the `dmer-extracted` message's `blob_url` and
+`dmer_stage_run.output_blob_url` point at it. The other three are intermediate artifacts kept for
+audit and for re-running a later sub-step without repeating earlier ones. Built by
+`libs/dmer_common/src/dmer_common/storage/paths.py`.
 
 ## Failure handling
 
@@ -111,11 +131,41 @@ keeping them together means a replay of normalization has everything it needs fr
   while it is still being processed (lock duration on `dmer-raw` is 5 minutes; extraction can take
   minutes).
 
+### Failure codes
+
+Every failure is reported by **which step failed**
+(`services/di-processor/src/di_processor/failures.py`). The same code goes to
+`dmer_stage_run.error_code`, the Service Bus dead-letter `reason`, and the error log; the detail
+goes to `dmer_stage_run.error_detail` and the dead-letter `description`. On any failure the
+document still goes to `MANUAL_REVIEW` and the message is dead-lettered.
+
+| Code | Step |
+|---|---|
+| `DB_READ_FAILED` | Reading the document's status or stored pointer |
+| `DB_WRITE_FAILED` | Status writes, stage-run start, `dmer_extraction` write |
+| `INVALID_STATUS_TRANSITION` | A status change the state machine forbids (e.g. a `MANUAL_REVIEW` document redelivered) |
+| `STALE_STATUS` | **Not a document failure.** Another worker changed the status first (a compare-and-set write lost the race — see [Idempotency requirements](#idempotency-requirements)). The run stops quietly: no `MANUAL_REVIEW`, no dead-letter; only its stage run is closed with this code |
+| `SOURCE_DOWNLOAD_FAILED` | Downloading the source PDF |
+| `PDF_UNREADABLE` | Rendering page 1 (missing page, corrupt PDF) |
+| `DI_CUSTOM_MODEL_FAILED` | Custom-model analyze (Stage A) |
+| `OCR_FAILED` | Tiled OCR — only when **every** tile fails; individual failed tiles are skipped and counted in the log |
+| `LLM_CALL_FAILED` | The Azure OpenAI call (Stage C) |
+| `LLM_OUTPUT_INVALID` | Unparseable or schema-violating LLM output (Stage C) |
+| `ARTIFACT_WRITE_FAILED` | Uploading any of the four extraction files |
+| `PUBLISH_FAILED` | Publishing to `dmer-extracted` |
+| `UNEXPECTED` | Anything else (a code bug, e.g. in merge) |
+
+The detail is `key=value; ...` text built only from safe facts, e.g.
+`error=ResourceNotFoundError; http_status=404`, `error=CircuitOpenError; circuit_open=true`,
+`error=AllTilesFailed; failed_tiles=12; tiles=12`. **The exception message is never recorded or
+logged** — it can carry extracted licence or clinical values (a schema-validation error echoes the
+offending field values), and key-based log redaction cannot catch it.
+
 ## Interaction with upstream/downstream stages
 
 Consumes `dmer-raw` (from [Ingest](01-ingest.md)). Publishes `dmer-extracted`, consumed by
-[Document Orchestration](03-document-orchestration.md). Also the stage that creates/updates
-`driver_evaluation`, which [Driver Orchestration](06-driver-orchestration.md) later reads.
+[Document Orchestration](03-document-orchestration.md). Does not create or update `driver` or
+`driver_evaluation` (see [above](#driver-resolution-is-not-performed-in-extraction)).
 
 ## Configuration / environment variables
 
@@ -136,10 +186,22 @@ GPT-5.1 deployment is hosted in a separate AI Hub subscription (see `../services
 
 ## Idempotency requirements
 
+Every `dmer_document.pipeline_status` write is an **atomic compare-and-set**: the caller passes the
+status it last saw (`expected`) and the write applies only if the row is still in it
+(`UPDATE ... WHERE id = :id AND pipeline_status = :expected`). Two workers on one document — e.g. a
+Service Bus redelivery running alongside the original — can therefore never move the status
+backwards or have one's failure (`MANUAL_REVIEW`) overwrite the other's success; the loser gets
+`StaleStatusError` and stops. `EXTRACTING -> EXTRACTING` re-entry is still allowed.
+
+Message-level idempotency is the consumer's durable claim in `message_idempotency` (scope
+`di-processor/dmer-raw`) — see
+[message-contracts.md §Message idempotency](../message-contracts.md#message-idempotency-consumer-side).
+It suppresses duplicate deliveries across restarts and replicas but is not exactly-once, so the
+pipeline's own guards below still apply.
+
 Replay guard on `pipeline_status >= EXTRACTED` (step 1). Re-running extraction for an already
-`EXTRACTED` document (e.g. a redelivered message after a lock-renewal failure) must not double the
-`driver_evaluation.expected_document_count` increment or create a duplicate `dmer_extraction` row —
-use `document_id` as the natural upsert key on `dmer_extraction`.
+`EXTRACTED` document (e.g. a redelivered message after a lock-renewal failure) must not create a
+duplicate `dmer_extraction` row — use `document_id` as the natural upsert key on `dmer_extraction`.
 
 ## Logging / auditing
 
@@ -155,7 +217,7 @@ a disputed extraction can be traced to the exact model/prompt combination that p
   "document_id": "8f3c1b2a-...",
   "document_guid": "123e4567-e89b-...",
   "driver_key": "a91b77e4-...",
-  "blob_url": "https://.../extracted-dmer/8f3c1b2a.json",
+  "blob_url": "https://.../extracted-dmer/8f3c1b2a/combined.json",
   "attempt": 1,
   "enqueued_at": "2026-09-18T12:05:00Z"
 }
@@ -167,22 +229,21 @@ a disputed extraction can be traced to the exact model/prompt combination that p
   `analyze()`) and `openai_client/client.py` (`OpenAIClient.complete()`) are reusable as-is — both
   already wrap retry + circuit breaker (`retry/policies.py`: `di_retry`/`di_breaker`,
   `openai_retry`/`openai_breaker`) matching the failure-handling rules above.
-- `libs/dmer_common/src/dmer_common/storage/paths.py` and `containers.py` need to be **rewritten**,
-  not extended — they implement the old `extracted-dmer` + `combined-extracted-dmer` two-container,
-  per-substep layout. Replace with a single `extracted-dmer/{document_id}.json` path holding named
-  sections (`top_level`, `ocr`, `handwritten`, `combined`) in one object.
+- `libs/dmer_common/src/dmer_common/storage/containers.py` uses the single `extracted-dmer`
+  container and `paths.py` builds the four per-document paths — matches the
+  [Blob writes](#blob-writes) layout.
 - `services/di-processor/` is the placeholder folder for this stage (currently
   `main() -> raise NotImplementedError`) — this is where the Container App entrypoint, KEDA scaling
   config, and the nine processing steps above belong.
-- No `dmer_extraction`/`driver`/`driver_evaluation` repository exists yet — build alongside the
-  `dmer_document` repository rework noted in `../data-model.md#alignment-gaps-vs-current-code`.
+- `dmer_document`, `dmer_extraction`, and `dmer_stage_run` repositories exist in
+  `libs/dmer_common/src/dmer_common/db/`. No `driver`/`driver_evaluation` repository is needed in
+  this stage.
 
 ## Open Questions / Decisions Required
 
-- **I-12** — escalation when the licence read matches no driver, or matches more than one: send for
-  human review, mentioning the licence info and reason in the comment (answered) — confirm the exact
-  `pipeline_status`/outcome this maps to (likely `MANUAL_REVIEW` with a `dmer_decision` fallback,
-  same shape as [Post-Processing](08-post-processing.md)'s fallback path).
+- ~~Owner of driver resolution and document counting~~ — **resolved 2026-09-23**: Document
+  Orchestration's [Resolve Driver activity](03-document-orchestration.md#activity-resolve-driver).
+  I-12 (no/ambiguous licence match → human review) is handled there.
 - **M-9** — confirmed: no multi-DMER-per-PDF and no DMER-split-across-files cases. The one-document,
   one-decision assumption holds; no branch needed for either case.
 - Exact schema/version pinning strategy for the GPT-5.1 structuring prompt (a config value, a blob

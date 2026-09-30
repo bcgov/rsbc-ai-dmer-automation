@@ -37,8 +37,10 @@ isolation from the others.
    the same document repeatedly, for the webhook to deliver a duplicate, and for a failed run to be
    repeated.
 4. If the entry contains a `driver` object, resolve or create the `driver` row from
-   `licence_number` (normalized: uppercase, punctuation stripped) and attach `driver_key` to the
-   document. If it does not, leave `driver_key` null — Extraction resolves it from the page itself.
+   `licence_number` (normalized to the canonical 8-digit form with
+   `dmer_common.licence.normalize_licence` — see `../data-model.md#driver`) and attach `driver_key` to the
+   document. If it does not, leave `driver_key` null. Extraction records the page's licence (`licence_number_read`) but does
+   not resolve a driver; [Document Orchestration](03-document-orchestration.md#activity-resolve-driver) does.
 5. If the entry contains a `case` object, record `mercury_case_id`.
 6. Publish one `dmer-ingest` message per document, with **Service Bus `MessageId` set to
    `document_guid`** so duplicate detection suppresses repeats within the detection window.

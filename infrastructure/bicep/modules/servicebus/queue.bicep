@@ -1,9 +1,8 @@
 // queue.bicep
 //
 // Reusable Service Bus queue: max delivery count, lock duration, and an
-// optional duplicate-detection window -- instantiated for raw-dmer-queue
-// and extracted-dmer-queue (docs/contracts/queues/*.md, original
-// architecture) and dmer-ingest/dmer-raw (docs/development/message-contracts.md,
+// optional duplicate-detection window -- instantiated for dmer-ingest,
+// dmer-raw and dmer-extracted (docs/development/message-contracts.md,
 // revised architecture), each with its own settings taken from its contract.
 //
 // The native $DeadLetterQueue sub-queue always exists on a Service Bus
@@ -34,7 +33,7 @@ param maxDeliveryCount int = 5
 @description('How long a receiver holds a lock on a message before it becomes available to another receiver again (ISO 8601 duration).')
 param lockDuration string = 'PT5M'
 
-@description('Duplicate-detection window (ISO 8601 duration), keyed on messageId. Empty string disables duplicate detection entirely -- use this when the contract doc doesn\'t call for it (e.g. extracted-dmer-queue).')
+@description('Duplicate-detection window (ISO 8601 duration), keyed on messageId. Empty string disables duplicate detection entirely -- use this when the contract doc doesn\'t call for it (e.g. dmer-raw).')
 param duplicateDetectionWindow string = ''
 
 @description('Whether a message that expires (TTL elapsed) without being redelivered enough times to hit maxDeliveryCount is dead-lettered instead of silently discarded. message-contracts.md requires this enabled on every queue.')

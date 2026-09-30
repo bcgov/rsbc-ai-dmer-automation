@@ -9,7 +9,6 @@ a queue message (security requirement, architecture doc §9.2).
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -17,6 +16,8 @@ from sqlalchemy import Column, DateTime, MetaData, Table, Text
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncEngine
+
+from ..licence import normalize_licence
 
 metadata = MetaData()
 
@@ -36,16 +37,23 @@ driver = Table(
     Column("last_synced_at", DateTime(timezone=True), nullable=True),
 )
 
-_NON_ALPHANUMERIC = re.compile(r"[^A-Z0-9]")
-
 
 def normalize_licence_number(raw: str) -> str:
-    """Uppercase, punctuation-stripped licence number -- the form every
-    uniqueness check and lookup in this table uses (see 01-ingest.md's Page
-    Poller step 4). Pure and unit-testable without a database, same pattern
-    as :mod:`dmer_common.db.status`'s transition rules.
+    """Canonical licence number -- the form every uniqueness check and lookup
+    in this table uses (see 01-ingest.md's Page Poller step 4).
+
+    Delegates to :func:`dmer_common.licence.normalize_licence`, the single BC
+    rule shared with Extraction (``dmer_extraction.licence_number_read``): digits
+    only, 7 or 8 long, 7-digit numbers zero-padded to 8. Using one rule is what
+    lets a page-read licence match the driver Ingest created. A BC driver
+    always has a BC licence number, so anything else is bad source data and
+    raises :class:`ValueError` rather than being stored in a form that can
+    never match.
     """
-    return _NON_ALPHANUMERIC.sub("", raw.upper())
+    normalized = normalize_licence(raw)
+    if normalized is None:
+        raise ValueError("not a valid BC driver's licence number")
+    return normalized
 
 
 @dataclass(frozen=True)
@@ -104,7 +112,10 @@ class DriverRepository:
         """Return the driver row for a (not-yet-normalized) licence number, if any."""
         from sqlalchemy import select
 
-        normalized = normalize_licence_number(licence_number)
+        try:
+            normalized = normalize_licence_number(licence_number)
+        except ValueError:
+            return None  # not a valid BC licence: no driver can match it
         async with self._engine.connect() as conn:
             result = await conn.execute(
                 select(

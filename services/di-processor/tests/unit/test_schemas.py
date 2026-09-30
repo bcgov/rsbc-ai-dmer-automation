@@ -112,7 +112,6 @@ def test_combined_extraction_shape():
     # GIVEN a unified combined extraction
     combined = CombinedExtraction(
         document_id="doc-1",
-        correlation_id="case-123",
         processed_at=datetime(2026, 8, 5, 12, 5, tzinfo=UTC),
         fields={"top_level.physician.name": "Dr X", "endocrine.HbA1C": "6.5"},
         uncertain_fields=[],

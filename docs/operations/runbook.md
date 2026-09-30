@@ -3,7 +3,7 @@
 
 ## Daily checks
 
-- Service Bus queue/DLQ depths (`raw-dmer-queue`, `extracted-dmer-queue`, topic subscriptions)
+- Service Bus queue/DLQ depths (`dmer-ingest`, `dmer-raw`, `dmer-extracted`)
 - Application Insights failure rate per service
 - PostgreSQL Flexible Server CPU/storage/connection count
 
