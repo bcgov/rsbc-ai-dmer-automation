@@ -16,17 +16,17 @@ Ported from the ``llm_normalization`` POC, with real changes made on port
   which deterministically standardize di-processor's real
   ``CombinedExtraction.fields`` (flat, every value a string, DI field names)
   into the typed ``{"dmer": {...}}`` shape the rest of this pipeline expects
-  -- the input is standardized, never rejected -- plus an evidence-presence
-  check (:func:`validate_evidence_present`) on the model's findings.
+  -- the input is standardized, never rejected -- plus schema validation of
+  each model call's output and per-value evidence checks (see
+  :func:`normalize_document`).
 - :func:`normalize_document` is new: the single entry point the Normalize
   activity calls, composing every step below in the right order.
 
 Confirmed contracts this module relies on (see git history / PR discussion
 for how these were verified, not assumed):
-- Every checkbox field in ``CombinedExtraction.fields`` arrives as the
-  canonical string ``"true"``/``"false"`` -- confirmed against a real DI
-  response sample and fixed in di-processor's ``top_level.py`` if it
-  wasn't already true for a given field's DI configuration.
+- Every value in ``CombinedExtraction.fields`` is a string; checkboxes
+  arrive as ``"selected"``/``"unselected"`` (a real DI sample), blank, or
+  ``"true"``/``"false"`` -- :func:`_to_bool` accepts all of them.
 - MMSE/MoCA scores are written "x/30" on the source form (confirmed
   against docs/development/stages/07-decision-gateway.md's own example).
 """
@@ -45,8 +45,12 @@ from dateutil import parser as dateparser
 
 from ..openai_client import OpenAIClient
 from ..telemetry import get_logger
-from .errors import NormalizationValidationError, model_object
-from .evidence import validate_derived_values
+from .errors import (  # NormalizationValidationError is part of this module's API
+    InvalidModelOutput,
+    NormalizationValidationError,  # noqa: F401
+    call_model,
+)
+from .evidence import check_evidence
 from .prompts import CATEGORY_SYSTEM_PROMPT, build_analysis_prompt
 from .schema import (
     ALWAYS_ANALYZE_CATEGORIES,
@@ -285,24 +289,24 @@ def categorize_conditions(
     """First LLM call: choose which condition categories need analysis."""
     json_str = json.dumps(slim_json, indent=2)
 
-    raw = openai.complete(
-        messages=[
+    def accept(result: dict) -> list[ConditionCategory]:
+        raw_categories = result.get("categories")
+        if not isinstance(raw_categories, list) or any(
+            not isinstance(c, str) for c in raw_categories
+        ):
+            raise InvalidModelOutput("categories must be a list of strings")
+        return _parse_categories(raw_categories)
+
+    categories = call_model(
+        openai,
+        [
             {"role": "system", "content": CATEGORY_SYSTEM_PROMPT},
             {"role": "user", "content": f"Categorize this DMER JSON:\n\n{json_str}"},
         ],
-        response_format={"type": "json_object"},
         temperature=CATEGORY_TEMPERATURE,
+        accept=accept,
+        step="categorize",
     )
-
-    result = model_object(raw)
-    raw_categories = result.get("categories")
-    if not isinstance(raw_categories, list) or any(
-        not isinstance(c, str) for c in raw_categories
-    ):
-        raise NormalizationValidationError(
-            "Normalization categories must be a list of strings"
-        )
-    categories = _parse_categories(raw_categories)
     seen = set(categories)
     _force_categories_from_keywords(slim_json, categories, seen)
 
@@ -362,38 +366,95 @@ def analyze_condition_category(
 
     category_json = filter_fields_for_category(slim_json, category)
     json_str = json.dumps(category_json, indent=2)
-
-    raw = openai.complete(
-        messages=[
+    return call_model(
+        openai,
+        [
             {"role": "system", "content": build_analysis_prompt(category)},
             {"role": "user", "content": f"Analyze this DMER JSON:\n\n{json_str}"},
         ],
-        response_format={"type": "json_object"},
         temperature=ANALYZE_TEMPERATURE,
+        accept=lambda result: accept_analysis_output(category, result),
+        step=f"analyze:{category.value}",
     )
 
-    result = model_object(raw)
 
-    if "dmer" not in result:
-        result = {"dmer": result}
-    if not isinstance(result["dmer"], dict):
-        raise NormalizationValidationError(
-            "Normalization analysis fields must be an object"
-        )
+def accept_analysis_output(category: ConditionCategory, result: dict) -> dict:
+    """Schema validation of one category's analysis output (docs step 3).
 
+    Values are standardized first, with the same conversion DI input gets
+    ("35%" -> 35, "yes" -> true); only what that can't fix is invalid and
+    retried: a structure that isn't an object, or a known field whose value
+    has nothing convertible in it. Field names are resolved, not retried: a
+    concern companion spelled differently from the schema's maps to the real
+    one (:func:`_resolve_field_name`); any other unknown field, or a real
+    field from another category, is dropped. (The model repeats an invented
+    name on every attempt, so retrying for it only turns the document into
+    poison.)
+    """
+    fields = result.get("dmer", result)
+    if not isinstance(fields, dict):
+        raise InvalidModelOutput("analysis fields must be an object")
     allowed_fields = set(CATEGORY_CONDITIONS[category])
-    filtered: dict = {}
-    for field_name, value in result.get("dmer", {}).items():
-        evidence_parent = field_name.removesuffix("_evidence")
-        if field_name in allowed_fields or evidence_parent in allowed_fields:
-            filtered[field_name] = value
-        else:
+    accepted: dict = {}
+    for raw_name, value in fields.items():
+        is_evidence = raw_name.endswith("_evidence")
+        field = _resolve_field_name(raw_name.removesuffix("_evidence"))
+        if field is None or field not in allowed_fields:
             _log.warning(
-                "ignoring field outside category",
+                "ignoring field not in this category's schema",
                 extra={"category": category.value},
             )
+            continue
+        field_name = f"{field}_evidence" if is_evidence else field
+        if is_evidence:
+            if value is not None:
+                accepted[field_name] = (
+                    value if isinstance(value, str) else json.dumps(value)
+                )
+            continue
+        accepted[field_name] = _standardize_model_value(field, value)
+    return {"dmer": accepted}
 
-    return {"dmer": filtered}
+
+_CONCERN_SUFFIXES = ("_has_concerns", "_has_concern", ".has_concerns")
+
+
+def _resolve_field_name(name: str) -> str | None:
+    """The schema field *name* refers to, or None. A concern companion may be
+    spelled with any of the schema's concern suffixes (e.g. the model's
+    ``traumatic_brain_injury_has_concerns`` is the schema's
+    ``traumatic_brain_injury.has_concerns``)."""
+    if name in CONDITIONS:
+        return name
+    for suffix in _CONCERN_SUFFIXES:
+        if name.endswith(suffix):
+            base = name[: -len(suffix)]
+            for candidate in (base + other for other in _CONCERN_SUFFIXES):
+                if candidate in CONDITIONS:
+                    return candidate
+    return None
+
+
+def _standardize_model_value(field: str, value: object) -> object:
+    field_type = CONDITIONS[field]["type"]
+    if isinstance(value, dict) or (isinstance(value, list) and field != "restrictions"):
+        raise InvalidModelOutput(
+            f"{field}: expected {field_type}, got {type(value).__name__}"
+        )
+    if field_type == "bool":
+        return _to_bool(value)
+    if field_type in ("int", "float"):
+        if _is_blank(value):
+            return None
+        number = (
+            None if isinstance(value, bool) else _parse_number(field, value, field_type)
+        )
+        if number is None:
+            raise InvalidModelOutput(f"{field}: no {field_type} in the value")
+        return number
+    if field == "restrictions":
+        return value
+    return _to_text(value)
 
 
 def _has_non_priority_condition_match(updates: dict) -> bool:
@@ -688,9 +749,8 @@ _NUMBER_PARSERS = {
 _NO_NUMBER_FALLBACK = frozenset({"cardiovascular.nyha_class"})
 
 
-def _to_number(field: str, value: object, field_type: str) -> int | float | None:
-    if _is_blank(value) or isinstance(value, bool):
-        return None
+def _parse_number(field: str, value: object, field_type: str) -> int | float | None:
+    """The number in *value* as *field_type*, or None if there is none."""
     parser = _NUMBER_PARSERS.get(field)
     number = parser(value) if parser else None
     if number is None and field not in _NO_NUMBER_FALLBACK:
@@ -699,9 +759,17 @@ def _to_number(field: str, value: object, field_type: str) -> int | float | None
         elif isinstance(value, str):
             number = _first_number(value)
     if number is None or not math.isfinite(number):
-        _log.warning("unreadable number left blank", extra={"field": field})
         return None
     return round(number) if field_type == "int" else float(number)
+
+
+def _to_number(field: str, value: object, field_type: str) -> int | float | None:
+    if _is_blank(value) or isinstance(value, bool):
+        return None
+    number = _parse_number(field, value, field_type)
+    if number is None:
+        _log.warning("unreadable number left blank", extra={"field": field})
+    return number
 
 
 def _to_text(value: object) -> str:
@@ -953,9 +1021,8 @@ def apply_visual_acuity_thresholds(dmer_result: dict) -> dict:
     does for NYHA/MMSE/MoCA/restrictions).
 
     Sets {field}_evidence (citing the exact source field and resolved
-    denominator) whenever a field is set True, since validate_evidence_present
-    requires it unconditionally for every true boolean CONDITIONS field --
-    this is not optional bookkeeping, normalize_document raises without it.
+    denominator) whenever a field is set True: every true boolean CONDITIONS
+    field without evidence is reported in evidence_flags (missing_evidence).
     A field left False needs no evidence.
     """
     dmer = dmer_result.get("dmer", dmer_result)
@@ -1701,14 +1768,10 @@ def apply_rule_engine_input_formats(dmer_result: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def validate_evidence_present(dmer: dict) -> None:
-    """Raise :class:`NormalizationValidationError` if a true boolean field
-    is missing its ``{field}_evidence`` non-blank string.
-
-    This is the deterministic presence/type check. Source support for
-    model-derived values is checked separately by validate_derived_values.
-    """
-    missing = [
+def missing_evidence(dmer: dict) -> list[str]:
+    """True boolean fields without a non-blank ``{field}_evidence`` string.
+    Each becomes an evidence flag; the value itself is kept."""
+    return [
         field_name
         for field_name, cfg in CONDITIONS.items()
         if cfg["type"] == "bool"
@@ -1718,11 +1781,6 @@ def validate_evidence_present(dmer: dict) -> None:
             or not dmer[f"{field_name}_evidence"].strip()
         )
     ]
-    if missing:
-        raise NormalizationValidationError(
-            f"{len(missing)} true field(s) missing required evidence: "
-            + ", ".join(missing[:10])
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -1737,17 +1795,22 @@ def normalize_document(
     Normalize activity calls.
 
     *extracted_fields* is di-processor's ``CombinedExtraction.fields``
-    (flat, every checkbox a canonical "true"/"false" string -- see
+    (flat, every value a string, checkboxes "selected"/"unselected" -- see
     :func:`adapt_combined_fields`). Returns the final normalized dmer dict,
     unwrapped (not the ``{"dmer": ...}`` envelope) -- the caller decides
     how to store it.
 
-    Input is never rejected for its shape or types: DI output is
-    standardized (adapt_combined_fields, standardize_field_types), not
-    validated. Raises :class:`NormalizationValidationError` only when the
-    model's own findings fail the evidence checks -- poison, not transient (see failure-handling in
-    docs/development/stages/04-activity-normalize.md); the caller should
-    route the document to MANUAL_REVIEW rather than retry.
+    The two validations in docs/development/stages/04-activity-normalize.md:
+
+    - Schema validation (step 3) applies to the model's output only, per
+      call (:func:`accept_analysis_output`). DI input is standardized, never
+      validated.
+    - Evidence validation (step 4) is per value (:func:`check_evidence`): a
+      value that fails is kept and recorded in ``evidence_flags``.
+
+    Raises :class:`NormalizationValidationError` only when a model call's
+    output still fails schema validation after its retries -- poison, not
+    transient; the caller should route the document to MANUAL_REVIEW.
     """
     dmer_input = flag_monocular_from_bad_eye(adapt_combined_fields(extracted_fields))
     updates = analyze_conditions(openai, dmer_input)
@@ -1777,13 +1840,22 @@ def normalize_document(
             and dmer.get(field) is True
         ):
             dmer.setdefault(f"{field}_evidence", f"{field}: true")
-    validate_evidence_present(dmer)
-    validate_derived_values(openai, dmer_input["dmer"], updates["dmer"], dmer)
+    flags = [
+        {
+            "field": field,
+            "check": "missing_evidence",
+            "reason": "true value has no evidence",
+        }
+        for field in missing_evidence(dmer)
+    ]
+    flags += check_evidence(openai, dmer_input["dmer"], updates["dmer"], dmer)
+    dmer["evidence_flags"] = flags
 
     _log.info(
         "normalization complete",
         extra={
             "field_count": len(dmer),
+            "evidence_flag_count": len(flags),
             "no_other_conditions": dmer.get("no_other_conditions"),
             "guide_with_no_matching_condition": dmer.get(
                 "guide_with_no_matching_condition"

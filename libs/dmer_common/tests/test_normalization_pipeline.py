@@ -8,7 +8,8 @@ Pure functions (or functions operating on an already-built dict) -- no
 Azure OpenAI call is made, so this file needs no credentials and always
 runs (ported from the llm_normalization POC's
 test_deterministic_normalization.py, plus new tests for the pieces added
-on port: adapt_combined_fields, standardize_field_types, validate_evidence_present).
+on port: adapt_combined_fields, standardize_field_types, model-output validation
+and the evidence checks).
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ from __future__ import annotations
 import pytest
 from dmer_common.normalization.pipeline import (
     NormalizationValidationError,
+    accept_analysis_output,
     adapt_combined_fields,
     apply_rule_engine_input_formats,
     apply_visual_acuity_thresholds,
@@ -24,6 +26,7 @@ from dmer_common.normalization.pipeline import (
     check_guide_matching,
     check_no_other_conditions,
     derive_other_psych_diagnosis,
+    missing_evidence,
     normalize_dates,
     normalize_restrictions,
     parse_aneurysm_size_cm,
@@ -36,7 +39,6 @@ from dmer_common.normalization.pipeline import (
     parse_visual_acuity_denominator,
     resolve_conflicts,
     standardize_field_types,
-    validate_evidence_present,
 )
 
 # ---------------------------------------------------------------------------
@@ -1018,19 +1020,158 @@ def test_blank_di_document_has_no_conditions(monkeypatch):
     assert result["non_vision_condition_indicated"] is False
 
 
-def test_validate_evidence_present_raises_when_missing():
-    with pytest.raises(NormalizationValidationError):
-        validate_evidence_present({"vision.cataracts": True})
+# ---------------------------------------------------------------------------
+# Step 3 -- schema validation of the model's output (standardize, then retry)
+# ---------------------------------------------------------------------------
 
 
-def test_validate_evidence_present_passes_when_present():
-    validate_evidence_present(
-        {"vision.cataracts": True, "vision.cataracts_evidence": "form says cataracts"}
-    )  # must not raise
+def test_model_output_is_standardized_before_it_is_validated():
+    from dmer_common.normalization.schema import ConditionCategory
+
+    out = accept_analysis_output(
+        ConditionCategory.CARDIOVASCULAR,
+        {
+            "dmer": {
+                "cardiovascular.lvef": "35%",
+                "cardiovascular.cad": "yes",
+                "cardiovascular.cad_evidence": 'details_of_condition: "CAD"',
+            }
+        },
+    )["dmer"]
+    assert out["cardiovascular.lvef"] == 35
+    assert out["cardiovascular.cad"] is True
+    assert out["cardiovascular.cad_evidence"] == 'details_of_condition: "CAD"'
 
 
-def test_validate_evidence_present_ignores_false_fields():
-    validate_evidence_present({"vision.cataracts": False})  # must not raise
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"cardiovascular.lvef": "severe"},  # nothing convertible in a number field
+        {"cardiovascular.cad": {"nested": True}},  # wrong shape
+    ],
+)
+def test_model_output_that_cant_be_standardized_is_invalid(fields):
+    from dmer_common.normalization.errors import InvalidModelOutput
+    from dmer_common.normalization.schema import ConditionCategory
+
+    with pytest.raises(InvalidModelOutput):
+        accept_analysis_output(ConditionCategory.CARDIOVASCULAR, {"dmer": fields})
+
+
+def test_an_invented_field_name_is_dropped_not_retried():
+    from dmer_common.normalization.schema import ConditionCategory
+
+    out = accept_analysis_output(
+        ConditionCategory.CNS, {"dmer": {"cns.epilepsy": True, "cns.epilepsy_has_concerns": True}}
+    )
+    assert out == {"dmer": {"cns.epilepsy": True}}
+
+
+def test_a_concern_spelled_differently_maps_to_the_schema_field():
+    from dmer_common.normalization.schema import ConditionCategory
+
+    out = accept_analysis_output(
+        ConditionCategory.TRAUMATIC_BRAIN_INJURY,
+        {"dmer": {"traumatic_brain_injury_has_concerns": True,
+                  "traumatic_brain_injury_has_concerns_evidence": 'details_of_condition: "x"'}},
+    )["dmer"]
+    assert out == {"traumatic_brain_injury.has_concerns": True,
+                   "traumatic_brain_injury.has_concerns_evidence": 'details_of_condition: "x"'}
+
+
+def test_a_real_field_from_another_category_is_dropped_not_retried():
+    from dmer_common.normalization.schema import ConditionCategory
+
+    out = accept_analysis_output(
+        ConditionCategory.CARDIOVASCULAR, {"dmer": {"vision.cataracts": True}}
+    )
+    assert out == {"dmer": {}}
+
+
+def test_invalid_model_output_is_retried_then_accepted():
+    from unittest.mock import Mock
+
+    from dmer_common.normalization.pipeline import categorize_conditions
+
+    client = Mock()
+    client.complete.side_effect = [
+        "not json",
+        '{"categories": "vision"}',
+        '{"categories": ["vision"]}',
+    ]
+    categories = categorize_conditions(client, {"dmer": {}})
+    assert client.complete.call_count == 3
+    assert "vision" in [c.value for c in categories]
+
+
+def test_model_output_still_invalid_after_retries_is_a_sanitized_validation_error():
+    from unittest.mock import Mock
+
+    from dmer_common.normalization.errors import MODEL_ATTEMPTS
+    from dmer_common.normalization.pipeline import categorize_conditions
+
+    client = Mock()
+    client.complete.return_value = "private model response"
+    with pytest.raises(NormalizationValidationError) as error:
+        categorize_conditions(client, {"dmer": {}})
+    assert client.complete.call_count == MODEL_ATTEMPTS
+    assert "private model response" not in str(error.value)
+
+
+# ---------------------------------------------------------------------------
+# Step 4 -- evidence: per value, keep and flag
+# ---------------------------------------------------------------------------
+
+
+def test_missing_evidence_lists_true_fields_without_evidence():
+    assert missing_evidence({"vision.cataracts": True}) == ["vision.cataracts"]
+    assert (
+        missing_evidence(
+            {"vision.cataracts": True, "vision.cataracts_evidence": "x: y"}
+        )
+        == []
+    )
+    assert missing_evidence({"vision.cataracts": False}) == []
+
+
+@pytest.mark.parametrize(
+    "evidence,expected",
+    [
+        ('details_of_condition: "Drop attacks."', True),
+        ("details_of_condition: Drop attacks", True),  # no quote marks
+        ('details_of_condition: "DROP  ATTACKS"', True),  # case and spacing
+        ('details_of_condition: "Drop attaks"', True),  # small OCR difference
+        (
+            'details_of_condition: "a diagnosed tumor, a significant condition"',
+            False,
+        ),  # commentary
+        ('details_of_condition: "Drop attacks. *********."', False),  # not the text
+        ("vestibular.drop_attacks: true", True),  # ticked checkbox
+        ('psychiatric.other: "severe depression"', False),  # field is blank
+    ],
+)
+def test_quote_check(evidence, expected):
+    from dmer_common.normalization.evidence import quote_found
+
+    source = {
+        "details_of_condition": "Traumatic brain injury. Drop attacks.",
+        "vestibular.drop_attacks": True,
+        "psychiatric.other": "",
+    }
+    assert quote_found(evidence, source) is expected
+
+
+def test_only_claims_are_checked_not_false_or_blank_values():
+    from dmer_common.normalization.evidence import _claims
+
+    updates = {
+        "cns.dementia_has_concern": False,
+        "cns.other": "",
+        "cns.dementia": True,
+        "cns.dementia_evidence": 'details_of_condition: "Dementia."',
+    }
+    claims = _claims({"details_of_condition": "Dementia."}, updates, updates)
+    assert set(claims) == {"cns.dementia"}
 
 
 # Source-grounding boundary: controlled analysis output, separate verifier call.
@@ -1067,12 +1208,13 @@ def test_normalization_verifies_derived_conditions_and_score_against_original_so
     result = pipeline.normalize_document(client, fields)
     assert result["details_of_condition"] == fields["details_of_condition"]
     assert result["cns.moca_score"] == 26
+    assert result["evidence_flags"] == []
     request = json.loads(client.complete.call_args.kwargs["messages"][1]["content"])
     assert request["source_fields"]["cns.moca_score"] == "26/30"
     assert request["candidates"]["cns.moca_score"]["value"] == 26
 
 
-def test_nonblank_evidence_does_not_bypass_source_verification(monkeypatch):
+def test_unsupported_value_is_kept_and_flagged_not_rejected(monkeypatch):
     from unittest.mock import Mock
 
     from dmer_common.normalization import pipeline
@@ -1089,25 +1231,35 @@ def test_nonblank_evidence_does_not_bypass_source_verification(monkeypatch):
     )
     client = Mock()
     client.complete.return_value = '{"supported": {"vision.cataracts": false}}'
-    with pytest.raises(NormalizationValidationError, match="unsupported"):
-        pipeline.normalize_document(client, {"details_of_condition": "No cataracts"})
+    result = pipeline.normalize_document(
+        client, {"details_of_condition": "No cataracts"}
+    )
+    assert result["vision.cataracts"] is True
+    checks = {(f["field"], f["check"]) for f in result["evidence_flags"]}
+    assert checks == {("vision.cataracts", "quote"), ("vision.cataracts", "support")}
 
 
-def test_grounding_requires_complete_boolean_verdicts():
+def test_incomplete_verdicts_are_retried_then_flagged():
     from unittest.mock import Mock
 
-    from dmer_common.normalization.evidence import validate_derived_values
+    from dmer_common.normalization.errors import MODEL_ATTEMPTS
+    from dmer_common.normalization.evidence import check_evidence
 
     client = Mock()
-    source = {"details_of_condition": "synthetic narrative"}
+    source = {"details_of_condition": "cataracts, extracted"}
     proposed = {"vision.cataracts": True, "vision.cataracts_had_surgery": True}
     for response in (
         '{"supported": {"vision.cataracts": true}}',
         '{"supported": {"vision.cataracts": "true", "vision.cataracts_had_surgery": true}}',
     ):
+        client.reset_mock()
         client.complete.return_value = response
-        with pytest.raises(NormalizationValidationError, match="verdicts"):
-            validate_derived_values(client, source, proposed, proposed)
+        flags = check_evidence(client, source, proposed, proposed)
+        assert client.complete.call_count == MODEL_ATTEMPTS
+        assert {(f["field"], f["check"]) for f in flags} == {
+            ("vision.cataracts", "support"),
+            ("vision.cataracts_had_surgery", "support"),
+        }
 
 
 def test_unchanged_checked_source_field_gets_direct_evidence_without_verifier(
@@ -1119,21 +1271,11 @@ def test_unchanged_checked_source_field_gets_direct_evidence_without_verifier(
 
     monkeypatch.setattr(pipeline, "analyze_conditions", lambda *_: {"dmer": {}})
     client = Mock()
-    result = pipeline.normalize_document(client, {"vision.cataracts": "true"})
+    result = pipeline.normalize_document(client, {"vision.cataracts": "selected"})
+    assert result["vision.cataracts"] is True
     assert result["vision.cataracts_evidence"] == "vision.cataracts: true"
+    assert result["evidence_flags"] == []
     client.complete.assert_not_called()
-
-
-def test_malformed_model_json_is_a_sanitized_validation_error():
-    from unittest.mock import Mock
-
-    from dmer_common.normalization.pipeline import categorize_conditions
-
-    client = Mock()
-    client.complete.return_value = "private model response"
-    with pytest.raises(NormalizationValidationError) as error:
-        categorize_conditions(client, {"dmer": {}})
-    assert "private model response" not in str(error.value)
 
 
 def test_eye_nerve_palsy_concern_is_analyzed_with_vision_and_requires_evidence():
@@ -1143,8 +1285,7 @@ def test_eye_nerve_palsy_concern_is_analyzed_with_vision_and_requires_evidence()
     field = "vision.eye_nerve_palsy_has_concerns"
     assert field in CATEGORY_CONDITIONS[ConditionCategory.VISION]
     assert field in build_analysis_prompt(ConditionCategory.VISION)
-    with pytest.raises(NormalizationValidationError):
-        validate_evidence_present({"vision.eye_nerve_palsy": False, field: True})
+    assert missing_evidence({"vision.eye_nerve_palsy": False, field: True}) == [field]
 
 
 # ---------------------------------------------------------------------------

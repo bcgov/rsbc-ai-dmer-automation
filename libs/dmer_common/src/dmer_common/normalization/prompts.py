@@ -26,26 +26,71 @@ from .schema import (
 
 # Suffixes that mark helper / modifier fields not useful as routing hints
 _INDEX_SKIP_SUFFIXES: tuple[str, ...] = (
-    "_has_concerns", "_has_concern", "_evidence",
-    "_date", "_cause", "_type", "_site", "_size",
-    "_details", "_class", "_years", "_score",
+    "_has_concerns",
+    "_has_concern",
+    "_evidence",
+    "_date",
+    "_cause",
+    "_type",
+    "_site",
+    "_size",
+    "_details",
+    "_class",
+    "_years",
+    "_score",
 )
 # Local names that are structural, not condition names
-_INDEX_SKIP_LOCALS: frozenset[str] = frozenset({
-    "other", "yes", "no", "maybe", "details", "score",
-    "date", "type", "site", "size", "cause", "class",
-})
+_INDEX_SKIP_LOCALS: frozenset[str] = frozenset(
+    {
+        "other",
+        "yes",
+        "no",
+        "maybe",
+        "details",
+        "score",
+        "date",
+        "type",
+        "site",
+        "size",
+        "cause",
+        "class",
+    }
+)
 # Description starters that indicate instructions, not keyword lists.
 # These are excluded from the categorization index but kept in field
 # descriptions for the second-stage analysis LLM.
 _INSTRUCTION_STARTERS: tuple[str, ...] = (
-    "check ", "if ", "set ", "only ", "look ", "use ", "apply",
-    "for ", "when ", "map ", "normalize", "recognize", "treat ",
-    "focus ", "separate ", "extract ", "note:", "important:",
-    "critical:", "rule", "based on", "must", "apply rules",
-    "do not", "do NOT",
+    "check ",
+    "if ",
+    "set ",
+    "only ",
+    "look ",
+    "use ",
+    "apply",
+    "for ",
+    "when ",
+    "map ",
+    "normalize",
+    "recognize",
+    "treat ",
+    "focus ",
+    "separate ",
+    "extract ",
+    "note:",
+    "important:",
+    "critical:",
+    "rule",
+    "based on",
+    "must",
+    "apply rules",
+    "do not",
+    "do NOT",
     # Visual acuity threshold computation instructions
-    "corrected only", "both-eyes", "better eye", "worse eye", "e.g.",
+    "corrected only",
+    "both-eyes",
+    "better eye",
+    "worse eye",
+    "e.g.",
 )
 
 
@@ -121,12 +166,14 @@ def build_response_example(conditions: dict[str, dict]) -> str:
         None,
     )
 
-    lines = ['{', '  "dmer": {']
+    lines = ["{", '  "dmer": {']
     if bool_field:
-        lines.extend([
-            f'    "{bool_field}": true,',
-            f'    "{bool_field}_evidence": "field_name: exact supporting text"',
-        ])
+        lines.extend(
+            [
+                f'    "{bool_field}": true,',
+                f'    "{bool_field}_evidence": "source_field: \\"exact text copied from that field\\""',
+            ]
+        )
         if value_field:
             lines[-1] += ","
     if value_field:
@@ -199,7 +246,11 @@ def build_analysis_prompt(category: ConditionCategory) -> str:
     conditions_list = build_conditions_list(conditions)
     response_example = build_response_example(conditions)
     category_instruction = CATEGORY_INSTRUCTIONS.get(category, "")
-    extra = f"\nCategory-specific guidance:\n{category_instruction}\n" if category_instruction else ""
+    extra = (
+        f"\nCategory-specific guidance:\n{category_instruction}\n"
+        if category_instruction
+        else ""
+    )
     visual_acuity_exception = (
         "EXCEPTION: return ALL visual_acuity thresholds if ANY acuity exists.\n"
         if category is ConditionCategory.VISUAL_ACUITY
@@ -219,6 +270,8 @@ You MUST carefully read and extract conditions from ALL free-text fields, includ
 READ ENTIRE SENTENCES FULLY to understand context and causality. DO NOT isolate keywords. If a symptom is explicitly caused by a primary disease
 (e.g., "symptom X due to disease Y", or "patient has disease X and symptom Y"), it is ONLY a concern for that primary disease (setting its _has_concerns to TRUE). NEVER flag secondary symptoms as separate independent conditions.
 Set the corresponding boolean field(s) to true for EVERY independent medical condition, diagnosis, or procedure mentioned — a single details_of_condition entry can and often does name more than one distinct condition; extract all of them, not just the first or most prominent one.
+Only set a condition the text actually names (or a recognized synonym/abbreviation of it). Do NOT infer one condition from a different one -- e.g. drop attacks are not narcolepsy or cataplexy, a seizure is not syncope.
+Do NOT copy details_of_condition into any ".other" field. Set a ".other" field only to the words naming a condition in this category that has no field of its own.
 
 CRITICAL — OCR/handwriting corrections:
 This text was OCR'd from handwritten and typed clinical forms and may contain cut-off words (a form field or line boundary truncating text mid-word), misread characters (e.g. a digit misread as a letter or vice versa, or a similar-looking letter substituted for the correct one), and handwriting-specific artifacts. When a term is clearly a garbled/cut-off version of a recognizable medical word once read in context (surrounding words, the field's own description, common abbreviations), interpret it as that corrected word rather than treating it as unrecognized or ignoring it. Do not invent a condition that isn't actually supported by the text — only correct text you can confidently identify as a misread/cut-off form of a real medical term.
@@ -234,6 +287,7 @@ Do NOT set _has_concerns to TRUE if the ONLY additional text is a quantitative m
 
 When in doubt about QUALITATIVE descriptive narrative, ALWAYS err on the side of TRUE.
 CRITICAL: If the text MERELY NAMES OR LISTS the condition (e.g., "Patient has vertigo" or "Diagnosis: strabismus") with NO extra descriptive details, leave _has_concerns FALSE. The mere mention/existence of a condition sets the parent condition to TRUE, but it is NOT a concern by itself. The condition field CAN and OFTEN WILL be true while its _has_concerns companion remains false.
+For example, "Brain tumor.", "On dialysis.", "Cognitive impairment." and "Aortic stenosis, stable." each set the condition true and leave its _has_concerns FALSE. Being on treatment is not a concern by itself.
 If the parent condition is true but lacks ANY descriptive context/concern (other than its existence or mapped measurements), leave _has_concerns false.
 AMBIGUITY: If concerns in text could plausibly apply to multiple true parent conditions in the same category, set _has_concerns to true for ALL of them.
 
@@ -255,7 +309,7 @@ For each field, determine if the provided data supports setting it.
 Common medical abbreviations: PT=patient, W.=with, Hx=history, c/o=complains of, R/O=rule out.
 
 RULE — Evidence:
-EVERY SINGLE bool set to true MUST have its own separate corresponding "{{field_name}}_evidence" string quoting the exact justification.
+EVERY SINGLE bool set to true MUST have its own separate corresponding "{{field_name}}_evidence" string in the form source_field: "exact text" -- the name of the input field it came from, then the words copied EXACTLY as they appear there (OCR errors included). Never paraphrase, summarize, or add commentary. A checked checkbox is quoted as checkbox_field: true.
 CRITICAL MINIMUM REQUIREMENT: If you set BOTH a parent condition to true AND its `_has_concerns` companion to true, you MUST generate TWO SEPARATE evidence fields (e.g., one for `vision.strabismus_evidence` AND one for `vision.strabismus_has_concerns_evidence`). Never omit the evidence for the `_has_concerns` field! Non-bools need no evidence.
 
 
