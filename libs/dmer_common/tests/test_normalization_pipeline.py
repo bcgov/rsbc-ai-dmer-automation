@@ -1257,9 +1257,87 @@ def test_incomplete_verdicts_are_retried_then_flagged():
         flags = check_evidence(client, source, proposed, proposed)
         assert client.complete.call_count == MODEL_ATTEMPTS
         assert {(f["field"], f["check"]) for f in flags} == {
-            ("vision.cataracts", "support"),
-            ("vision.cataracts_had_surgery", "support"),
+            ("vision.cataracts", "support_unavailable"),
+            ("vision.cataracts_had_surgery", "support_unavailable"),
         }
+
+
+def test_unsupported_llm_concern_is_reverted_condition_is_kept(monkeypatch):
+    from unittest.mock import Mock
+
+    from dmer_common.normalization import pipeline
+
+    monkeypatch.setattr(
+        pipeline,
+        "analyze_conditions",
+        lambda *_: {
+            "dmer": {
+                "cns.intracranial_tumors": True,
+                "cns.intracranial_tumors_evidence": 'details_of_condition: "Brain tumor."',
+                "cns.intracranial_tumors_has_concerns": True,
+                "cns.intracranial_tumors_has_concerns_evidence": 'details_of_condition: "Brain tumor."',
+            }
+        },
+    )
+    client = Mock()
+    client.complete.return_value = (
+        '{"supported": {"cns.intracranial_tumors": true, '
+        '"cns.intracranial_tumors_has_concerns": false}}'
+    )
+    result = pipeline.normalize_document(client, {"details_of_condition": "Brain tumor."})
+    assert result["cns.intracranial_tumors"] is True
+    assert result["cns.intracranial_tumors_has_concerns"] is False
+    assert "cns.intracranial_tumors_has_concerns_evidence" not in result
+    assert result["evidence_flags"] == [
+        {"field": "cns.intracranial_tumors_has_concerns", "check": "support",
+         "reason": "source does not support the value", "action": "reverted"}
+    ]
+
+
+def test_concern_the_support_check_could_not_judge_is_kept():
+    from dmer_common.normalization.pipeline import revert_unsupported_concerns
+
+    dmer = {"cns.parkinsons_has_concerns": True}
+    flags = [{"field": "cns.parkinsons_has_concerns", "check": "support_unavailable", "reason": "x"}]
+    revert_unsupported_concerns(dmer, {}, {"cns.parkinsons_has_concerns": True}, flags)
+    assert dmer["cns.parkinsons_has_concerns"] is True
+    assert flags[0]["action"] == "kept"
+
+
+def test_concern_from_the_source_form_is_never_reverted():
+    from dmer_common.normalization.pipeline import revert_unsupported_concerns
+
+    dmer = {"priority.has_concerns": True}
+    flags = [{"field": "priority.has_concerns", "check": "support", "reason": "x"}]
+    revert_unsupported_concerns(dmer, {"priority.has_concerns": True}, {"priority.has_concerns": True}, flags)
+    assert dmer["priority.has_concerns"] is True
+
+
+@pytest.mark.parametrize(
+    "text,category",
+    [
+        ("MVP noted on echo.", "cardiovascular"),
+        ("Permanent pacemaker.", "cardiovascular"),
+        ("Hernia.", "general"),
+        ("Spina bifida.", "musculoskeletal"),
+        ("Crohns disease", "general"),
+    ],
+)
+def test_routing_backstop_adds_a_category_named_in_the_text(text, category):
+    from dmer_common.normalization.pipeline import _force_categories_from_schema_terms
+
+    categories, seen = [], set()
+    _force_categories_from_schema_terms({"dmer": {"details_of_condition": text}}, categories, seen)
+    assert category in [c.value for c in categories]
+
+
+@pytest.mark.parametrize("text", ["ms. smith has a cold", "Patient is doing well."])
+def test_routing_backstop_ignores_ordinary_words(text):
+    from dmer_common.normalization.pipeline import _force_categories_from_schema_terms
+
+    categories, seen = [], set()
+    _force_categories_from_schema_terms({"dmer": {"details_of_condition": text}}, categories, seen)
+    assert categories == []
 
 
 def test_unchanged_checked_source_field_gets_direct_evidence_without_verifier(

@@ -51,7 +51,13 @@ from .errors import (  # NormalizationValidationError is part of this module's A
     call_model,
 )
 from .evidence import check_evidence
-from .prompts import CATEGORY_SYSTEM_PROMPT, build_analysis_prompt
+from .prompts import (
+    _INDEX_SKIP_LOCALS,
+    _INDEX_SKIP_SUFFIXES,
+    _INSTRUCTION_STARTERS,
+    CATEGORY_SYSTEM_PROMPT,
+    build_analysis_prompt,
+)
 from .schema import (
     ALWAYS_ANALYZE_CATEGORIES,
     CATEGORY_CONDITIONS,
@@ -309,6 +315,7 @@ def categorize_conditions(
     )
     seen = set(categories)
     _force_categories_from_keywords(slim_json, categories, seen)
+    _force_categories_from_schema_terms(slim_json, categories, seen)
 
     _log.info(
         "categories selected",
@@ -1136,6 +1143,56 @@ def _force_categories_from_keywords(
         seen.add(category)
 
 
+def _schema_term_patterns() -> list[tuple[re.Pattern, ConditionCategory, str]]:
+    """Whole-word patterns for every condition term the schema names: each
+    boolean field's own name and the keywords in its description -- the same
+    terms the categorization prompt's field index is built from. A short
+    all-caps term (an abbreviation like "MVP") only matches in capitals."""
+    patterns = []
+    for category, fields in CATEGORY_CONDITIONS.items():
+        if category in ALWAYS_ANALYZE_CATEGORIES:
+            continue
+        terms: set[str] = set()
+        for field, cfg in fields.items():
+            if cfg["type"] != "bool" or field.endswith(_INDEX_SKIP_SUFFIXES):
+                continue
+            local = field.rsplit(".", 1)[-1]
+            if local not in _INDEX_SKIP_LOCALS and len(local) >= 5:
+                terms.add(local.replace("_", " "))
+            desc = cfg.get("description", "").strip()
+            if desc and len(desc) <= 120 and not desc.lower().startswith(_INSTRUCTION_STARTERS):
+                for kw in desc.split(","):
+                    kw = kw.strip().rstrip(".")
+                    if len(kw) >= 4 or (kw.isupper() and len(kw) >= 2):
+                        terms.add(kw)
+        for term in terms:
+            body = r"[\s\-]+".join(re.escape(word) for word in term.split()).replace("\\'", "'?")
+            flags = 0 if term.isupper() and len(term) <= 4 else re.IGNORECASE
+            patterns.append((re.compile(rf"\b{body}\b", flags), category, term))
+    return patterns
+
+
+_SCHEMA_TERM_PATTERNS = _schema_term_patterns()
+
+
+def _force_categories_from_schema_terms(
+    slim_json: dict,
+    categories: list[ConditionCategory],
+    seen: set[ConditionCategory],
+) -> None:
+    """Deterministic routing backstop: add any category whose condition
+    terms appear in the written text. Routing a category in only costs an
+    analysis call (which still decides); missing one means its conditions
+    are never looked for. Modifies *categories* and *seen* in-place."""
+    dmer = slim_json.get("dmer", slim_json)
+    text = "\n".join(v for v in dmer.values() if isinstance(v, str))
+    for pattern, category, term in _SCHEMA_TERM_PATTERNS:
+        if category not in seen and pattern.search(text):
+            _log.info("schema-term-forced category", extra={"category": category.value, "term": term})
+            categories.append(category)
+            seen.add(category)
+
+
 def analyze_conditions(openai: OpenAIClient, dmer_json: dict) -> dict:
     """Analyze DMER JSON with LLM — conditions list is in the prompt, not response_format."""
     slim_json = extract_llm_fields(dmer_json)
@@ -1768,6 +1825,35 @@ def apply_rule_engine_input_formats(dmer_result: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 
+def revert_unsupported_concerns(
+    dmer: dict, source: dict, updates: dict, flags: list[dict]
+) -> None:
+    """Set back a concern the analysis model set when it fails an evidence
+    check (no evidence, quote not in the source, or not supported).
+
+    A concern belongs to its own condition -- another condition on the DMER
+    only counts when the text links them -- and concern flags are where the
+    model over-reaches. Conditions and values stay as set (flagged only); a
+    concern from the source form, or one the support check could not judge,
+    is kept. Every flag is labelled ``action``: "reverted" or "kept".
+    """
+    reverted = set()
+    for flag in flags:
+        field = flag["field"]
+        if (
+            _is_concern_field(field)
+            and field in updates
+            and flag["check"] != "support_unavailable"
+            and dmer.get(field) is True
+            and source.get(field) is not True
+        ):
+            dmer[field] = False
+            dmer.pop(f"{field}_evidence", None)
+            reverted.add(field)
+    for flag in flags:
+        flag["action"] = "reverted" if flag["field"] in reverted else "kept"
+
+
 def missing_evidence(dmer: dict) -> list[str]:
     """True boolean fields without a non-blank ``{field}_evidence`` string.
     Each becomes an evidence flag; the value itself is kept."""
@@ -1849,6 +1935,7 @@ def normalize_document(
         for field in missing_evidence(dmer)
     ]
     flags += check_evidence(openai, dmer_input["dmer"], updates["dmer"], dmer)
+    revert_unsupported_concerns(dmer, dmer_input["dmer"], updates["dmer"], flags)
     dmer["evidence_flags"] = flags
 
     _log.info(

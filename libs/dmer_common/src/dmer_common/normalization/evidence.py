@@ -38,6 +38,8 @@ Use the original source, not another candidate, as evidence. A plausible diagnos
 or fabricated quotation is insufficient. Respect negation, history, and causality;
 do not turn symptoms caused by a primary disease into independent diagnoses.
 Recognizable abbreviations and unambiguous OCR corrections are acceptable.
+A condition named by its field name or by any synonym or keyword in its definition's
+description is supported by that mention (e.g. "fainting" supports syncope).
 Numbers, scores, and dates must agree with the source after format conversion.
 A partial source date (year or month only) is resolved to the latest day of
 that period, e.g. "2025" -> 2025-12-31; that resolution is supported.
@@ -198,7 +200,7 @@ def _support_flags(openai: OpenAIClient, source: dict, claims: dict) -> list[dic
         return [
             {
                 "field": field,
-                "check": "support",
+                "check": "support_unavailable",
                 "reason": "support check could not be completed",
             }
             for field in claims
