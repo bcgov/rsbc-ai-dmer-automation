@@ -12,9 +12,13 @@ from typing import Any
 from urllib.parse import urlparse
 
 from azure.identity import DefaultAzureCredential
+from azure.storage.blob import BlobClient as _SdkBlobClient
 from azure.storage.blob import BlobServiceClient, ContentSettings
 
 _JSON_CONTENT = ContentSettings(content_type="application/json")
+
+# Only Azure Blob endpoints may receive this client's Managed Identity token.
+_BLOB_HOST_SUFFIX = ".blob.core.windows.net"
 
 
 class BlobClient:
@@ -31,9 +35,10 @@ class BlobClient:
 
     def __init__(self, account_url: str, credential: Any | None = None) -> None:
         self._account_url = account_url.rstrip("/")
+        self._credential = credential or DefaultAzureCredential()
         self._service = BlobServiceClient(
             account_url=self._account_url,
-            credential=credential or DefaultAzureCredential(),
+            credential=self._credential,
         )
 
     def blob_url(self, container: str, path: str) -> str:
@@ -41,9 +46,27 @@ class BlobClient:
         return f"{self._account_url}/{container}/{path.lstrip('/')}"
 
     def download(self, uri: str) -> bytes:
-        """Download a blob by full URL (``https://.../container/path``)."""
+        """Download a blob by full URL (``https://<account>.blob.core.windows.net/container/path``).
+
+        The URL's own storage account is used -- it may differ from this
+        client's account (e.g. Ingest writes source PDFs to another account).
+        Only ``https`` Azure Blob URLs are accepted, so the Managed Identity
+        token is never sent to any other host.
+        """
         container, path = self._split_uri(uri)
-        blob = self._service.get_blob_client(container=container, blob=path)
+        parsed = urlparse(uri)
+        host = (parsed.hostname or "").lower()
+        if parsed.scheme != "https" or not host.endswith(_BLOB_HOST_SUFFIX):
+            raise ValueError("Not an https Azure Blob Storage URL")
+        if f"https://{host}" == self._account_url.lower():
+            blob = self._service.get_blob_client(container=container, blob=path)
+        else:
+            blob = _SdkBlobClient(
+                account_url=f"https://{host}",
+                container_name=container,
+                blob_name=path,
+                credential=self._credential,
+            )
         return blob.download_blob().readall()
 
     def upload_json(self, container: str, path: str, obj: Any) -> str:
