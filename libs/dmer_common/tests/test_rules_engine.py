@@ -24,6 +24,7 @@ from dmer_common.normalization.pipeline import (
     check_diabetes_guide_9_1,
     check_diabetes_treatment_not_indicated,
     check_no_other_conditions,
+    derive_other_psych_diagnosis,
     flag_monocular_from_bad_eye,
     flag_progressive_eye_condition,
 )
@@ -88,6 +89,7 @@ def normalize(dmer: dict) -> dict:
         apply_visual_acuity_thresholds,
         flag_monocular_from_bad_eye,
         flag_progressive_eye_condition,
+        derive_other_psych_diagnosis,
         check_no_other_conditions,
         check_diabetes_guide_9_1,
         check_diabetes_treatment_not_indicated,
@@ -623,19 +625,19 @@ ROWS = [  # (label, table, row, licence, fields, expected)
         True,
     ),
     (
-        "other psych diagnosis (text), stable/compliant",
+        "other psych diagnosis, stable/compliant",
         "Psychiatric Disorders",
         23,
         N,
         {
-            "psychiatric.other_psych_diagnosis": "schizoaffective disorder",
+            "psychiatric.other_psych_diagnosis": True,
             "psychiatric.stable_condition": True,
             "psychiatric.compliant_with_treatment": True,
         },
         True,
     ),
     (
-        "other psych diagnosis empty",
+        "no other psych diagnosis",
         "Psychiatric Disorders",
         23,
         N,
@@ -2381,6 +2383,32 @@ EDGE_ROWS = [  # (label, table, row, licence, fields, expected)
         N,
         {"musculoskeletal.paraplegia": True, "restrictions": [25]},
         True,
+    ),
+    # other_psych_diagnosis is the catch-all for a written diagnosis that isn't a named one
+    (
+        "written 'schizoaffective disorder' -> R23 CP via other psych diagnosis",
+        "Psychiatric Disorders",
+        23,
+        N,
+        {
+            "psychiatric.psych_diagnosis": "schizoaffective disorder",
+            "psychiatric.stable_condition": True,
+            "psychiatric.compliant_with_treatment": True,
+        },
+        True,
+    ),
+    (
+        "written 'bipolar' (flagged as bipolar) -> R23 does not fire",
+        "Psychiatric Disorders",
+        23,
+        N,
+        {
+            "psychiatric.psych_diagnosis": "bipolar",
+            "psychiatric.bipolar": True,
+            "psychiatric.stable_condition": True,
+            "psychiatric.compliant_with_treatment": True,
+        },
+        False,
     ),
     # Restriction text formats
     (

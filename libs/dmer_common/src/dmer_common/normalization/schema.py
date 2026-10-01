@@ -6,11 +6,7 @@ the two-stage LLM analysis (see ``pipeline.py``), and the BC Guide section
 mapping used by the guide-matching meta field.
 
 Ported from the ``llm_normalization`` POC (see
-docs/development/stages/04-activity-normalize.md), with one correction
-made during the port: ``psychiatric.other_psych_diagnosis`` was typed
-``bool`` in the POC, but is actually meant to be a free-text field naming
-an "other" psychiatric diagnosis narrative (confirmed with the team) --
-fixed to ``str`` here.
+docs/development/stages/04-activity-normalize.md).
 """
 
 from __future__ import annotations
@@ -536,13 +532,13 @@ CONDITIONS: dict[str, dict] = {
     "psychiatric.schizophrenia": {"type": "bool", "description": ""},
     "psychiatric.schizophrenia_has_concerns": {"type": "bool", "description": ""},
     "psychiatric.other": {"type": "str", "description": ""},
-    # Free-text field naming an "other" psychiatric diagnosis (e.g. severe
-    # depression) -- typed "bool" in the POC; confirmed with the team this
-    # is meant to be written/free text, not a checkbox. Fixed during the
-    # port (see module docstring).
+    # True when the "other psych diagnosis" checkbox is ticked, or the
+    # psychiatric.other / psychiatric.psych_diagnosis text is filled in (set
+    # deterministically, see pipeline.derive_other_psych_diagnosis), or
+    # Section D names another psychiatric diagnosis.
     "psychiatric.other_psych_diagnosis": {
-        "type": "str",
-        "description": "severe depression",
+        "type": "bool",
+        "description": "a psychiatric diagnosis other than those listed, e.g. severe depression",
     },
     "psychiatric.other_psych_diagnosis_has_concerns": {
         "type": "bool",

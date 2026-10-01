@@ -2,13 +2,13 @@
 the input adapter, NYHA/MMSE-MoCA/restrictions parsers, the OCR-digit-
 confusion date fallback, the alcohol-withdrawal-seizure conflict rule,
 no_other_conditions, guide_with_no_matching_condition, and the output
-validators (schema + evidence presence).
+type standardization and the evidence-presence check.
 
 Pure functions (or functions operating on an already-built dict) -- no
 Azure OpenAI call is made, so this file needs no credentials and always
 runs (ported from the llm_normalization POC's
 test_deterministic_normalization.py, plus new tests for the pieces added
-on port: adapt_combined_fields, validate_schema, validate_evidence_present).
+on port: adapt_combined_fields, standardize_field_types, validate_evidence_present).
 """
 
 from __future__ import annotations
@@ -23,17 +23,20 @@ from dmer_common.normalization.pipeline import (
     check_diabetes_treatment_not_indicated,
     check_guide_matching,
     check_no_other_conditions,
+    derive_other_psych_diagnosis,
     normalize_dates,
     normalize_restrictions,
+    parse_aneurysm_size_cm,
     parse_cognitive_score,
+    parse_duration_seconds,
     parse_guide_number,
     parse_guide_section,
     parse_guide_subsection,
     parse_nyha_class,
     parse_visual_acuity_denominator,
     resolve_conflicts,
+    standardize_field_types,
     validate_evidence_present,
-    validate_schema,
 )
 
 # ---------------------------------------------------------------------------
@@ -825,33 +828,194 @@ def test_overwrites_whatever_the_llm_itself_had_set():
 # ---------------------------------------------------------------------------
 
 
-def test_validate_schema_raises_on_type_mismatch():
-    with pytest.raises(NormalizationValidationError):
-        validate_schema({"vision.cataracts": "true"})  # string, not a real bool
-
-
-def test_validate_schema_allows_restrictions_as_list():
-    # Regression: restrictions is declared "str" in CONDITIONS (matching
-    # what the LLM analysis prompt sees it as), but
-    # apply_deterministic_field_formats always converts it to a list --
-    # that's the correct final shape, not a violation. Found via a live
-    # run of normalize_document, not written speculatively.
+def test_standardize_converts_every_field_to_its_declared_type():
     from dmer_common.normalization.pipeline import ensure_all_fields
 
-    result = ensure_all_fields({"dmer": {"restrictions": ["20", "21"]}})
-    validate_schema(result["dmer"])  # must not raise
+    dmer = ensure_all_fields({"dmer": {}})["dmer"]
+    dmer.update(
+        {
+            "vision.cataracts": "true",  # bool from text
+            "vestibular.drop_attacks": "no",
+            "cardiovascular.lvef": "35%",  # int from text
+            "endocrine.HbA1C": "12.5 %",  # float from text
+            "sleep.epworth_score": "",  # blank -> None
+            "opinion.maybe_followup_years": "2 years",
+            "hearing.hearing_db_left": "N/A",
+            "cardiovascular.other": None,  # text never None
+        }
+    )
+    out = standardize_field_types({"dmer": dmer})["dmer"]
+    assert out["vision.cataracts"] is True
+    assert out["vestibular.drop_attacks"] is False
+    assert out["cardiovascular.lvef"] == 35
+    assert out["endocrine.HbA1C"] == 12.5
+    assert out["sleep.epworth_score"] is None
+    assert out["opinion.maybe_followup_years"] == 2
+    assert out["hearing.hearing_db_left"] is None
+    assert out["cardiovascular.other"] == ""
 
 
-def test_validate_schema_passes_on_correct_types():
-    # A minimal but correctly-typed dict for the fields checked; every other
-    # CONDITIONS field is absent, which is itself a violation (None isn't a
-    # bool) -- so this test only exercises a handful of fields directly via
-    # a dict that satisfies every field's type for the check to pass overall,
-    # confirming a full ensure_all_fields()-shaped output would validate.
-    from dmer_common.normalization.pipeline import ensure_all_fields
+def test_standardize_leaves_an_unreadable_number_blank_instead_of_failing():
+    out = standardize_field_types({"dmer": {"cardiovascular.lvef": "illegible"}})[
+        "dmer"
+    ]
+    assert out["cardiovascular.lvef"] is None
 
-    result = ensure_all_fields({"dmer": {}})
-    validate_schema(result["dmer"])  # must not raise
+
+def test_standardize_keeps_restrictions_as_codes():
+    out = standardize_field_types({"dmer": {"restrictions": [20, 21]}})["dmer"]
+    assert out["restrictions"] == [20, 21]
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("190", 190),
+        ("190 s", 190),
+        ("3:10", 190),
+        ("3 min 10 sec", 190),
+        ("3 minutes 10 seconds", 190),
+        ("3 minutes", 180),
+        (95, 95),
+        ("", None),
+        ("failed", None),
+    ],
+)
+def test_parse_duration_seconds(raw, expected):
+    assert parse_duration_seconds(raw) == expected
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [("5.0 cm", 5.0), ("55 mm", 5.5), ("5,5", 5.5), (6, 6.0), ("", None)],
+)
+def test_parse_aneurysm_size_cm(raw, expected):
+    assert parse_aneurysm_size_cm(raw) == expected
+
+
+@pytest.mark.parametrize(
+    "raw,expected", [("NYHA III", 3), ("class 2", 2), ("5", None), ("IV", 4)]
+)
+def test_nyha_in_text_is_read_but_never_out_of_range(raw, expected):
+    out = standardize_field_types({"dmer": {"cardiovascular.nyha_class": raw}})["dmer"]
+    assert out["cardiovascular.nyha_class"] == expected
+
+
+def test_adapt_renames_the_di_licence_class_field():
+    dmer = adapt_combined_fields({"current_license_class": "1"})["dmer"]
+    assert dmer["current_licence_class"] == "1"
+    assert "current_license_class" not in dmer
+
+
+def test_adapt_blank_alias_does_not_overwrite_a_real_value():
+    dmer = adapt_combined_fields(
+        {"current_licence_class": "1", "current_license_class": ""}
+    )["dmer"]
+    assert dmer["current_licence_class"] == "1"
+
+
+def test_adapt_turns_blank_numbers_into_none_and_keeps_written_ones():
+    dmer = adapt_combined_fields(
+        {"cardiovascular.lvef": "", "sleep.ahi_score": "approx 35"}
+    )["dmer"]
+    assert dmer["cardiovascular.lvef"] is None
+    assert dmer["sleep.ahi_score"] == "approx 35"
+
+
+@pytest.mark.parametrize("raw", ["true", "TRUE", "yes", "x", "selected"])
+def test_adapt_accepts_any_truthy_checkbox_spelling(raw):
+    assert (
+        adapt_combined_fields({"vision.cataracts": raw})["dmer"]["vision.cataracts"]
+        is True
+    )
+
+
+def test_other_psych_diagnosis_checkbox_marks_it():
+    dmer = adapt_combined_fields({"psychiatric.other_psych_diagnosis": "true"})
+    assert (
+        derive_other_psych_diagnosis(dmer)["dmer"]["psychiatric.other_psych_diagnosis"]
+        is True
+    )
+
+
+@pytest.mark.parametrize("field", ["psychiatric.other", "psychiatric.psych_diagnosis"])
+def test_other_psych_diagnosis_from_an_unrecognised_written_diagnosis(field):
+    dmer = adapt_combined_fields(
+        {"psychiatric.other_psych_diagnosis": "false", field: "severe depression"}
+    )
+    out = derive_other_psych_diagnosis(dmer)["dmer"]
+    assert out["psychiatric.other_psych_diagnosis"] is True
+    assert (
+        out["psychiatric.other_psych_diagnosis_evidence"]
+        == f"{field}: severe depression"
+    )
+
+
+def test_other_psych_diagnosis_not_set_when_the_written_diagnosis_is_a_named_one():
+    dmer = adapt_combined_fields(
+        {"psychiatric.psych_diagnosis": "bipolar", "psychiatric.bipolar": "true"}
+    )
+    assert (
+        derive_other_psych_diagnosis(dmer)["dmer"]["psychiatric.other_psych_diagnosis"]
+        is False
+    )
+
+
+def test_other_psych_diagnosis_false_when_nothing_is_written():
+    dmer = adapt_combined_fields(
+        {"psychiatric.other_psych_diagnosis": "false", "psychiatric.other": "N/A"}
+    )
+    assert (
+        derive_other_psych_diagnosis(dmer)["dmer"]["psychiatric.other_psych_diagnosis"]
+        is False
+    )
+
+
+def test_normalize_document_accepts_raw_di_strings(monkeypatch):
+    """DI sends every value as text, blanks included -- none of it may fail the document."""
+    from unittest.mock import Mock
+
+    from dmer_common.normalization import pipeline
+
+    monkeypatch.setattr(pipeline, "analyze_conditions", lambda *_: {"dmer": {}})
+    fields = {
+        "current_license_class": "1",
+        "cardiovascular.lvef": "",
+        "cns.trails_b_seconds": "3 min 10 sec",
+        "cns.moca_score": "26/30",
+        "endocrine.HbA1C": "",
+        "opinion.maybe_followup_years": "",
+        "psychiatric.other_psych_diagnosis": "false",
+        "vision.cataracts": "false",
+        "details_of_condition": "",
+    }
+    result = pipeline.normalize_document(Mock(), fields)
+    assert result["current_licence_class"] == "1"
+    assert result["cardiovascular.lvef"] is None
+    assert result["cns.trails_b_seconds"] == 190
+    assert result["cns.moca_score"] == 26
+    assert result["psychiatric.other_psych_diagnosis"] is False
+
+
+def test_blank_di_document_has_no_conditions(monkeypatch):
+    """Every DI checkbox "false" and every DI text field "" -- including the
+    other-psych-diagnosis checkbox, which the schema used to read as text --
+    must come out as an empty DMER, not a condition."""
+    from unittest.mock import Mock
+
+    from dmer_common.normalization import pipeline
+    from dmer_common.normalization.schema import CONDITIONS
+
+    monkeypatch.setattr(pipeline, "analyze_conditions", lambda *_: {"dmer": {}})
+    fields = {name: "" for name in CONDITIONS}
+    fields.update(
+        {name: "false" for name, cfg in CONDITIONS.items() if cfg["type"] == "bool"}
+    )
+    fields["current_license_class"] = "5"
+    result = pipeline.normalize_document(Mock(), fields)
+    assert result["psychiatric.other_psych_diagnosis"] is False
+    assert result["no_other_conditions"] is True
+    assert result["non_vision_condition_indicated"] is False
 
 
 def test_validate_evidence_present_raises_when_missing():

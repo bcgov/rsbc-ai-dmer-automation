@@ -12,11 +12,12 @@ Ported from the ``llm_normalization`` POC, with real changes made on port
   the POC printed full JSON payloads to the console for local debugging;
   this module logs field counts/category names only, matching
   ``OpenAIClient.complete()``'s own "never log message content" convention.
-- Added: schema validation (:func:`validate_schema`) and a same-pass
-  evidence-presence check (:func:`validate_evidence_present`), plus
-  :func:`adapt_combined_fields` to convert di-processor's real
-  ``CombinedExtraction.fields`` shape (flat, every value a string) into the
-  typed ``{"dmer": {...}}`` shape the rest of this pipeline expects.
+- Added: :func:`adapt_combined_fields` and :func:`standardize_field_types`,
+  which deterministically standardize di-processor's real
+  ``CombinedExtraction.fields`` (flat, every value a string, DI field names)
+  into the typed ``{"dmer": {...}}`` shape the rest of this pipeline expects
+  -- the input is standardized, never rejected -- plus an evidence-presence
+  check (:func:`validate_evidence_present`) on the model's findings.
 - :func:`normalize_document` is new: the single entry point the Normalize
   activity calls, composing every step below in the right order.
 
@@ -80,18 +81,56 @@ ANALYZE_TEMPERATURE = float(os.environ.get("NORMALIZATION_ANALYZE_TEMPERATURE", 
 # ---------------------------------------------------------------------------
 
 
-def adapt_combined_fields(fields: dict[str, object]) -> dict:
-    """Convert di-processor's real extraction output shape into the typed
-    ``{"dmer": {...}}`` shape the rest of this pipeline expects.
+# DI custom-model field names that differ from this schema's. The DI field
+# list is fixed (the model's fields.json), so this is a static rename table.
+DI_FIELD_ALIASES: dict[str, str] = {
+    "current_license_class": "current_licence_class",
+}
 
-    ``CombinedExtraction.fields`` is flat and every value is a plain string
-    (see services/di-processor/.../extraction/schemas.py) -- including
-    checkboxes, which arrive as the canonical string "true"/"false" (see
-    module docstring). This coerces every field CONDITIONS declares "bool"
-    into a real Python bool; everything else passes through unchanged (the
-    schema's own str/int/float coercion and the deterministic normalizers
-    handle those downstream, the same as they did for the POC's already-
-    typed sample data).
+# Written values that mean "nothing recorded".
+_BLANK_STRINGS = frozenset(
+    {"", "n/a", "na", "none", "null", "nil", "-", "--", "unknown", "not done"}
+)
+# Written values that mean "no" for a checkbox. Any other non-blank text
+# counts as "yes" -- a stray value errs toward reviewing the condition.
+_FALSE_STRINGS = frozenset({"false", "no", "n", "0", "unchecked", "unselected", "off"})
+
+
+def _is_blank(value: object) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return value.strip().lower() in _BLANK_STRINGS
+    if isinstance(value, (list, dict)):
+        return len(value) == 0
+    return False
+
+
+def _to_bool(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        return not _is_blank(value) and value.strip().lower() not in _FALSE_STRINGS
+    return False
+
+
+def adapt_combined_fields(fields: dict[str, object]) -> dict:
+    """Turn di-processor's extraction output into the ``{"dmer": {...}}``
+    shape the rest of this pipeline works on. Deterministic; never rejects
+    input.
+
+    ``CombinedExtraction.fields`` is flat and every value is a plain string,
+    checkboxes included (normally "true"/"false"). Here:
+
+    - DI field names that differ from the schema are renamed
+      (:data:`DI_FIELD_ALIASES`).
+    - Checkbox fields become real bools (see :func:`_to_bool`).
+    - Blank number fields become None. Non-blank ones stay as written so the
+      analysis model can still read e.g. "approx 35-40%";
+      :func:`standardize_field_types` converts them after analysis.
+    - Missing text fields become "".
 
     A field this schema doesn't recognize is passed through unchanged --
     permissive, matching ``TopLevelExtraction``'s own "kept permissive so a
@@ -99,17 +138,64 @@ def adapt_combined_fields(fields: dict[str, object]) -> dict:
     """
     dmer: dict[str, object] = {}
     for key, value in fields.items():
-        cfg = CONDITIONS.get(key)
-        if cfg is None or cfg["type"] != "bool":
-            dmer[key] = value
-            continue
-        if isinstance(value, bool):
-            dmer[key] = value
-        elif isinstance(value, str):
-            dmer[key] = value.strip().lower() == "true"
+        name = DI_FIELD_ALIASES.get(key, key)
+        if name != key and _is_blank(value) and not _is_blank(dmer.get(name)):
+            continue  # a blank alias never overwrites a real value
+        cfg = CONDITIONS.get(name)
+        if cfg is None:
+            dmer[name] = value
+        elif cfg["type"] == "bool":
+            dmer[name] = _to_bool(value)
+        elif cfg["type"] in ("int", "float"):
+            dmer[name] = None if _is_blank(value) else value
         else:
-            dmer[key] = bool(value)
+            dmer[name] = "" if value is None else value
     return {"dmer": dmer}
+
+
+# Written psychiatric diagnosis fields on the form, and the diagnoses the
+# guide names explicitly. other_psych_diagnosis is the catch-all for the rest.
+_OTHER_PSYCH_TEXT_FIELDS = ("psychiatric.other", "psychiatric.psych_diagnosis")
+_DEFINED_PSYCH_DIAGNOSES = (
+    "psychiatric.adhd",
+    "psychiatric.add",
+    "psychiatric.ocd",
+    "psychiatric.anxiety",
+    "psychiatric.ptsd",
+    "psychiatric.mild_depression",
+    "psychiatric.autism",
+    "psychiatric.mental_handicap",
+    "psychiatric.psychosis",
+    "psychiatric.bipolar",
+    "psychiatric.schizophrenia",
+)
+
+
+def derive_other_psych_diagnosis(dmer_result: dict) -> dict:
+    """``psychiatric.other_psych_diagnosis`` is the catch-all psychiatric
+    diagnosis. It is true when its checkbox is ticked or the analysis model
+    set it (e.g. "severe depression" in Section D), and also when a written
+    psychiatric diagnosis field is filled in but none of the diagnoses the
+    guide names explicitly was found -- so a written "bipolar" stays bipolar,
+    while anything unrecognised is still caught. Runs after analysis, since
+    whether the written text matched a named diagnosis is only known then.
+    Never clears a true value.
+    """
+    dmer = dmer_result.get("dmer", dmer_result)
+    field = "psychiatric.other_psych_diagnosis"
+    if _to_bool(dmer.get(field)):
+        dmer[field] = True
+    else:
+        source = next(
+            (f for f in _OTHER_PSYCH_TEXT_FIELDS if not _is_blank(dmer.get(f))), None
+        )
+        named = any(_to_bool(dmer.get(f)) for f in _DEFINED_PSYCH_DIAGNOSES)
+        dmer[field] = source is not None and not named
+        if dmer[field]:
+            dmer.setdefault(f"{field}_evidence", f"{source}: {dmer[source]}")
+    if "dmer" in dmer_result:
+        dmer_result["dmer"] = dmer
+    return dmer_result
 
 
 def _is_concern_field(name: str) -> bool:
@@ -515,27 +601,132 @@ def normalize_restrictions(raw: object) -> list[int]:
 
 
 def apply_deterministic_field_formats(dmer_result: dict) -> dict:
-    """Runs parse_nyha_class / parse_cognitive_score / normalize_restrictions
-    over the merged output. Called after apply_updates so it sees whatever
-    the LLM itself may have already produced for these fields (its own
-    "str/int: set to the normalized value" instruction sometimes gets this
-    right already -- see prompts.py) -- this pass guarantees the correct
-    canonical form regardless, the same way normalize_dates guarantees
-    dates regardless of what the LLM attempted on its own.
+    """Restriction codes plus :func:`standardize_field_types`, over the merged
+    output. Called after apply_updates so it sees whatever the LLM itself may
+    have already produced for these fields -- this pass guarantees the
+    canonical form regardless, the same way normalize_dates guarantees dates
+    regardless of what the LLM attempted on its own.
     """
     dmer = dmer_result.get("dmer", dmer_result)
-
-    if "cardiovascular.nyha_class" in dmer:
-        dmer["cardiovascular.nyha_class"] = parse_nyha_class(
-            dmer["cardiovascular.nyha_class"]
-        )
-    if "cns.mmse_score" in dmer:
-        dmer["cns.mmse_score"] = parse_cognitive_score(dmer["cns.mmse_score"])
-    if "cns.moca_score" in dmer:
-        dmer["cns.moca_score"] = parse_cognitive_score(dmer["cns.moca_score"])
     if "restrictions" in dmer:
         dmer["restrictions"] = normalize_restrictions(dmer["restrictions"])
+    return standardize_field_types(dmer_result)
 
+
+# ---------------------------------------------------------------------------
+# Type standardization: every CONDITIONS field ends up its declared type.
+# DI sends every value as text, and the analysis model can return a value in
+# any shape, so nothing here rejects a value -- an unreadable number becomes
+# None ("not recorded") and is logged by field name only.
+# ---------------------------------------------------------------------------
+_NUMBER_RE = re.compile(r"\d+(?:[.,]\d+)?")
+_MINUTES_RE = re.compile(r"(\d+(?:\.\d+)?)\s*(?:m\b|min)", re.IGNORECASE)
+_SECONDS_RE = re.compile(r"(\d+(?:\.\d+)?)\s*(?:s\b|sec)", re.IGNORECASE)
+_CLOCK_RE = re.compile(r"(\d+)\s*:\s*(\d{1,2})")
+_NYHA_TOKEN_RE = re.compile(r"\b(IV|III|II|I|[1-4])\b")
+
+
+def _first_number(text: str) -> float | None:
+    match = _NUMBER_RE.search(text)
+    return float(match.group(0).replace(",", ".")) if match else None
+
+
+def parse_duration_seconds(raw: object) -> int | None:
+    """A Trails A/B time in whole seconds: "190", "190 s", "3:10",
+    "3 min 10 sec", "3 minutes" (-> 180)."""
+    if isinstance(raw, bool) or raw is None:
+        return None
+    if isinstance(raw, (int, float)):
+        return round(raw)
+    text = str(raw)
+    clock = _CLOCK_RE.search(text)
+    if clock:
+        return int(clock.group(1)) * 60 + int(clock.group(2))
+    minutes = _MINUTES_RE.search(text)
+    seconds = _SECONDS_RE.search(text)
+    if minutes or seconds:
+        total = float(minutes.group(1)) * 60 if minutes else 0.0
+        total += float(seconds.group(1)) if seconds else 0.0
+        return round(total)
+    number = _first_number(text)
+    return None if number is None else round(number)
+
+
+def parse_aneurysm_size_cm(raw: object) -> float | None:
+    """An aneurysm diameter in cm; a value written in mm is converted."""
+    if isinstance(raw, bool) or raw is None:
+        return None
+    if isinstance(raw, (int, float)):
+        return float(raw)
+    number = _first_number(str(raw))
+    if number is None:
+        return None
+    return number / 10 if "mm" in str(raw).lower() else number
+
+
+def _parse_nyha(raw: object) -> int | None:
+    value = parse_nyha_class(raw)
+    if value is None and isinstance(raw, str):
+        token = _NYHA_TOKEN_RE.search(raw.upper())
+        value = parse_nyha_class(token.group(1)) if token else None
+    return value
+
+
+# Fields whose numbers need more than "the first number in the text".
+_NUMBER_PARSERS = {
+    "cardiovascular.nyha_class": _parse_nyha,
+    "cns.mmse_score": parse_cognitive_score,
+    "cns.moca_score": parse_cognitive_score,
+    "cns.trails_a_seconds": parse_duration_seconds,
+    "cns.trails_b_seconds": parse_duration_seconds,
+    "pvd.aneurysm_size": parse_aneurysm_size_cm,
+}
+
+
+# NYHA is I-IV only: an out-of-range value must not fall back to "the first
+# number in the text".
+_NO_NUMBER_FALLBACK = frozenset({"cardiovascular.nyha_class"})
+
+
+def _to_number(field: str, value: object, field_type: str) -> int | float | None:
+    if _is_blank(value) or isinstance(value, bool):
+        return None
+    parser = _NUMBER_PARSERS.get(field)
+    number = parser(value) if parser else None
+    if number is None and field not in _NO_NUMBER_FALLBACK:
+        if isinstance(value, (int, float)):
+            number = value
+        elif isinstance(value, str):
+            number = _first_number(value)
+    if number is None or not math.isfinite(number):
+        _log.warning("unreadable number left blank", extra={"field": field})
+        return None
+    return round(number) if field_type == "int" else float(number)
+
+
+def _to_text(value: object) -> str:
+    if value is None or value is False:
+        return ""
+    if isinstance(value, list):
+        return "; ".join(str(v) for v in value if v is not None)
+    return value if isinstance(value, str) else str(value)
+
+
+def standardize_field_types(dmer_result: dict) -> dict:
+    """Convert every CONDITIONS field present to its declared type: bool,
+    int/float (or None), str. ``restrictions`` is left to
+    normalize_restrictions (its final shape is a list of codes)."""
+    dmer = dmer_result.get("dmer", dmer_result)
+    for field, cfg in CONDITIONS.items():
+        if field not in dmer or field == "restrictions":
+            continue
+        value, field_type = dmer[field], cfg["type"]
+        if field_type == "bool":
+            dmer[field] = _to_bool(value)
+        elif field_type in ("int", "float"):
+            dmer[field] = _to_number(field, value, field_type)
+        else:
+            dmer[field] = _to_text(value)
     if "dmer" in dmer_result:
         dmer_result["dmer"] = dmer
     return dmer_result
@@ -1510,69 +1701,6 @@ def apply_rule_engine_input_formats(dmer_result: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 
-# Fields whose CONDITIONS "type" doesn't reflect their final, post-
-# deterministic-normalization shape. "restrictions" is declared "str" in
-# the schema (matching what the LLM sees it as during analysis -- it's a
-# TOP_LEVEL field the analysis prompt can "normalize" like any other str
-# field), but apply_deterministic_field_formats always overrides it to a
-# list afterward (see normalize_restrictions) -- that list is the correct,
-# intended final shape, not a violation. Found by running normalize_document
-# against a real LLM call, not written speculatively: a synthetic unit
-# test of validate_schema alone (never exercising
-# apply_deterministic_field_formats) didn't surface this.
-_SCHEMA_TYPE_OVERRIDES: dict[str, tuple[type, ...]] = {
-    "restrictions": (str, list),
-}
-
-
-def validate_schema(dmer: dict) -> None:
-    """Raise :class:`NormalizationValidationError` if any CONDITIONS
-    field's final value doesn't match its declared type.
-
-    The deterministic passes above (apply_deterministic_field_formats,
-    ensure_all_fields, adapt_combined_fields, ...) should already guarantee
-    this for every field they touch; this is the final backstop for a
-    genuinely malformed LLM response that slipped through both LLM calls
-    untouched by any of them.
-    """
-    violations: list[str] = []
-    for field_name, cfg in CONDITIONS.items():
-        value = dmer.get(field_name)
-        override = _SCHEMA_TYPE_OVERRIDES.get(field_name)
-        if override is not None:
-            if not isinstance(value, override):
-                expected = " or ".join(t.__name__ for t in override)
-                violations.append(
-                    f"{field_name}: expected {expected}, got {type(value).__name__}"
-                )
-            continue
-        field_type = cfg["type"]
-        if field_type == "bool":
-            if not isinstance(value, bool):
-                violations.append(
-                    f"{field_name}: expected bool, got {type(value).__name__}"
-                )
-        elif field_type == "str":
-            if not isinstance(value, str):
-                violations.append(
-                    f"{field_name}: expected str, got {type(value).__name__}"
-                )
-        elif field_type in ("int", "float"):
-            allowed_types = (int,) if field_type == "int" else (int, float)
-            if value is not None and (
-                type(value) not in allowed_types
-                or (isinstance(value, float) and not math.isfinite(value))
-            ):
-                violations.append(
-                    f"{field_name}: expected {field_type} or null, got {type(value).__name__}"
-                )
-    if violations:
-        raise NormalizationValidationError(
-            f"{len(violations)} field(s) failed schema validation: "
-            + "; ".join(violations[:10])
-        )
-
-
 def validate_evidence_present(dmer: dict) -> None:
     """Raise :class:`NormalizationValidationError` if a true boolean field
     is missing its ``{field}_evidence`` non-blank string.
@@ -1614,14 +1742,17 @@ def normalize_document(
     unwrapped (not the ``{"dmer": ...}`` envelope) -- the caller decides
     how to store it.
 
-    Raises :class:`NormalizationValidationError` on a schema or evidence
-    violation -- poison, not transient (see failure-handling in
+    Input is never rejected for its shape or types: DI output is
+    standardized (adapt_combined_fields, standardize_field_types), not
+    validated. Raises :class:`NormalizationValidationError` only when the
+    model's own findings fail the evidence checks -- poison, not transient (see failure-handling in
     docs/development/stages/04-activity-normalize.md); the caller should
     route the document to MANUAL_REVIEW rather than retry.
     """
     dmer_input = flag_monocular_from_bad_eye(adapt_combined_fields(extracted_fields))
     updates = analyze_conditions(openai, dmer_input)
     result = apply_updates(dmer_input, updates)
+    result = derive_other_psych_diagnosis(result)
     result = apply_deterministic_field_formats(result)
     result = apply_visual_acuity_thresholds(result)
     result = flag_monocular_from_bad_eye(result)
@@ -1634,6 +1765,7 @@ def normalize_document(
     result = check_diabetes_treatment_not_indicated(result)
     result = apply_rule_engine_input_formats(result)
     result = normalize_dates(result)
+    result = standardize_field_types(result)
 
     dmer = result["dmer"]
     # Checked source fields already have direct, deterministic provenance.
@@ -1645,7 +1777,6 @@ def normalize_document(
             and dmer.get(field) is True
         ):
             dmer.setdefault(f"{field}_evidence", f"{field}: true")
-    validate_schema(dmer)
     validate_evidence_present(dmer)
     validate_derived_values(openai, dmer_input["dmer"], updates["dmer"], dmer)
 
