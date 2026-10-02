@@ -10,7 +10,7 @@
 #   GET /api/mercury/documents?queue=&page_size=&cursor=
 #       The batch/backlog list the Page Poller reads (one record per DMER).
 #   GET /api/mercury/drivers/{licence_number}
-#       The driver-licence lookup Resolve Driver reads: the driver, every
+#       The driver-licence lookup Driver Lookup reads: the driver, every
 #       active document Mercury holds for them, and their case. 404 when no
 #       driver has that licence. 7- and 8-digit forms of a licence match.
 #

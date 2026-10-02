@@ -1,4 +1,4 @@
-"""Resolve Driver activity: the decision logic and failure contract.
+"""Driver Lookup activity: the decision logic and failure contract.
 
 The DB unit of work and the Mercury client are mocked; the repository itself is
 tested against PostgreSQL in libs/dmer_common/tests/integration.
@@ -12,18 +12,18 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 from dmer_common.config import MercuryDriverSettings
-from dmer_common.db.resolve_driver import (
+from dmer_common.db.driver_lookup import (
     DRIVER_AMBIGUOUS,
     DRIVER_NOT_FOUND,
     LICENCE_LOOKUP,
     LICENCE_UNREADABLE,
     MERCURY_SUPPLIED,
-    ResolveDriverBusyError,
-    ResolveDriverRun,
-    ResolveOutcome,
+    DriverLookupBusyError,
+    DriverLookupOutcome,
+    DriverLookupRun,
 )
 
-import workflow_orchestrator.activities.resolve_driver as activity
+import workflow_orchestrator.activities.driver_lookup as activity
 
 DOC_ID = "123e4567-e89b-12d3-a456-426655440000"
 DRIVER_KEY = "74f5a6ce-575a-4689-a553-99f50c24ca15"
@@ -57,14 +57,14 @@ SETTINGS = MercuryDriverSettings(
 def _run_for(
     *, driver_key=None, driver_licence=None, licence_read=None, completed=None
 ):
-    return ResolveDriverRun(5, 1, driver_key, driver_licence, licence_read, completed)
+    return DriverLookupRun(5, 1, driver_key, driver_licence, licence_read, completed)
 
 
 @pytest.fixture
 def dependencies(monkeypatch):
     repository = SimpleNamespace(
         start_or_resume=AsyncMock(return_value=_run_for(licence_read=LICENCE)),
-        resolve=AsyncMock(return_value=(DRIVER_KEY, "eval-1")),
+        attach_driver=AsyncMock(return_value=(DRIVER_KEY, "eval-1")),
         manual_review=AsyncMock(),
         fail=AsyncMock(),
     )
@@ -78,21 +78,21 @@ def dependencies(monkeypatch):
         assert received_engine is engine and document_id == DOC_ID
         yield repository
 
-    monkeypatch.setattr(activity, "resolve_driver_session", session)
+    monkeypatch.setattr(activity, "driver_lookup_session", session)
     monkeypatch.setattr(activity, "_get_async_engine", AsyncMock(return_value=engine))
     monkeypatch.setattr(activity, "MercuryClient", lambda: client)
     return SimpleNamespace(repo=repository, engine=engine, client=client)
 
 
 def _run():
-    return asyncio.run(activity.resolve_driver_activity({"document_id": DOC_ID}))
+    return asyncio.run(activity.driver_lookup_activity({"document_id": DOC_ID}))
 
 
 def test_page_licence_found_once_is_attached_and_flagged_as_a_lookup(dependencies):
     d = dependencies
     assert _run() == {"driver_key": DRIVER_KEY}
     d.client.get_driver_by_licence.assert_called_once_with(LICENCE)
-    kwargs = d.repo.resolve.call_args.kwargs
+    kwargs = d.repo.attach_driver.call_args.kwargs
     assert kwargs["resolved_by"] == LICENCE_LOOKUP
     assert kwargs["licence_mismatch"] is False
     assert kwargs["mercury_driver"].licence_number == LICENCE  # canonical 8 digits
@@ -103,7 +103,9 @@ def test_page_licence_found_once_is_attached_and_flagged_as_a_lookup(dependencie
 def test_expected_count_is_counted_types_not_in_uncounted_statuses(dependencies):
     _run()
     # DMER/Rejected and Test Report/Uploaded are not counted.
-    assert dependencies.repo.resolve.call_args.kwargs["expected_document_count"] == 1
+    assert (
+        dependencies.repo.attach_driver.call_args.kwargs["expected_document_count"] == 1
+    )
 
 
 @pytest.mark.parametrize(
@@ -136,7 +138,7 @@ def test_mercury_supplied_driver_is_kept_and_a_different_page_licence_is_recorde
     d.client.get_driver_by_licence.assert_called_once_with(
         LICENCE
     )  # Mercury's, not the page's
-    kwargs = d.repo.resolve.call_args.kwargs
+    kwargs = d.repo.attach_driver.call_args.kwargs
     assert kwargs["resolved_by"] == MERCURY_SUPPLIED
     assert kwargs["licence_mismatch"] is True
 
@@ -150,7 +152,7 @@ def test_mercury_supplied_driver_without_a_different_page_licence_is_no_mismatch
         driver_key=DRIVER_KEY, driver_licence=LICENCE, licence_read=licence_read
     )
     _run()
-    assert d.repo.resolve.call_args.kwargs["licence_mismatch"] is False
+    assert d.repo.attach_driver.call_args.kwargs["licence_mismatch"] is False
 
 
 @pytest.mark.parametrize(
@@ -171,7 +173,7 @@ def test_unresolvable_documents_go_to_manual_review(dependencies, run, drivers, 
     d.client.get_driver_by_licence.return_value = drivers
     assert _run() == {"manual_review": True, "reason": reason}
     assert d.repo.manual_review.call_args.kwargs["reason"] == reason
-    d.repo.resolve.assert_not_awaited()
+    d.repo.attach_driver.assert_not_awaited()
     if reason == LICENCE_UNREADABLE:
         d.client.get_driver_by_licence.assert_not_called()
 
@@ -179,9 +181,9 @@ def test_unresolvable_documents_go_to_manual_review(dependencies, run, drivers, 
 @pytest.mark.parametrize(
     "outcome,expected",
     [
-        (ResolveOutcome(DRIVER_KEY), {"driver_key": DRIVER_KEY}),
+        (DriverLookupOutcome(DRIVER_KEY), {"driver_key": DRIVER_KEY}),
         (
-            ResolveOutcome(None, DRIVER_NOT_FOUND),
+            DriverLookupOutcome(None, DRIVER_NOT_FOUND),
             {"manual_review": True, "reason": DRIVER_NOT_FOUND},
         ),
     ],
@@ -198,11 +200,11 @@ def test_a_committed_result_is_returned_without_calling_mercury(
 def test_mercury_failure_is_recorded_and_sanitized(dependencies):
     d = dependencies
     d.client.get_driver_by_licence.side_effect = ConnectionError(f"private {LICENCE}")
-    with pytest.raises(activity.ResolveDriverActivityError) as error:
+    with pytest.raises(activity.DriverLookupActivityError) as error:
         _run()
     assert LICENCE not in str(error.value)
     d.repo.fail.assert_awaited_once()
-    d.repo.resolve.assert_not_awaited()
+    d.repo.attach_driver.assert_not_awaited()
 
 
 def test_a_mercury_driver_without_a_valid_licence_is_poison(dependencies):
@@ -210,7 +212,7 @@ def test_a_mercury_driver_without_a_valid_licence_is_poison(dependencies):
     d.client.get_driver_by_licence.return_value = [
         {**MERCURY_DRIVER, "licence_number": "X"}
     ]
-    with pytest.raises(activity.ResolveDriverValidationError):
+    with pytest.raises(activity.DriverLookupValidationError):
         _run()
     d.repo.fail.assert_awaited_once()
 
@@ -228,15 +230,15 @@ def test_the_licence_is_never_in_the_result_or_logs(dependencies, monkeypatch):
 
 
 def test_busy_document_passes_through(dependencies):
-    dependencies.repo.start_or_resume.side_effect = ResolveDriverBusyError()
-    with pytest.raises(ResolveDriverBusyError):
+    dependencies.repo.start_or_resume.side_effect = DriverLookupBusyError()
+    with pytest.raises(DriverLookupBusyError):
         _run()
 
 
 @pytest.mark.parametrize("payload", [{}, {"document_id": "nope"}, "not an object"])
 def test_bad_input_is_poison_before_any_io(dependencies, payload):
-    with pytest.raises(activity.ResolveDriverValidationError):
-        asyncio.run(activity.resolve_driver_activity(payload))
+    with pytest.raises(activity.DriverLookupValidationError):
+        asyncio.run(activity.driver_lookup_activity(payload))
     dependencies.repo.start_or_resume.assert_not_awaited()
 
 
@@ -246,7 +248,7 @@ def test_functions_host_registers_activity_by_its_orchestration_name():
     app = df.DFApp()
     activity.register(app)
     functions = app.get_functions()
-    assert [f.get_function_name() for f in functions] == ["ResolveDriver"]
+    assert [f.get_function_name() for f in functions] == ["DriverLookup"]
     bindings = json.loads(functions[0].get_function_json())["bindings"]
     assert any(
         b["type"] == "activityTrigger" and b["name"] == "payload" for b in bindings

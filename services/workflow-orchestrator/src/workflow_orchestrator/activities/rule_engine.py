@@ -179,7 +179,7 @@ async def run_rule_engine_activity(payload: dict) -> dict:
                         },
                     )
                     if count.driver_evaluation_id is None:
-                        # Resolve Driver creates the evaluation first; without
+                        # Driver Lookup creates the evaluation first; without
                         # one the document cannot join a driver batch.
                         _log.warning(
                             "rule engine: no open driver evaluation; document not counted"

@@ -58,7 +58,7 @@ def test_full_run_resolves_normalizes_evaluates_then_signals_the_driver():
     context = _FakeContext(INPUT)
     gen = orch.document_orchestration(context)
 
-    assert next(gen) == ("TASK", "ResolveDriver", {"document_id": DOC})
+    assert next(gen) == ("TASK", "DriverLookup", {"document_id": DOC})
     assert gen.send(DRIVER) == (
         "TASK",
         "NormalizeDmer",
@@ -103,19 +103,19 @@ def test_default_retry_settings_when_the_input_has_none():
     )
 
 
-def test_a_document_resolve_driver_routed_to_manual_review_ends_there():
+def test_a_document_driver_lookup_routed_to_manual_review_ends_there():
     context = _FakeContext(INPUT)
     gen = orch.document_orchestration(context)
     next(gen)
     manual = {"manual_review": True, "reason": "DRIVER_NOT_FOUND"}
     assert _finish(gen, manual) == manual
-    assert _names(context) == ["ResolveDriver"]
+    assert _names(context) == ["DriverLookup"]
 
 
 @pytest.mark.parametrize(
     "steps,failing",
     [
-        ([], "ResolveDriver"),
+        ([], "DriverLookup"),
         ([DRIVER], "NormalizeDmer"),
         ([DRIVER, NORMALIZED], "RunRuleEngine"),
         ([DRIVER, NORMALIZED, RULES], "SignalDriver"),
@@ -139,7 +139,7 @@ def test_a_poison_result_routes_to_manual_review_and_stops(steps, failing):
 
 
 @pytest.mark.parametrize(
-    "steps,failing", [([], "ResolveDriver"), ([DRIVER, NORMALIZED], "RunRuleEngine")]
+    "steps,failing", [([], "DriverLookup"), ([DRIVER, NORMALIZED], "RunRuleEngine")]
 )
 def test_retries_exhausted_routes_to_manual_review(steps, failing):
     context = _FakeContext(INPUT)

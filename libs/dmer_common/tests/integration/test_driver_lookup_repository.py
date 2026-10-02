@@ -1,4 +1,4 @@
-"""Resolve Driver unit of work against an isolated PostgreSQL schema.
+"""Driver Lookup unit of work against an isolated PostgreSQL schema.
 
 Set NORMALIZATION_TEST_DSN to a disposable local/CI PostgreSQL database (the
 same variable the other activity repository tests use). Each test creates and
@@ -17,15 +17,15 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 
-from dmer_common.db.resolve_driver import (
+from dmer_common.db.driver_lookup import (
     DRIVER_NOT_FOUND,
     LICENCE_LOOKUP,
     MERCURY_SUPPLIED,
+    DriverLookupBusyError,
+    DriverLookupNotReadyError,
+    DriverLookupStateError,
     MercuryDriver,
-    ResolveDriverBusyError,
-    ResolveDriverNotReadyError,
-    ResolveDriverStateError,
-    resolve_driver_session,
+    driver_lookup_session,
 )
 
 pytestmark = pytest.mark.skipif(
@@ -104,10 +104,10 @@ async def _one(conn, sql, **params):
 
 
 async def _resolve(engine, doc_id, *, expected=2, resolved_by=LICENCE_LOOKUP):
-    async with resolve_driver_session(engine, doc_id) as repository:
+    async with driver_lookup_session(engine, doc_id) as repository:
         run = await repository.start_or_resume(now=datetime.now(UTC))
         assert run.completed is None
-        key, evaluation = await repository.resolve(
+        key, evaluation = await repository.attach_driver(
             run.run_id,
             mercury_driver=MERCURY,
             expected_document_count=expected,
@@ -151,11 +151,11 @@ def test_a_supplied_driver_is_refreshed_and_its_licence_and_page_licence_returne
             engine,
             doc_id,
         ):
-            async with resolve_driver_session(engine, doc_id) as repository:
+            async with driver_lookup_session(engine, doc_id) as repository:
                 attempt = await repository.start_or_resume(now=datetime.now(UTC))
                 assert attempt.driver_key and attempt.driver_licence == LICENCE
                 assert attempt.licence_read == "07654321"
-                key, _ = await repository.resolve(
+                key, _ = await repository.attach_driver(
                     attempt.run_id,
                     mercury_driver=MERCURY,
                     expected_document_count=1,
@@ -217,9 +217,9 @@ def test_replay_returns_the_committed_driver_without_a_new_attempt():
     async def run():
         async with database() as (engine, doc_id):
             _, key, _ = await _resolve(engine, doc_id)
-            async with resolve_driver_session(engine, doc_id) as repository:
-                with pytest.raises(ResolveDriverBusyError):
-                    async with resolve_driver_session(engine, doc_id):
+            async with driver_lookup_session(engine, doc_id) as repository:
+                with pytest.raises(DriverLookupBusyError):
+                    async with driver_lookup_session(engine, doc_id):
                         pytest.fail("second worker acquired the same document")
                 replay = await repository.start_or_resume(now=datetime.now(UTC))
             assert replay.completed.driver_key == key
@@ -232,12 +232,12 @@ def test_replay_returns_the_committed_driver_without_a_new_attempt():
 def test_manual_review_routes_the_document_and_replays_its_reason():
     async def run():
         async with database() as (engine, doc_id):
-            async with resolve_driver_session(engine, doc_id) as repository:
+            async with driver_lookup_session(engine, doc_id) as repository:
                 attempt = await repository.start_or_resume(now=datetime.now(UTC))
                 await repository.manual_review(
                     attempt.run_id, reason=DRIVER_NOT_FOUND, now=datetime.now(UTC)
                 )
-            async with resolve_driver_session(engine, doc_id) as repository:
+            async with driver_lookup_session(engine, doc_id) as repository:
                 replay = await repository.start_or_resume(now=datetime.now(UTC))
             assert replay.completed.driver_key is None
             assert replay.completed.manual_review_reason == DRIVER_NOT_FOUND
@@ -261,7 +261,7 @@ def test_manual_review_routes_the_document_and_replays_its_reason():
 def test_failed_attempt_is_recorded_and_the_next_attempt_recovers():
     async def run():
         async with database() as (engine, doc_id):
-            async with resolve_driver_session(engine, doc_id) as repository:
+            async with driver_lookup_session(engine, doc_id) as repository:
                 first = await repository.start_or_resume(now=datetime.now(UTC))
                 await repository.fail(
                     first.run_id,
@@ -278,15 +278,15 @@ def test_failed_attempt_is_recorded_and_the_next_attempt_recovers():
 @pytest.mark.parametrize(
     "status,error",
     [
-        ("EXTRACTING", ResolveDriverNotReadyError),
-        ("MANUAL_REVIEW", ResolveDriverStateError),
+        ("EXTRACTING", DriverLookupNotReadyError),
+        ("MANUAL_REVIEW", DriverLookupStateError),
     ],
 )
 def test_documents_not_ready_or_reviewed_elsewhere_are_refused(status, error):
     async def run():
         async with (
             database(status=status) as (engine, doc_id),
-            resolve_driver_session(engine, doc_id) as repository,
+            driver_lookup_session(engine, doc_id) as repository,
         ):
             with pytest.raises(error):
                 await repository.start_or_resume(now=datetime.now(UTC))

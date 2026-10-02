@@ -1,4 +1,4 @@
-"""DB unit of work for the Resolve Driver activity.
+"""DB unit of work for the Driver Lookup activity.
 
 See docs/development/stages/03-document-orchestration.md ("Activity: Resolve
 Driver"). Like Normalize and Rule Engine, every write for one document goes
@@ -104,29 +104,29 @@ _READY = "EXTRACTED"
 _NOT_READY = {"RECEIVED", "DOWNLOADED", "EXTRACTING"}
 
 
-class ResolveDriverBusyError(RuntimeError):
-    """Another Resolve Driver session already holds the document lock."""
+class DriverLookupBusyError(RuntimeError):
+    """Another Driver Lookup session already holds the document lock."""
 
     def __init__(self) -> None:
         super().__init__("Driver resolution is already running for this document.")
 
 
-class ResolveDriverNotReadyError(RuntimeError):
+class DriverLookupNotReadyError(RuntimeError):
     """The document hasn't been extracted yet."""
 
     def __init__(self) -> None:
         super().__init__("Driver resolution is not ready for this document.")
 
 
-class ResolveDriverStateError(RuntimeError):
-    """Missing document or inconsistent Resolve Driver state."""
+class DriverLookupStateError(RuntimeError):
+    """Missing document or inconsistent Driver Lookup state."""
 
     def __init__(self) -> None:
         super().__init__("Driver resolution state is invalid for this operation.")
 
 
 @dataclass(frozen=True)
-class ResolveOutcome:
+class DriverLookupOutcome:
     """A committed result: the driver, or the manual-review reason."""
 
     driver_key: str | None
@@ -134,13 +134,13 @@ class ResolveOutcome:
 
 
 @dataclass(frozen=True)
-class ResolveDriverRun:
+class DriverLookupRun:
     run_id: int
     attempt_no: int
     driver_key: str | None  # Mercury-supplied, set by Ingest
     driver_licence: str | None  # that driver's canonical licence
     licence_read: str | None  # canonical licence read off the page
-    completed: ResolveOutcome | None = None
+    completed: DriverLookupOutcome | None = None
 
 
 @dataclass(frozen=True)
@@ -153,8 +153,8 @@ class MercuryDriver:
     last_name: str | None
 
 
-class ResolveDriverRepository:
-    """Resolve Driver DB operations bound to one dedicated async connection."""
+class DriverLookupRepository:
+    """Driver Lookup DB operations bound to one dedicated async connection."""
 
     def __init__(self, conn: AsyncConnection, *, document_id: str) -> None:
         self._conn = conn
@@ -163,9 +163,9 @@ class ResolveDriverRepository:
     def _check_session(self) -> None:
         # A transparently reconnected connection would not own our advisory lock.
         if self._conn.closed or self._conn.invalidated:
-            raise ResolveDriverBusyError()
+            raise DriverLookupBusyError()
 
-    async def start_or_resume(self, *, now: datetime) -> ResolveDriverRun:
+    async def start_or_resume(self, *, now: datetime) -> DriverLookupRun:
         """Start a new attempt, or return the committed outcome."""
         self._check_session()
         async with self._conn.begin():
@@ -177,10 +177,10 @@ class ResolveDriverRepository:
                 )
             ).first()
             if doc is None:
-                raise ResolveDriverStateError()
+                raise DriverLookupStateError()
             status, driver_key = doc
             if status in _NOT_READY:
-                raise ResolveDriverNotReadyError()
+                raise DriverLookupNotReadyError()
 
             last = (
                 await self._conn.execute(
@@ -202,22 +202,27 @@ class ResolveDriverRepository:
                 )
             ).first()
             if last is not None and last[2] == _SUCCEEDED and driver_key:
-                return ResolveDriverRun(
-                    last[0], last[1], driver_key, None, None, ResolveOutcome(driver_key)
+                return DriverLookupRun(
+                    last[0],
+                    last[1],
+                    driver_key,
+                    None,
+                    None,
+                    DriverLookupOutcome(driver_key),
                 )
             if status == "MANUAL_REVIEW":
                 if last is not None and last[3] in MANUAL_REVIEW_REASONS:
-                    return ResolveDriverRun(
+                    return DriverLookupRun(
                         last[0],
                         last[1],
                         None,
                         None,
                         None,
-                        ResolveOutcome(None, last[3]),
+                        DriverLookupOutcome(None, last[3]),
                     )
-                raise ResolveDriverStateError()  # sent to review by another stage
+                raise DriverLookupStateError()  # sent to review by another stage
             if status != _READY:
-                raise ResolveDriverStateError()
+                raise DriverLookupStateError()
 
             driver_licence = None
             if driver_key:
@@ -277,11 +282,11 @@ class ResolveDriverRepository:
                     .returning(dmer_stage_run.c.id)
                 )
             ).scalar_one()
-            return ResolveDriverRun(
+            return DriverLookupRun(
                 run_id, attempt_no, driver_key, driver_licence, licence_read
             )
 
-    async def resolve(
+    async def attach_driver(
         self,
         run_id: int,
         *,
@@ -328,7 +333,7 @@ class ResolveDriverRepository:
                 .returning(_document.c.id)
             )
             if attached.first() is None:
-                raise ResolveDriverStateError()
+                raise DriverLookupStateError()
             evaluation = {
                 "expected_document_count": expected_document_count,
                 "last_mercury_check_at": now,
@@ -375,7 +380,7 @@ class ResolveDriverRepository:
                 .returning(_document.c.id)
             )
             if routed.first() is None:
-                raise ResolveDriverStateError()
+                raise DriverLookupStateError()
 
     async def fail(
         self, run_id: int, *, ended_at: datetime, error_code: str, error_detail: str
@@ -425,14 +430,14 @@ class ResolveDriverRepository:
             .returning(dmer_stage_run.c.id)
         )
         if finished.first() is None:
-            raise ResolveDriverStateError()
+            raise DriverLookupStateError()
 
 
 @asynccontextmanager
-async def resolve_driver_session(engine: AsyncEngine, document_id: str):
-    """Yield a per-document Resolve Driver repository bound to one connection
-    holding the document's advisory lock (contention: ``ResolveDriverBusyError``)."""
+async def driver_lookup_session(engine: AsyncEngine, document_id: str):
+    """Yield a per-document Driver Lookup repository bound to one connection
+    holding the document's advisory lock (contention: ``DriverLookupBusyError``)."""
     async with advisory_lock_session(
-        engine, f"resolve-driver:{document_id}", busy_error=ResolveDriverBusyError
+        engine, f"driver-lookup:{document_id}", busy_error=DriverLookupBusyError
     ) as conn:
-        yield ResolveDriverRepository(conn, document_id=document_id)
+        yield DriverLookupRepository(conn, document_id=document_id)

@@ -108,7 +108,7 @@ def mercury_settings() -> MercurySettings:
 
 @dataclass(frozen=True)
 class MercuryDriverSettings:
-    """Mercury ``GET by driver_licence`` settings (Resolve Driver and the
+    """Mercury ``GET by driver_licence`` settings (Driver Lookup and the
     Decision Gateway; see ``docs/development/stages/03-document-orchestration.md``).
 
     ``base_url`` is the endpoint the licence number is appended to as a path

@@ -2,7 +2,7 @@
 
 Wraps the batch/backlog GET API used by the Page Poller and Webhook Listener
 (see ``docs/development/stages/01-ingest.md``) and the ``GET by driver_licence``
-lookup used by Resolve Driver (``03-document-orchestration.md``): cursor-based pagination
+lookup used by Driver Lookup (``03-document-orchestration.md``): cursor-based pagination
 (question M-2, confirmed), Bearer-token auth from a Key Vault reference
 (Mercury is outside our tenant boundary, over ExpressRoute -- key/credential
 auth, not Managed Identity, per question M-4), and retry/circuit-breaker
@@ -10,7 +10,7 @@ wrapping, matching every other external client in this package.
 
 Case/webhook payload parsing and Mercury write-back (POST/PUT for outcomes,
 case creation) are not implemented here yet -- this covers only the read
-paths Ingest and Resolve Driver need. Extend this module rather than adding a
+paths Ingest and Driver Lookup need. Extend this module rather than adding a
 second Mercury client when that work starts.
 
 Each API's settings are read when that API is first used, so a service that

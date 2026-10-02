@@ -6,14 +6,14 @@ per that doc's replay rules -- no I/O, no environment reads, no
 this calls (the retry settings arrive in the orchestration input, read from
 the environment by the starter).
 
-ResolveDriver -> NormalizeDmer -> RunRuleEngine -> SignalDriver.
+DriverLookup -> NormalizeDmer -> RunRuleEngine -> SignalDriver.
 
 Failure handling: every activity runs with the retry policy, so a transient
 failure is retried with backoff. A document that still can't be processed --
 retries exhausted, or a *poison* result (an error retrying can't fix, which
 the activity returns instead of raising) -- is routed to ``MANUAL_REVIEW`` by
 ``RouteToManualReview`` with the reason ``<activity>:<error>``, and the
-orchestration ends. Resolve Driver routes its own unresolvable documents.
+orchestration ends. Driver Lookup routes its own unresolvable documents.
 """
 
 from __future__ import annotations
@@ -54,11 +54,11 @@ def _manual_review(context, document_id: str, reason: str, retry: df.RetryOption
 
 
 def document_orchestration(context: df.DurableOrchestrationContext):
-    """ResolveDriver -> NormalizeDmer -> RunRuleEngine -> SignalDriver.
+    """DriverLookup -> NormalizeDmer -> RunRuleEngine -> SignalDriver.
 
     Input: ``{"document_id", "driver_key", "extracted_blob_url", "retry"}``
     (the Document Orchestration trigger contract; ``retry`` is
-    ``{"first_retry_interval_ms", "max_attempts"}``). Resolve Driver reads the
+    ``{"first_retry_interval_ms", "max_attempts"}``). Driver Lookup reads the
     document's driver from the database, where Ingest recorded Mercury's.
     Activities get ids and blob URLs only, never document content.
     """
@@ -67,12 +67,12 @@ def document_orchestration(context: df.DurableOrchestrationContext):
     retry = _retry_options(trigger_input)
 
     driver, failure = yield from _call(
-        context, "ResolveDriver", {"document_id": document_id}, retry
+        context, "DriverLookup", {"document_id": document_id}, retry
     )
     if failure:
         return (yield from _manual_review(context, document_id, failure, retry))
     if driver.get("manual_review"):
-        return driver  # Resolve Driver already routed it
+        return driver  # Driver Lookup already routed it
 
     normalized, failure = yield from _call(
         context,

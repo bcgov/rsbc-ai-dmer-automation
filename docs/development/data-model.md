@@ -47,15 +47,15 @@ document's current position in the pipeline.
 | `received_date` / `dps_date` | timestamptz | `dps_date` empty = "not yet triaged" (question I-9, confirmed reliable signal). Refreshed at decision time only. |
 | `queue` / `business_area` | text | DPS General / DPS Unknown, etc. |
 | `mercury_case_id` | text, nullable | Set when Mercury supplied a case. |
-| `driver_key` | uuid FK → `driver.driver_key`, nullable | Null until Mercury supplies a driver object at Ingest. When Mercury supplies none it stays null — it is resolved by [Document Orchestration's Resolve Driver activity](stages/03-document-orchestration.md#activity-resolve-driver), not by Extraction. |
+| `driver_key` | uuid FK → `driver.driver_key`, nullable | Null until Mercury supplies a driver object at Ingest. When Mercury supplies none it stays null — it is resolved by [Document Orchestration's Driver Lookup activity](stages/03-document-orchestration.md#activity-driver-lookup), not by Extraction. |
 | `document_url` | text, nullable | Mercury's pre-signed source URL, set by the Page Poller from the batch GET response. Not carried on the `dmer-ingest` message — the Ingest Function re-reads it from here (see [Ingest](stages/01-ingest.md)). Left populated after download, not nulled out, as a fallback for a DLQ replay/re-poll — pending question M-1's answer on presigned URL TTL and refresh. |
 | `raw_blob_url` | text | Set by Ingest once the source PDF lands in `raw-dmer`. |
 | `pipeline_status` | enum | Health/lifecycle state — see [Status modelling](#status-modelling). |
 | `current_stage` | enum | Position — see [Status modelling](#status-modelling). A stage that finishes sets the **next** stage (Ingest → `EXTRACT` with `DOWNLOADED`; Extraction → `NORMALIZE` with `EXTRACTED`). Status-only writes such as `MANUAL_REVIEW` leave it unchanged, so it still shows where the document stopped. |
 | `attempt_count` | int | Incremented on republish (sweeper) or stage retry. |
-| `driver_resolved_by` | text, nullable | V0005, set by Resolve Driver: `MERCURY_SUPPLIED` (Mercury's batch record named the driver) or `LICENCE_LOOKUP` (the page's licence matched exactly one Mercury driver — the Decision Gateway records it as `proposed_driver_key` / `MAP_DRIVER`, I-11). |
+| `driver_resolved_by` | text, nullable | V0005, set by Driver Lookup: `MERCURY_SUPPLIED` (Mercury's batch record named the driver) or `LICENCE_LOOKUP` (the page's licence matched exactly one Mercury driver — the Decision Gateway records it as `proposed_driver_key` / `MAP_DRIVER`, I-11). |
 | `licence_mismatch` | bool, nullable | V0005. The licence read off the page differs from the Mercury-supplied driver's; Mercury's driver is kept. |
-| `manual_review_reason` | text, nullable | V0006. Why the Document Orchestration routed the document to `MANUAL_REVIEW` — a code, never content: Resolve Driver's reason (`LICENCE_UNREADABLE`, `DRIVER_NOT_FOUND`, `DRIVER_AMBIGUOUS`) or `<activity>:<error>` (a poison result, or `RETRIES_EXHAUSTED`). The first reason is kept. |
+| `manual_review_reason` | text, nullable | V0006. Why the Document Orchestration routed the document to `MANUAL_REVIEW` — a code, never content: Driver Lookup's reason (`LICENCE_UNREADABLE`, `DRIVER_NOT_FOUND`, `DRIVER_AMBIGUOUS`) or `<activity>:<error>` (a poison result, or `RETRIES_EXHAUSTED`). The first reason is kept. |
 | `first_seen_at` / `updated_at` | timestamptz | `updated_at` is set on **every** write to this row, by every stage — it is what the reconciliation sweeper's stall-detection query scans. |
 
 `pipeline_status` changes are **atomic compare-and-set** writes (`UPDATE ... WHERE id = :id AND
@@ -104,8 +104,8 @@ Mercury returns no driver object.
 
 `INSERT ... ON CONFLICT (licence_number) DO UPDATE` — written by Ingest (when Mercury supplies
 a driver object). Extraction does **not** write it; it records `dmer_extraction.licence_number_read`
-only. Creating a row from a page-read licence belongs to [Document Orchestration's Resolve Driver
-activity](stages/03-document-orchestration.md#activity-resolve-driver).
+only. Creating a row from a page-read licence belongs to [Document Orchestration's Driver Lookup
+activity](stages/03-document-orchestration.md#activity-driver-lookup).
 
 ### `driver_evaluation`
 
@@ -116,7 +116,7 @@ The join unit — the row that makes "waiting on siblings" explicit and queryabl
 | `id` | uuid PK | |
 | `driver_key` | uuid FK → `driver.driver_key` | |
 | `status` | enum | `WAITING`, `STALE`, `READY`, `EVALUATING`, `DECIDED`, `POSTED` — see [Status modelling](#status-modelling). |
-| `expected_document_count` | int | Set from the Mercury `GET by driver_licence` call — by [Document Orchestration's Resolve Driver activity](stages/03-document-orchestration.md#activity-resolve-driver), **not** by Extraction; **re-verified** at decision time (question: a new document may have arrived mid-wait). |
+| `expected_document_count` | int | Set from the Mercury `GET by driver_licence` call — by [Document Orchestration's Driver Lookup activity](stages/03-document-orchestration.md#activity-driver-lookup), **not** by Extraction; **re-verified** at decision time (question: a new document may have arrived mid-wait). |
 | `completed_document_count` | int | Incremented by the rule-engine activity each time a sibling document reaches `RULES_APPLIED`. |
 | `last_mercury_check_at` | timestamptz | |
 | `evaluated_at` | timestamptz, nullable | |

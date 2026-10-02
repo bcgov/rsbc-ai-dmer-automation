@@ -32,7 +32,7 @@ orchestrator — see [Alignment gaps](#alignment-gaps-vs-current-code).
 4. Persist **all** candidate outcomes, not just the winner, to `rule_evaluation`.
 5. Increment the driver's `completed_document_count` (the `driver_evaluation` row was created or
    attached earlier in the same orchestration by
-   [Resolve Driver](03-document-orchestration.md#activity-resolve-driver)).
+   [Driver Lookup](03-document-orchestration.md#activity-driver-lookup)).
 6. Signal the driver by publishing to `driver-decision` (this happens at the orchestrator level, at
    the end of the whole document orchestration — see
    [Document Orchestration](03-document-orchestration.md#orchestration-flow)).
@@ -49,7 +49,7 @@ that question unanswerable after the fact.
 |---|---|---|
 | `rule_evaluation` | `INSERT` (one row **per evaluation**, not per document — a re-run creates a new row) | `document_id`, `rules_version`, `all_outcomes` (jsonb — `{"rule_engine_outcome_code": ..., "candidates": [...]}`: every candidate with its inputs, and the engine's own outcome), `selected_outcome_code`, `selected_reason`, `priority_rank`, `evaluated_at`. When a clean pass needs the driving-record check, `selected_outcome_code` is `IN` while `rule_engine_outcome_code` keeps the engine's `CP`, and `selected_reason` says why. |
 | `rules_version` | `INSERT` (only when a new `rules.json` is published) | `version`, `blob_url`, `checksum`, `activated_at`, `activated_by`. The activity finds the active ruleset's row by its `checksum` (sha256). Until a publishing process exists, a ruleset nobody registered is recorded by the activity itself as `sha256-<first 12 hex>` with `activated_by = 'rule-engine-activity (unregistered active ruleset)'` — never evaluated against without a version row. |
-| `dmer_document` | `UPDATE` | `pipeline_status = RULES_APPLIED`, then `AWAITING_DRIVER_COMPLETION` once the driver is signalled (not built yet — the driver-decision publish needs Resolve Driver); `current_stage = DECISION`, `updated_at`. |
+| `dmer_document` | `UPDATE` | `pipeline_status = RULES_APPLIED`, then `AWAITING_DRIVER_COMPLETION` once the driver is signalled (not built yet — the driver-decision publish needs Driver Lookup); `current_stage = DECISION`, `updated_at`. |
 | `driver_evaluation` | `UPDATE` | `completed_document_count` incremented — this counter and `expected_document_count` are what make the wait observable. Only when a `driver_evaluation_document` marker row is newly inserted (see [Idempotency](#idempotency-requirements)); a document with no open evaluation is completed but not counted (logged as a warning). |
 | `driver_evaluation_document` | `INSERT ... ON CONFLICT DO NOTHING` (V0004) | `driver_evaluation_id`, `document_id`, `counted_at` — the once-per-document marker. |
 | `dmer_stage_run` | `INSERT` then `UPDATE` | `stage = RULES`, `status`, `attempt_no`, timings; the rules version goes in `model_version` (the stage's version column, as Normalize records its model there). |

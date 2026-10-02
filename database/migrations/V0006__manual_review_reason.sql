@@ -2,7 +2,7 @@
 --
 -- Why a document was routed to MANUAL_REVIEW by the Document Orchestration
 -- (docs/development/stages/03-document-orchestration.md, "Failure handling").
--- A code, never document content: either Resolve Driver's reason
+-- A code, never document content: either Driver Lookup's reason
 -- (LICENCE_UNREADABLE, DRIVER_NOT_FOUND, DRIVER_AMBIGUOUS) or
 -- "<activity>:<error>" when an activity failed for good -- e.g.
 -- "NormalizeDmer:NormalizationValidationError" (poison) or

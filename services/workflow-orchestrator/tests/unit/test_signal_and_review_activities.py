@@ -256,7 +256,7 @@ def test_other_errors_still_raise_for_the_retry_policy():
 @pytest.mark.parametrize(
     "module,name",
     [
-        ("resolve_driver", "ResolveDriver"),
+        ("driver_lookup", "DriverLookup"),
         ("normalize", "NormalizeDmer"),
         ("rule_engine", "RunRuleEngine"),
         ("signal_driver", "SignalDriver"),

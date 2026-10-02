@@ -3,11 +3,11 @@
 Durable activity functions for the Document Orchestration stage (see
 docs/development/stages/03-document-orchestration.md).
 
-- **Resolve Driver** (`resolve_driver.py`) -- first: keeps the driver Mercury
+- **Driver Lookup** (`driver_lookup.py`) -- first: keeps the driver Mercury
   supplied, or looks up the licence read off the page with Mercury's
   `GET by driver_licence`; creates or attaches the driver's open
   `driver_evaluation` with `expected_document_count`. Unresolvable documents
-  go to `MANUAL_REVIEW`. DB unit of work: `dmer_common.db.resolve_driver`.
+  go to `MANUAL_REVIEW`. DB unit of work: `dmer_common.db.driver_lookup`.
 - **Normalize** (`normalize.py`) -- calls Azure OpenAI to derive rule-ready
   fields from the extracted content. Registered; the actual logic lives in
   `dmer_common.normalization` (see docs/development/stages/04-activity-normalize.md),

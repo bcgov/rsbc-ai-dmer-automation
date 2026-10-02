@@ -80,7 +80,7 @@ class RawMessage(PipelineMessage):
 
     ``blob_url`` points at the source PDF under the ``raw-dmer`` container.
     ``driver_key`` may be null: Ingest supplies it only when Mercury returned a
-    driver object; otherwise Document Orchestration's Resolve Driver activity
+    driver object; otherwise Document Orchestration's Driver Lookup activity
     resolves it (Extraction forwards it as received).
     """
 

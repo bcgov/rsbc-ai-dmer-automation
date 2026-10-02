@@ -1,7 +1,7 @@
--- V0005__resolve_driver_activity.sql
+-- V0005__driver_lookup_activity.sql
 --
--- What the Resolve Driver activity (docs/development/stages/03-document-orchestration.md,
--- "Activity: Resolve Driver") needs beyond V0001. Additive only (expand step).
+-- What the Driver Lookup activity (docs/development/stages/03-document-orchestration.md,
+-- "Activity: Driver Lookup") needs beyond V0001. Additive only (expand step).
 
 -- Its own dmer_stage_run rows: every activity writes one (03, "Two conventions").
 ALTER TYPE dmer_stage ADD VALUE IF NOT EXISTS 'DRIVER_LOOKUP' BEFORE 'NORMALIZE';
@@ -15,6 +15,6 @@ ALTER TYPE dmer_stage ADD VALUE IF NOT EXISTS 'DRIVER_LOOKUP' BEFORE 'NORMALIZE'
 --                       MAP_DRIVER (question I-11: the AI may map automatically).
 ALTER TABLE dmer_document ADD COLUMN IF NOT EXISTS driver_resolved_by text;
 -- The licence read off the page differs from the Mercury-supplied driver's.
--- Mercury's driver is kept; this records the discrepancy (03, Resolve Driver
+-- Mercury's driver is kept; this records the discrepancy (03, Driver Lookup
 -- step 1 -- where to store it was an open question).
 ALTER TABLE dmer_document ADD COLUMN IF NOT EXISTS licence_mismatch boolean;
