@@ -35,6 +35,7 @@ def _set_required(monkeypatch):
         "POSTGRES_PORT",
         "POSTGRES_SSLMODE",
         "POSTGRES_PASSWORD",
+        "OCR_CONCURRENCY",
     ):
         monkeypatch.delenv(key, raising=False)
 
@@ -57,6 +58,8 @@ def test_loads_required_and_applies_defaults(monkeypatch):
     assert settings.postgres_port == 5432
     assert settings.postgres_sslmode == "require"
     assert settings.postgres_password is None
+    # tiled OCR runs 8 tiles at a time unless configured
+    assert settings.ocr_concurrency == 8
     # unused and no store exists yet: optional, not a startup failure
     assert settings.app_configuration_endpoint is None
 
@@ -108,3 +111,12 @@ def test_postgres_password_is_not_in_repr(monkeypatch):
 
     assert settings.postgres_password == "FAKE-local-pw"  # pragma: allowlist secret
     assert "FAKE-local-pw" not in repr(settings)
+
+
+@pytest.mark.parametrize(("raw", "expected"), [("4", 4), ("1", 1), ("0", 1)])
+def test_ocr_concurrency_from_env(monkeypatch, raw, expected):
+    """GIVEN OCR_CONCURRENCY WHEN load_settings THEN it is used, never below 1."""
+    _set_required(monkeypatch)
+    monkeypatch.setenv("OCR_CONCURRENCY", raw)
+
+    assert load_settings().ocr_concurrency == expected

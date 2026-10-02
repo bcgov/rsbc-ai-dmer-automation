@@ -126,6 +126,7 @@ class PipelineConfig:
 
     custom_model_id: str
     prompt_version: str | None = None
+    ocr_concurrency: int = di_ocr.DEFAULT_OCR_CONCURRENCY
 
 
 class Pipeline:
@@ -262,6 +263,7 @@ class Pipeline:
                     page_number=render.PAGE_NUMBER,
                     page_width=image.width,
                     page_height=image.height,
+                    max_workers=self._cfg.ocr_concurrency,
                 )
             with failure_step(FailureCode.ARTIFACT_WRITE_FAILED):
                 self._blob.upload_json(extracted_dmer(), ocr_path(doc_id), ocr_result)
