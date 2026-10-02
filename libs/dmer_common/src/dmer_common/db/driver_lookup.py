@@ -15,7 +15,8 @@ A resolved document, in one transaction:
 - marks the ``DRIVER_LOOKUP`` stage run ``SUCCEEDED``.
 
 A document that can't be resolved goes to ``MANUAL_REVIEW``, with the reason
-as the stage run's ``error_code`` and ``dmer_document.manual_review_reason``.
+as the stage run's ``error_code``, and a ``processing_error`` row
+(``PERMANENT_BUSINESS``: the pipeline worked; question I-12 sends these to a human).
 """
 
 from __future__ import annotations
@@ -44,10 +45,11 @@ from ._advisory import advisory_lock_session
 from .dmer_document import _pipeline_status_enum
 from .dmer_stage_run import dmer_stage_run
 from .driver import driver, normalize_licence_number
+from .processing_error import FailureCategory, record_processing_error
 
 metadata = MetaData()
 
-# The dmer_document columns this stage reads and writes (V0001, V0005, V0006).
+# The dmer_document columns this stage reads and writes (V0001, V0005).
 _document = Table(
     "dmer_document",
     metadata,
@@ -58,7 +60,6 @@ _document = Table(
     Column("updated_at", DateTime(timezone=True)),
     Column("driver_resolved_by", Text),
     Column("licence_mismatch", Boolean),
-    Column("manual_review_reason", Text),
 )
 _extraction = Table(
     "dmer_extraction",
@@ -372,15 +373,20 @@ class DriverLookupRepository:
                     _document.c.id == self._document_id,
                     _document.c.pipeline_status == _READY,
                 )
-                .values(
-                    pipeline_status="MANUAL_REVIEW",
-                    manual_review_reason=reason,
-                    updated_at=now,
-                )
+                .values(pipeline_status="MANUAL_REVIEW", updated_at=now)
                 .returning(_document.c.id)
             )
             if routed.first() is None:
                 raise DriverLookupStateError()
+            await record_processing_error(
+                self._conn,
+                document_id=self._document_id,
+                stage=_STAGE,
+                category=FailureCategory.PERMANENT_BUSINESS,
+                reason_code=reason,
+                message=MANUAL_REVIEW_REASONS[reason],
+                now=now,
+            )
 
     async def fail(
         self, run_id: int, *, ended_at: datetime, error_code: str, error_detail: str

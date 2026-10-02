@@ -132,7 +132,12 @@ def test_a_poison_result_routes_to_manual_review_and_stops(steps, failing):
     assert task == (
         "TASK",
         "RouteToManualReview",
-        {"document_id": DOC, "reason": reason},
+        {
+            "document_id": DOC,
+            "stage": orch.ACTIVITY_STAGES[failing],
+            "category": "PERMANENT_BUSINESS",
+            "reason": reason,
+        },
     )
     assert _finish(gen, {"routed": True}) == {"manual_review": True, "reason": reason}
     assert _names(context)[-2:] == [failing, "RouteToManualReview"]
@@ -152,7 +157,12 @@ def test_retries_exhausted_routes_to_manual_review(steps, failing):
     assert task == (
         "TASK",
         "RouteToManualReview",
-        {"document_id": DOC, "reason": reason},
+        {
+            "document_id": DOC,
+            "stage": orch.ACTIVITY_STAGES[failing],
+            "category": "UNKNOWN",
+            "reason": reason,
+        },
     )
     assert "private detail" not in repr(context.calls)
     assert _finish(gen, {"routed": True}) == {"manual_review": True, "reason": reason}
@@ -184,3 +194,12 @@ def test_functions_host_registers_orchestrator_by_its_name():
     assert any(
         b["type"] == "orchestrationTrigger" and b["name"] == "context" for b in bindings
     )
+
+
+def test_every_activity_has_a_stage_for_its_failures():
+    assert orch.ACTIVITY_STAGES == {
+        "DriverLookup": "DRIVER_LOOKUP",
+        "NormalizeDmer": "NORMALIZE",
+        "RunRuleEngine": "RULES",
+        "SignalDriver": "DECISION",
+    }

@@ -197,20 +197,31 @@ def review_deps(monkeypatch):
 
 
 def test_routes_with_the_reason_code(review_deps):
-    payload = {"document_id": DOC_ID, "reason": "NormalizeDmer:RETRIES_EXHAUSTED"}
+    payload = {
+        "document_id": DOC_ID,
+        "stage": "NORMALIZE",
+        "category": "UNKNOWN",
+        "reason": "NormalizeDmer:RETRIES_EXHAUSTED",
+    }
     assert asyncio.run(review.route_to_manual_review_activity(payload)) == {
         "routed": True
     }
-    assert (
-        review_deps.route.call_args.kwargs["reason"]
-        == "NormalizeDmer:RETRIES_EXHAUSTED"
-    )
+    kwargs = review_deps.route.call_args.kwargs
+    assert kwargs["reason_code"] == "NormalizeDmer:RETRIES_EXHAUSTED"
+    assert kwargs["stage"] == "NORMALIZE"
+    assert kwargs["category"] == "UNKNOWN"
+    assert "NormalizeDmer" not in kwargs["message"]  # a fixed description
     review_deps.engine.dispose.assert_awaited_once()
 
 
 def test_an_already_terminal_document_is_reported_not_rerouted(review_deps):
     review_deps.route.return_value = False
-    payload = {"document_id": DOC_ID, "reason": "RunRuleEngine:RETRIES_EXHAUSTED"}
+    payload = {
+        "document_id": DOC_ID,
+        "stage": "RULES",
+        "category": "UNKNOWN",
+        "reason": "RunRuleEngine:RETRIES_EXHAUSTED",
+    }
     assert asyncio.run(review.route_to_manual_review_activity(payload)) == {
         "routed": False
     }
@@ -219,9 +230,21 @@ def test_an_already_terminal_document_is_reported_not_rerouted(review_deps):
 @pytest.mark.parametrize(
     "payload",
     [
-        {"document_id": DOC_ID},
-        {"document_id": DOC_ID, "reason": "free text with spaces"},
-        {"document_id": "nope", "reason": "X"},
+        {"document_id": DOC_ID, "stage": "RULES", "category": "UNKNOWN"},
+        {
+            "document_id": DOC_ID,
+            "stage": "RULES",
+            "category": "UNKNOWN",
+            "reason": "free text",
+        },
+        {"document_id": "nope", "stage": "RULES", "category": "UNKNOWN", "reason": "X"},
+        {
+            "document_id": DOC_ID,
+            "stage": "MADE_UP",
+            "category": "UNKNOWN",
+            "reason": "X",
+        },
+        {"document_id": DOC_ID, "stage": "RULES", "category": "MADE_UP", "reason": "X"},
     ],
 )
 def test_a_reason_must_be_a_code(review_deps, payload):

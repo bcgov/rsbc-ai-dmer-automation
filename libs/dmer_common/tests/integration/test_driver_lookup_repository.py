@@ -248,9 +248,12 @@ def test_manual_review_routes_the_document_and_replays_its_reason():
                 assert await _one(
                     conn, "SELECT status::text, error_code FROM dmer_stage_run"
                 ) == ("FAILED", DRIVER_NOT_FOUND)
+                # The pipeline worked: a business route, recorded as such (I-12).
                 assert await _one(
-                    conn, "SELECT manual_review_reason FROM dmer_document"
-                ) == (DRIVER_NOT_FOUND,)
+                    conn,
+                    "SELECT stage::text, failure_category::text, error_class::text, "
+                    "reason_code FROM processing_error",
+                ) == ("DRIVER_LOOKUP", "PERMANENT_BUSINESS", "POISON", DRIVER_NOT_FOUND)
                 assert await _one(conn, "SELECT count(*) FROM driver_evaluation") == (
                     0,
                 )

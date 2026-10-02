@@ -20,6 +20,7 @@ from dmer_common.db.document_routing import (
     mark_awaiting_driver_completion,
     route_to_manual_review,
 )
+from dmer_common.db.processing_error import FailureCategory
 
 pytestmark = pytest.mark.skipif(
     not os.getenv("NORMALIZATION_TEST_DSN"), reason="requires disposable PostgreSQL"
@@ -76,7 +77,8 @@ async def _status(engine):
         return (
             await conn.execute(
                 text(
-                    "SELECT pipeline_status::text, manual_review_reason FROM dmer_document"
+                    "SELECT d.pipeline_status::text, e.reason_code FROM dmer_document d "
+                    "LEFT JOIN processing_error e ON e.document_id = d.id"
                 )
             )
         ).one()
@@ -125,13 +127,27 @@ def test_a_non_terminal_document_is_routed_with_its_reason(status):
             assert await route_to_manual_review(
                 engine,
                 doc_id,
-                reason="NormalizeDmer:RETRIES_EXHAUSTED",
+                stage="NORMALIZE",
+                category=FailureCategory.UNKNOWN,
+                reason_code="NormalizeDmer:RETRIES_EXHAUSTED",
+                message="fixed description",
                 now=datetime.now(UTC),
             )
             assert await _status(engine) == (
                 "MANUAL_REVIEW",
                 "NormalizeDmer:RETRIES_EXHAUSTED",
             )
+            async with engine.connect() as conn:
+                row = (
+                    await conn.execute(
+                        text(
+                            "SELECT stage::text, failure_category::text, error_class::text, "
+                            "message, redrive_count FROM processing_error"
+                        )
+                    )
+                ).one()
+            # UNKNOWN has no legacy error_class.
+            assert tuple(row) == ("NORMALIZE", "UNKNOWN", None, "fixed description", 0)
 
     asyncio.run(run())
 
@@ -142,10 +158,46 @@ def test_a_terminal_document_is_left_alone(status):
         async with document(status) as (engine, doc_id):
             assert (
                 await route_to_manual_review(
-                    engine, doc_id, reason="X:Y", now=datetime.now(UTC)
+                    engine,
+                    doc_id,
+                    stage="RULES",
+                    category=FailureCategory.UNKNOWN,
+                    reason_code="X:Y",
+                    message="m",
+                    now=datetime.now(UTC),
                 )
                 is False
             )
-            assert await _status(engine) == (status, None)
+            assert await _status(engine) == (status, None)  # no processing_error row
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize(
+    "category,legacy",
+    [
+        (FailureCategory.PERMANENT_BUSINESS, "POISON"),
+        (FailureCategory.TRANSIENT, "TRANSIENT"),
+        (FailureCategory.PROCESSING, "DOWNSTREAM"),
+    ],
+)
+def test_each_category_also_sets_its_legacy_error_class(category, legacy):
+    async def run():
+        async with document("RULES_APPLIED") as (engine, doc_id):
+            await route_to_manual_review(
+                engine,
+                doc_id,
+                stage="RULES",
+                category=category,
+                reason_code="RunRuleEngine:X",
+                message="m",
+                now=datetime.now(UTC),
+            )
+            async with engine.connect() as conn:
+                assert (
+                    await conn.execute(
+                        text("SELECT error_class::text FROM processing_error")
+                    )
+                ).scalar_one() == legacy
 
     asyncio.run(run())

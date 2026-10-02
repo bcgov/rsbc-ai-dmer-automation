@@ -55,7 +55,6 @@ document's current position in the pipeline.
 | `attempt_count` | int | Incremented on republish (sweeper) or stage retry. |
 | `driver_resolved_by` | text, nullable | V0005, set by Driver Lookup: `MERCURY_SUPPLIED` (Mercury's batch record named the driver) or `LICENCE_LOOKUP` (the page's licence matched exactly one Mercury driver — the Decision Gateway records it as `proposed_driver_key` / `MAP_DRIVER`, I-11). |
 | `licence_mismatch` | bool, nullable | V0005. The licence read off the page differs from the Mercury-supplied driver's; Mercury's driver is kept. |
-| `manual_review_reason` | text, nullable | V0006. Why the Document Orchestration routed the document to `MANUAL_REVIEW` — a code, never content: Driver Lookup's reason (`LICENCE_UNREADABLE`, `DRIVER_NOT_FOUND`, `DRIVER_AMBIGUOUS`) or `<activity>:<error>` (a poison result, or `RETRIES_EXHAUSTED`). The first reason is kept. |
 | `first_seen_at` / `updated_at` | timestamptz | `updated_at` is set on **every** write to this row, by every stage — it is what the reconciliation sweeper's stall-detection query scans. |
 
 `pipeline_status` changes are **atomic compare-and-set** writes (`UPDATE ... WHERE id = :id AND
@@ -237,7 +236,11 @@ as `dmer_decision`.
 ### `processing_error`
 
 The failure register — populated by the [DLQ Drain](stages/10-dlq-drain.md) and by handled errors
-(e.g. the reconciliation sweeper detecting a stall).
+(e.g. the reconciliation sweeper detecting a stall), and by the Document Orchestration whenever
+it routes a document to `MANUAL_REVIEW` (Driver Lookup's unresolvable licences as
+`PERMANENT_BUSINESS`; an activity's poison result as `PERMANENT_BUSINESS`; exhausted retries as
+`UNKNOWN`). `failure_category`, `reason_code` and `redrive_count` are added by V0006, which also
+makes the legacy `error_class` nullable (`UNKNOWN` has no legacy equivalent).
 
 | Column | Type | Notes |
 |---|---|---|

@@ -12,8 +12,16 @@ Failure handling: every activity runs with the retry policy, so a transient
 failure is retried with backoff. A document that still can't be processed --
 retries exhausted, or a *poison* result (an error retrying can't fix, which
 the activity returns instead of raising) -- is routed to ``MANUAL_REVIEW`` by
-``RouteToManualReview`` with the reason ``<activity>:<error>``, and the
-orchestration ends. Driver Lookup routes its own unresolvable documents.
+``RouteToManualReview``, which records a ``processing_error`` row, and the
+orchestration ends:
+
+- poison: ``PERMANENT_BUSINESS``, reason ``<activity>:<error>`` -- the
+  document itself can't be processed;
+- retries exhausted: ``UNKNOWN`` (the conservative default), reason
+  ``<activity>:RETRIES_EXHAUSTED`` -- the orchestrator can't see which
+  dependency failed; the activity's logs and stage run can.
+
+Driver Lookup routes its own unresolvable documents.
 """
 
 from __future__ import annotations
@@ -26,6 +34,14 @@ ORCHESTRATION_NAME = "DocumentOrchestration"
 DEFAULT_RETRY = {"first_retry_interval_ms": 30_000, "max_attempts": 3}
 RETRIES_EXHAUSTED = "RETRIES_EXHAUSTED"
 
+# The pipeline stage each activity's failures are recorded under.
+ACTIVITY_STAGES = {
+    "DriverLookup": "DRIVER_LOOKUP",
+    "NormalizeDmer": "NORMALIZE",
+    "RunRuleEngine": "RULES",
+    "SignalDriver": "DECISION",
+}
+
 
 def _retry_options(trigger_input: dict) -> df.RetryOptions:
     settings = {**DEFAULT_RETRY, **(trigger_input.get("retry") or {})}
@@ -34,23 +50,28 @@ def _retry_options(trigger_input: dict) -> df.RetryOptions:
     )
 
 
+def _failure(name: str, category: str, reason: str) -> dict:
+    return {"stage": ACTIVITY_STAGES[name], "category": category, "reason": reason}
+
+
 def _call(context, name: str, payload: dict, retry: df.RetryOptions):
-    """Run one activity with the retry policy; returns ``(result, failure_reason)``."""
+    """Run one activity with the retry policy; returns ``(result, failure)``."""
     try:
         result = yield context.call_activity_with_retry(name, retry, payload)
     # Retries exhausted; the cause is in the activity's logs and stage run.
     except Exception:  # noqa: BLE001
-        return None, f"{name}:{RETRIES_EXHAUSTED}"
+        return None, _failure(name, "UNKNOWN", f"{name}:{RETRIES_EXHAUSTED}")
     if isinstance(result, dict) and result.get("poison"):
-        return None, f"{name}:{result.get('error_code') or 'Poison'}"
+        code = result.get("error_code") or "Poison"
+        return None, _failure(name, "PERMANENT_BUSINESS", f"{name}:{code}")
     return result, None
 
 
-def _manual_review(context, document_id: str, reason: str, retry: df.RetryOptions):
+def _manual_review(context, document_id: str, failure: dict, retry: df.RetryOptions):
     yield context.call_activity_with_retry(
-        "RouteToManualReview", retry, {"document_id": document_id, "reason": reason}
+        "RouteToManualReview", retry, {"document_id": document_id, **failure}
     )
-    return {"manual_review": True, "reason": reason}
+    return {"manual_review": True, "reason": failure["reason"]}
 
 
 def document_orchestration(context: df.DurableOrchestrationContext):

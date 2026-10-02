@@ -131,8 +131,9 @@ answered:
   `driver_resolved_by` (`MERCURY_SUPPLIED` / `LICENCE_LOOKUP` — the latter is the Decision Gateway's
   `MAP_DRIVER` flag).
 - **Manual review**: `pipeline_status = MANUAL_REVIEW`, with the reason (`LICENCE_UNREADABLE`,
-  `DRIVER_NOT_FOUND`, `DRIVER_AMBIGUOUS`) as the `DRIVER_LOOKUP` stage run's `error_code`. The
-  orchestration ends there.
+  `DRIVER_NOT_FOUND`, `DRIVER_AMBIGUOUS`) as the `DRIVER_LOOKUP` stage run's `error_code` and a
+  `processing_error` row (`PERMANENT_BUSINESS`: the pipeline worked; I-12 sends these to a human).
+  The orchestration ends there.
 
 The licence is never logged or returned; the activity returns `{"driver_key": ...}` or
 `{"manual_review": true, "reason": ...}`, and a retry after a committed result returns it without
@@ -155,9 +156,12 @@ an activity without custom code. Distinguish, same as every other stage:
 orchestrator itself may not read the environment). Each activity returns errors retrying can't fix
 as `{"poison": true, "error_code": ...}` instead of raising (`POISON` in each activity module), so
 they aren't retried — and Normalize's model calls aren't paid for again. A poison result or
-exhausted retries → the `RouteToManualReview` activity sets `MANUAL_REVIEW` with
-`dmer_document.manual_review_reason = "<activity>:<error>"` (e.g. `NormalizeDmer:RETRIES_EXHAUSTED`)
-and the orchestration ends. A corrupt or missing active `rules.json` is retried (it isn't the
+exhausted retries → the `RouteToManualReview` activity sets `MANUAL_REVIEW` and writes a
+`processing_error` row in the same transaction: the activity's stage, `failure_category`
+(`PERMANENT_BUSINESS` for a poison result — the document itself can't be processed; `UNKNOWN` for
+exhausted retries — the conservative default, since the orchestrator can't see which dependency
+failed) and `reason_code` `<activity>:<error>` (e.g. `NormalizeDmer:RETRIES_EXHAUSTED`). The
+orchestration then ends. A corrupt or missing active `rules.json` is retried (it isn't the
 document's fault) and logged at ERROR each time for alerting.
 
 - Driver not resolvable (Driver Lookup: no readable licence, no match, or ambiguous match) → the
