@@ -8,7 +8,8 @@ replayed activity can neither interleave with another attempt nor half-apply.
 On success, one transaction:
 
 - inserts the ``rule_evaluation`` row -- every candidate outcome, not just
-  the winner;
+  the winner, plus the engine's own outcome, in ``all_outcomes`` (see
+  :func:`all_outcomes_record`);
 - marks the ``RULES`` stage run ``SUCCEEDED`` (``model_version`` = the
   rules version, the stage's version record, as Normalize records its model);
 - moves the document to ``RULES_APPLIED`` / ``DECISION``;
@@ -47,7 +48,7 @@ from .dmer_stage_run import dmer_stage_run
 metadata = MetaData()
 
 # Created by V0001 (rules_version, rule_evaluation, driver_evaluation) and
-# V0004 (rule_evaluation's extra columns, driver_evaluation_document).
+# V0004 (driver_evaluation_document).
 rules_version = Table(
     "rules_version",
     metadata,
@@ -69,10 +70,19 @@ rule_evaluation = Table(
     Column("selected_reason", Text),
     Column("priority_rank", Integer),
     Column("evaluated_at", DateTime(timezone=True)),
-    Column("rule_engine_outcome_code", Text),
-    Column("fit_letter", Boolean),
-    Column("stage_run_id", BigInteger),
 )
+
+
+def all_outcomes_record(evaluation: RuleEvaluation) -> dict:
+    """``rule_evaluation.all_outcomes``: every candidate the engine returned and
+    the engine's own outcome. ``selected_outcome_code`` differs from
+    ``rule_engine_outcome_code`` only when a clean pass needs the driving-record
+    check (selected ``IN``); ``selected_reason`` then says why."""
+    return {
+        "rule_engine_outcome_code": evaluation.rule_engine_outcome_code,
+        "candidates": evaluation.all_outcomes(),
+    }
+
 
 driver_evaluation = Table(
     "driver_evaluation",
@@ -261,19 +271,11 @@ class RuleEngineRepository:
     async def _latest_success(
         self,
     ) -> tuple[int, int, CompletedEvaluation] | None:
-        row = (
+        """The latest successful attempt and the evaluation it committed --
+        written in the same transaction, so the newest evaluation is its."""
+        run = (
             await self._conn.execute(
-                select(
-                    dmer_stage_run.c.id,
-                    dmer_stage_run.c.attempt_no,
-                    rule_evaluation.c.id,
-                    rule_evaluation.c.rules_version,
-                    rule_evaluation.c.selected_outcome_code,
-                )
-                .join(
-                    rule_evaluation,
-                    rule_evaluation.c.stage_run_id == dmer_stage_run.c.id,
-                )
+                select(dmer_stage_run.c.id, dmer_stage_run.c.attempt_no)
                 .where(
                     dmer_stage_run.c.document_id == self._document_id,
                     dmer_stage_run.c.stage == _RULES_STAGE,
@@ -285,9 +287,21 @@ class RuleEngineRepository:
                 .limit(1)
             )
         ).first()
-        if row is None:
+        evaluation = (
+            await self._conn.execute(
+                select(
+                    rule_evaluation.c.id,
+                    rule_evaluation.c.rules_version,
+                    rule_evaluation.c.selected_outcome_code,
+                )
+                .where(rule_evaluation.c.document_id == self._document_id)
+                .order_by(rule_evaluation.c.id.desc())
+                .limit(1)
+            )
+        ).first()
+        if run is None or evaluation is None:
             return None
-        return row[0], row[1], CompletedEvaluation(row[2], row[3], row[4])
+        return run[0], run[1], CompletedEvaluation(*evaluation)
 
     async def register_rules_version(
         self, *, checksum: str, blob_url: str, now: datetime
@@ -363,14 +377,11 @@ class RuleEngineRepository:
                     .values(
                         document_id=self._document_id,
                         rules_version=rules_version_name,
-                        all_outcomes=evaluation.all_outcomes(),
+                        all_outcomes=all_outcomes_record(evaluation),
                         selected_outcome_code=evaluation.selected_outcome_code,
                         selected_reason=evaluation.selected_reason,
                         priority_rank=evaluation.priority_rank,
                         evaluated_at=ended_at,
-                        rule_engine_outcome_code=evaluation.rule_engine_outcome_code,
-                        fit_letter=evaluation.fit_letter,
-                        stage_run_id=run_id,
                     )
                     .returning(rule_evaluation.c.id)
                 )

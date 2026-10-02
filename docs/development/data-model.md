@@ -151,14 +151,11 @@ One row **per evaluation, not per document** — a re-run creates a new row; not
 | `id` | bigserial PK | |
 | `document_id` | uuid FK → `dmer_document.id` | |
 | `rules_version` | text FK → `rules_version.version` | |
-| `all_outcomes` | jsonb | Every candidate outcome the engine returned, with its inputs — not just the winner. |
+| `all_outcomes` | jsonb | `{"rule_engine_outcome_code": ..., "candidates": [...]}` — every candidate outcome the engine returned, with its inputs (not just the winner), and the engine's own outcome. That differs from `selected_outcome_code` only when a clean pass needs the driving-record check (selected `IN`); `selected_reason` says why. |
 | `selected_outcome_code` | text | |
 | `selected_reason` | text | |
 | `priority_rank` | int | |
 | `evaluated_at` | timestamptz | |
-| `rule_engine_outcome_code` | text | V0004. The engine's own outcome; `selected_outcome_code` is `IN` instead when a clean pass needs the driving-record check. |
-| `fit_letter` | bool | V0004. A FIT letter applies to the selected outcome. |
-| `stage_run_id` | bigint FK → `dmer_stage_run.id`, unique | V0004. The `RULES` attempt that produced the row — one evaluation per attempt. |
 
 ### `driver_evaluation_document`
 

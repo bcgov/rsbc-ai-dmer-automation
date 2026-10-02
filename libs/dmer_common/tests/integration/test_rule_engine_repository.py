@@ -134,19 +134,17 @@ def test_success_records_every_candidate_and_completes_the_stage():
                 row = await _one(
                     conn,
                     "SELECT rules_version, all_outcomes, selected_outcome_code, "
-                    "rule_engine_outcome_code, fit_letter, priority_rank, stage_run_id "
-                    "FROM rule_evaluation WHERE id = :i",
+                    "selected_reason, priority_rank FROM rule_evaluation WHERE id = :i",
                     i=evaluation_id,
                 )
-                outcomes = row[1] if isinstance(row[1], list) else json.loads(row[1])
+                record = row[1] if isinstance(row[1], dict) else json.loads(row[1])
                 assert row[0] == version
-                assert {o["action"] for o in outcomes} == {
-                    "PR",
-                    "CP",
-                }  # all, not just the winner
-                assert row[2] == row[3] == "PR"
-                assert row[5] == EVALUATION.priority_rank
-                assert row[6] == attempt.run_id
+                # Every candidate, not just the winner, and the engine's own outcome.
+                assert {o["action"] for o in record["candidates"]} == {"PR", "CP"}
+                assert record["rule_engine_outcome_code"] == "PR"
+                assert row[2] == "PR"
+                assert row[3] == EVALUATION.selected_reason
+                assert row[4] == EVALUATION.priority_rank
                 assert await _one(
                     conn, "SELECT status, model_version FROM dmer_stage_run"
                 ) == ("SUCCEEDED", version)
@@ -292,5 +290,52 @@ def test_failed_attempt_is_recorded_and_the_next_attempt_recovers():
                     .all()
                 )
                 assert statuses == ["FAILED", "SUCCEEDED"]
+
+    asyncio.run(run())
+
+
+def test_an_overridden_clean_pass_keeps_the_engine_outcome_and_says_why():
+    # A clean pass a driving-record row fired for is selected as IN.
+    override = select_outcome(
+        (
+            Outcome(
+                "Drugs, Alcohol and Driving",
+                "CP",
+                False,
+                "compliant",
+                driving_record_check=True,
+            ),
+        )
+    )
+    assert override.selected_outcome_code == "IN"
+
+    async def run():
+        async with database() as (engine, doc_id):
+            async with rule_engine_session(engine, doc_id) as repository:
+                attempt = await repository.start_or_resume(now=datetime.now(UTC))
+                version = await repository.register_rules_version(
+                    checksum=CHECKSUM,
+                    blob_url="https://blob/rules/active/rules.json",
+                    now=datetime.now(UTC),
+                )
+                await repository.succeed(
+                    attempt.run_id,
+                    evaluation=override,
+                    rules_version_name=version,
+                    driver_key=attempt.driver_key,
+                    ended_at=datetime.now(UTC),
+                )
+            async with engine.connect() as conn:
+                record, selected, reason = await _one(
+                    conn,
+                    "SELECT all_outcomes, selected_outcome_code, selected_reason FROM rule_evaluation",
+                )
+            record = record if isinstance(record, dict) else json.loads(record)
+            assert record["rule_engine_outcome_code"] == "CP"
+            assert selected == "IN"
+            assert (
+                reason == override.selected_reason
+                and "driving record" in reason.lower()
+            )
 
     asyncio.run(run())
