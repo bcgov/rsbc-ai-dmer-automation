@@ -5,7 +5,7 @@ artifacts per document)."""
 
 from . import containers
 from .client import BlobClient
-from .containers import extracted_dmer, normalized_dmer
+from .containers import extracted_dmer, normalized_dmer, rules, rules_active_path
 from .paths import (
     combined_path,
     handwritten_path,
@@ -23,5 +23,7 @@ __all__ = [
     "normalized_dmer",
     "normalized_path",
     "ocr_path",
+    "rules",
+    "rules_active_path",
     "top_level_path",
 ]

@@ -1,7 +1,7 @@
 # workflow-orchestrator — Azure Functions (Python v2 model, Durable Functions)
 #
 # Document Orchestration stage (docs/development/stages/03-document-orchestration.md)
-# + its activities (Normalize; Rule Engine not built yet) -- see that doc's
+# + its activities (Normalize, Rule Engine) -- see that doc's
 # "Alignment gaps" section for why this is scoped down from the *original*
 # architecture's single do-everything orchestration.
 #
@@ -12,8 +12,8 @@
 # Registered here: the dmer-extracted queue trigger that starts one
 # DocumentOrchestration instance per document (this module), the
 # DocumentOrchestration orchestrator (orchestrators/document_orchestration.py),
-# and the Normalize activity (activities/normalize.py). The Rule Engine
-# activity is not built yet -- see activities/README.md.
+# and the Normalize and Rule Engine activities (activities/normalize.py,
+# activities/rule_engine.py).
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ from azure.durable_functions.models.OrchestrationRuntimeStatus import (
 )
 from dmer_common.telemetry import document_id_context, get_logger
 
-from .activities import normalize
+from .activities import normalize, rule_engine
 from .orchestrators import document_orchestration
 
 _log = get_logger(__name__)
@@ -36,12 +36,13 @@ _log = get_logger(__name__)
 app = df.DFApp()
 
 normalize.register(app)
+rule_engine.register(app)
 document_orchestration.register(app)
 
 # An instance in any of these states is already in flight or already done --
-# starting a new one would duplicate Normalize's work (and, once it exists,
-# Rule Engine's). See 03-document-orchestration.md's idempotency
-# requirements: the dmer-extracted trigger must not start a second
+# starting a new one would duplicate Normalize's and Rule Engine's work. See
+# 03-document-orchestration.md's idempotency requirements: the dmer-extracted
+# trigger must not start a second
 # orchestration instance for a document_guid that already has one.
 _SKIP_START_STATUSES = frozenset(
     {

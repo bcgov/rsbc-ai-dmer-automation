@@ -47,11 +47,16 @@ that question unanswerable after the fact.
 
 | Table | Operation | Fields |
 |---|---|---|
-| `rule_evaluation` | `INSERT` (one row **per evaluation**, not per document — a re-run creates a new row) | `document_id`, `rules_version`, `all_outcomes` (jsonb — every candidate with its inputs), `selected_outcome_code`, `selected_reason`, `priority_rank`, `evaluated_at`. |
-| `rules_version` | `INSERT` (only when a new `rules.json` is published) | `version`, `blob_url`, `checksum`, `activated_at`, `activated_by`. |
-| `dmer_document` | `UPDATE` | `pipeline_status = RULES_APPLIED`, then `AWAITING_DRIVER_COMPLETION` once the driver is signalled; `current_stage = DECISION`, `updated_at`. |
-| `driver_evaluation` | `UPDATE` | `completed_document_count` incremented — this counter and `expected_document_count` are what make the wait observable. |
-| `dmer_stage_run` | `INSERT` then `UPDATE` | `stage = RULES`, `status`, `attempt_no`, timings, `rules_version`. |
+| `rule_evaluation` | `INSERT` (one row **per evaluation**, not per document — a re-run creates a new row) | `document_id`, `rules_version`, `all_outcomes` (jsonb — every candidate with its inputs), `selected_outcome_code`, `selected_reason`, `priority_rank`, `evaluated_at`, plus (V0004) `rule_engine_outcome_code` (the engine's own outcome, before the driving-record `IN`), `fit_letter`, and `stage_run_id` (unique — one evaluation per attempt, so a retried commit can't insert twice). |
+| `rules_version` | `INSERT` (only when a new `rules.json` is published) | `version`, `blob_url`, `checksum`, `activated_at`, `activated_by`. The activity finds the active ruleset's row by its sha256 `checksum`. Until a publishing process exists, a ruleset nobody registered is recorded by the activity itself as `sha256-<first 12 hex>` with `activated_by = 'rule-engine-activity (unregistered active ruleset)'` — never evaluated against without a version row. |
+| `dmer_document` | `UPDATE` | `pipeline_status = RULES_APPLIED`, then `AWAITING_DRIVER_COMPLETION` once the driver is signalled (not built yet — the driver-decision publish needs Resolve Driver); `current_stage = DECISION`, `updated_at`. |
+| `driver_evaluation` | `UPDATE` | `completed_document_count` incremented — this counter and `expected_document_count` are what make the wait observable. Only when a `driver_evaluation_document` marker row is newly inserted (see [Idempotency](#idempotency-requirements)); a document with no open evaluation is completed but not counted (logged as a warning). |
+| `driver_evaluation_document` | `INSERT ... ON CONFLICT DO NOTHING` (V0004) | `driver_evaluation_id`, `document_id`, `counted_at` — the once-per-document marker. |
+| `dmer_stage_run` | `INSERT` then `UPDATE` | `stage = RULES`, `status`, `attempt_no`, timings; the rules version goes in `model_version` (the stage's version column, as Normalize records its model there). |
+
+The evaluation row, stage run, document status and driver count are written in **one transaction**,
+on a connection holding a per-document advisory lock (`dmer_common.db.rule_engine`) — the same
+unit-of-work pattern as Normalize.
 
 ## Precedence: document_priority vs. rule engine
 
@@ -78,7 +83,7 @@ Document Orchestrator publishes to `driver-decision` for — see
 | Variable | Purpose |
 |---|---|
 | `RULES_CONTAINER` | Default `rules`. |
-| `RULES_ACTIVE_PATH` | Default `rules/active/rules.json`. |
+| `RULES_ACTIVE_PATH` | Path **within** `RULES_CONTAINER`, default `active/rules.json` (i.e. `rules/active/rules.json`). |
 | `RULE_ENGINE_LIBRARY` | GoRules ZEN Python binding: `zen-engine` (imported as `zen`), pinned `>=0.51,<0.52` in `libs/dmer_common/pyproject.toml`. |
 
 ## Idempotency requirements
@@ -88,6 +93,10 @@ must only be incremented **once per document**, even if the activity is retried 
 increment via a `driver_evaluation_document` join/marker or an idempotent `UPSERT` keyed on
 `(driver_evaluation_id, document_id)`, not a bare `UPDATE ... SET completed_document_count = completed_document_count + 1`
 that would double-count on activity retry before the orchestrator's own dedup kicks in.
+**Implemented** with the marker table (V0004): the count is incremented only when the marker row
+is newly inserted, so a retry — or a later re-run of the rules for the same document — never
+counts it twice. A retried invocation after a committed success returns the committed evaluation
+without re-evaluating.
 
 ## Logging / auditing
 

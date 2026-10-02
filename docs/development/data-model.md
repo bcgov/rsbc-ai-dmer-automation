@@ -153,6 +153,20 @@ One row **per evaluation, not per document** — a re-run creates a new row; not
 | `selected_reason` | text | |
 | `priority_rank` | int | |
 | `evaluated_at` | timestamptz | |
+| `rule_engine_outcome_code` | text | V0004. The engine's own outcome; `selected_outcome_code` is `IN` instead when a clean pass needs the driving-record check. |
+| `fit_letter` | bool | V0004. A FIT letter applies to the selected outcome. |
+| `stage_run_id` | bigint FK → `dmer_stage_run.id`, unique | V0004. The `RULES` attempt that produced the row — one evaluation per attempt. |
+
+### `driver_evaluation_document`
+
+V0004. Marks a document as counted toward its driver's `completed_document_count`, so the count is
+incremented once per document however often the Rule Engine activity is retried or re-run.
+
+| Column | Type | Notes |
+|---|---|---|
+| `driver_evaluation_id` | uuid FK → `driver_evaluation.id` | PK with `document_id`. |
+| `document_id` | uuid FK → `dmer_document.id` | |
+| `counted_at` | timestamptz | |
 
 ### `rules_version`
 

@@ -7,19 +7,16 @@ interleave or partially apply stage/document updates.
 
 from __future__ import annotations
 
-import sys
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import func, select, text
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
-from ..telemetry import get_logger
+from ._advisory import advisory_lock_session
 from .dmer_document import dmer_document
 from .dmer_stage_run import dmer_stage_run
-
-_log = get_logger(__name__)
 
 
 class NormalizationBusyError(RuntimeError):
@@ -299,50 +296,7 @@ async def normalization_session(engine: AsyncEngine, document_id: str):
     The session acquires a PostgreSQL advisory lock and keeps it for the full
     context lifetime; lock contention fails fast with ``NormalizationBusyError``.
     """
-
-    conn = await engine.connect()
-    lock_key = f"normalize:{document_id}"
-    lock_acquired = False
-
-    try:
-        lock_result = await conn.execute(
-            text(
-                "SELECT pg_try_advisory_lock(hashtextextended(:lock_key, 0))"
-            ),
-            {"lock_key": lock_key},
-        )
-        lock_acquired = bool(lock_result.scalar_one())
-        await conn.commit()
-
-        if not lock_acquired:
-            raise NormalizationBusyError()
-
+    async with advisory_lock_session(
+        engine, f"normalize:{document_id}", busy_error=NormalizationBusyError
+    ) as conn:
         yield NormalizationRepository(conn, document_id=document_id)
-    finally:
-        active_exc = sys.exc_info()[1]
-        cleanup_exc: Exception | None = None
-        try:
-            if lock_acquired:
-                try:
-                    await conn.execute(
-                        text(
-                            "SELECT pg_advisory_unlock(hashtextextended(:lock_key, 0))"
-                        ),
-                        {"lock_key": lock_key},
-                    )
-                    await conn.commit()
-                except Exception as exc:  # noqa: BLE001
-                    cleanup_exc = exc
-                    try:
-                        await conn.invalidate()
-                    except Exception:  # noqa: BLE001 - still close session and preserve original error
-                        _log.error("normalize: database session invalidation failed")
-        finally:
-            try:
-                await conn.close()
-            except Exception as exc:  # noqa: BLE001 - preserve original operation error
-                if cleanup_exc is None:
-                    cleanup_exc = exc
-
-        if cleanup_exc is not None and active_exc is None:
-            raise cleanup_exc

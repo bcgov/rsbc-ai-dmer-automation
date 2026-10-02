@@ -5,12 +5,10 @@ per that doc's replay rules -- no I/O, no environment reads, no
 ``datetime.now()``/random values here; all of that lives in the activities
 this calls.
 
-Scoped down from the doc's full flow for now: calls ``NormalizeDmer`` only.
-``RunRuleEngine`` (docs/development/stages/05-activity-rule-engine.md) does
-not exist yet, so neither does the driver-decision publish that follows it
-in the documented flow (03-document-orchestration.md#orchestration-flow) --
-that hand-off needs Rule Engine's outcome, so there's nothing to publish
-until it's built.
+Runs ``NormalizeDmer`` then ``RunRuleEngine``. Not built yet: Resolve Driver
+(before Normalize; blocked on the Mercury driver-licence API and the meaning
+of an "open" driver evaluation) and the driver-decision publish at the end
+(it needs the resolved ``driver_key``).
 """
 
 from __future__ import annotations
@@ -21,28 +19,32 @@ ORCHESTRATION_NAME = "DocumentOrchestration"
 
 
 def document_orchestration(context: df.DurableOrchestrationContext):
-    """NormalizeDmer -> (RunRuleEngine, not yet built) -> (driver-decision, not yet built).
+    """NormalizeDmer -> RunRuleEngine -> (driver-decision, not yet built).
 
     Input: ``{"document_id": ..., "driver_key": ..., "extracted_blob_url": ...}``
     (the Document Orchestration trigger contract). ``driver_key`` isn't used
-    by Normalize but is carried through so it's already part of this
-    orchestrator's input contract once RunRuleEngine/driver-decision need it
-    -- avoids a second breaking change to the starter that calls this.
+    yet but is carried in the input contract for the driver-decision publish.
+    Activities get ids and blob URLs only, never document content.
     """
     trigger_input = context.get_input()
+    document_id = trigger_input["document_id"]
     normalize_result = yield context.call_activity(
         "NormalizeDmer",
         {
-            "document_id": trigger_input["document_id"],
+            "document_id": document_id,
             "extracted_blob_url": trigger_input["extracted_blob_url"],
         },
     )
-    # TODO: yield context.call_activity("RunRuleEngine", {...}) once that
-    # activity exists, then publish to driver-decision with
-    # SessionId = driver_key (03-document-orchestration.md step 4).
-    # Returning Normalize's result in the meantime so the orchestration's
-    # output is observable via get_status() rather than null.
-    return normalize_result
+    rule_result = yield context.call_activity(
+        "RunRuleEngine",
+        {
+            "document_id": document_id,
+            "normalized_blob_url": normalize_result["normalized_blob_url"],
+        },
+    )
+    # TODO: publish to driver-decision with SessionId = driver_key once Resolve
+    # Driver exists (03-document-orchestration.md step 5).
+    return rule_result
 
 
 def register(app: df.DFApp) -> None:
