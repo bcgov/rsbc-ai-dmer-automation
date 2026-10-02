@@ -33,13 +33,24 @@ class _FakeContext:
         return ("TASK", name, input_)
 
 
-def test_calls_normalize_with_only_document_id_and_extracted_blob_url():
+DRIVER = {"driver_key": INPUT["driver_key"]}
+NORMALIZED = {"normalized_blob_url": "https://blob/normalized-dmer/doc.json"}
+RULES = {"rule_evaluation_id": 7, "rules_version": "v1", "selected_outcome_code": "CP"}
+
+
+def test_resolves_the_driver_first_with_only_the_document_id():
     context = _FakeContext(INPUT)
     gen = orch.document_orchestration(context)
 
-    task = next(gen)
+    assert next(gen) == ("TASK", "ResolveDriver", {"document_id": INPUT["document_id"]})
 
-    assert task == (
+
+def test_then_normalizes_then_runs_the_rule_engine_and_returns_its_result():
+    context = _FakeContext(INPUT)
+    gen = orch.document_orchestration(context)
+    next(gen)
+
+    assert gen.send(DRIVER) == (
         "TASK",
         "NormalizeDmer",
         {
@@ -47,43 +58,44 @@ def test_calls_normalize_with_only_document_id_and_extracted_blob_url():
             "extracted_blob_url": INPUT["extracted_blob_url"],
         },
     )
-    assert context.calls == [task[1:]]
-
-
-def test_runs_the_rule_engine_on_the_normalized_blob_and_returns_its_result():
-    context = _FakeContext(INPUT)
-    gen = orch.document_orchestration(context)
-    next(gen)
-
-    task = gen.send({"normalized_blob_url": "https://blob/normalized-dmer/doc.json"})
-    assert task == (
+    assert gen.send(NORMALIZED) == (
         "TASK",
         "RunRuleEngine",
         {
             "document_id": INPUT["document_id"],
-            "normalized_blob_url": "https://blob/normalized-dmer/doc.json",
+            "normalized_blob_url": NORMALIZED["normalized_blob_url"],
         },
     )
-
-    result = {
-        "rule_evaluation_id": 7,
-        "rules_version": "v1",
-        "selected_outcome_code": "CP",
-    }
     with pytest.raises(StopIteration) as exc:
-        gen.send(result)
-    assert exc.value.value == result
-    assert [name for name, _ in context.calls] == ["NormalizeDmer", "RunRuleEngine"]
+        gen.send(RULES)
+    assert exc.value.value == {**RULES, "driver_key": INPUT["driver_key"]}
+    assert [name for name, _ in context.calls] == [
+        "ResolveDriver",
+        "NormalizeDmer",
+        "RunRuleEngine",
+    ]
+
+
+def test_a_document_routed_to_manual_review_ends_after_resolve_driver():
+    context = _FakeContext(INPUT)
+    gen = orch.document_orchestration(context)
+    next(gen)
+
+    manual = {"manual_review": True, "reason": "DRIVER_NOT_FOUND"}
+    with pytest.raises(StopIteration) as exc:
+        gen.send(manual)
+    assert exc.value.value == manual
+    assert [name for name, _ in context.calls] == ["ResolveDriver"]
 
 
 def test_activities_get_ids_and_blob_urls_only():
     context = _FakeContext(INPUT)
     gen = orch.document_orchestration(context)
     next(gen)
-    gen.send({"normalized_blob_url": "https://blob/normalized-dmer/doc.json"})
+    gen.send(DRIVER)
+    gen.send(NORMALIZED)
 
     for _, activity_input in context.calls:
-        assert "driver_key" not in activity_input
         assert set(activity_input) <= {
             "document_id",
             "extracted_blob_url",

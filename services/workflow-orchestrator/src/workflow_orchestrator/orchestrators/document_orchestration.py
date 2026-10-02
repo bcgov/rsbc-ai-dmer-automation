@@ -5,10 +5,10 @@ per that doc's replay rules -- no I/O, no environment reads, no
 ``datetime.now()``/random values here; all of that lives in the activities
 this calls.
 
-Runs ``NormalizeDmer`` then ``RunRuleEngine``. Not built yet: Resolve Driver
-(before Normalize; blocked on the Mercury driver-licence API and the meaning
-of an "open" driver evaluation) and the driver-decision publish at the end
-(it needs the resolved ``driver_key``).
+Runs ``ResolveDriver``, ``NormalizeDmer`` and ``RunRuleEngine`` in sequence.
+A document Resolve Driver routes to manual review ends there -- with no
+driver it can never join a driver batch. Not built yet: the driver-decision
+publish at the end.
 """
 
 from __future__ import annotations
@@ -19,15 +19,18 @@ ORCHESTRATION_NAME = "DocumentOrchestration"
 
 
 def document_orchestration(context: df.DurableOrchestrationContext):
-    """NormalizeDmer -> RunRuleEngine -> (driver-decision, not yet built).
+    """ResolveDriver -> NormalizeDmer -> RunRuleEngine -> (driver-decision, not yet built).
 
     Input: ``{"document_id": ..., "driver_key": ..., "extracted_blob_url": ...}``
-    (the Document Orchestration trigger contract). ``driver_key`` isn't used
-    yet but is carried in the input contract for the driver-decision publish.
+    (the Document Orchestration trigger contract). Resolve Driver reads the
+    document's driver from the database, where Ingest recorded Mercury's.
     Activities get ids and blob URLs only, never document content.
     """
     trigger_input = context.get_input()
     document_id = trigger_input["document_id"]
+    driver = yield context.call_activity("ResolveDriver", {"document_id": document_id})
+    if driver.get("manual_review"):
+        return driver
     normalize_result = yield context.call_activity(
         "NormalizeDmer",
         {
@@ -42,9 +45,9 @@ def document_orchestration(context: df.DurableOrchestrationContext):
             "normalized_blob_url": normalize_result["normalized_blob_url"],
         },
     )
-    # TODO: publish to driver-decision with SessionId = driver_key once Resolve
-    # Driver exists (03-document-orchestration.md step 5).
-    return rule_result
+    # TODO: publish to driver-decision with SessionId = driver["driver_key"]
+    # (03-document-orchestration.md step 5).
+    return {**rule_result, "driver_key": driver["driver_key"]}
 
 
 def register(app: df.DFApp) -> None:

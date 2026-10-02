@@ -1,7 +1,7 @@
 # workflow-orchestrator — Azure Functions (Python v2 model, Durable Functions)
 #
 # Document Orchestration stage (docs/development/stages/03-document-orchestration.md)
-# + its activities (Normalize, Rule Engine) -- see that doc's
+# + its activities (Resolve Driver, Normalize, Rule Engine) -- see that doc's
 # "Alignment gaps" section for why this is scoped down from the *original*
 # architecture's single do-everything orchestration.
 #
@@ -12,8 +12,8 @@
 # Registered here: the dmer-extracted queue trigger that starts one
 # DocumentOrchestration instance per document (this module), the
 # DocumentOrchestration orchestrator (orchestrators/document_orchestration.py),
-# and the Normalize and Rule Engine activities (activities/normalize.py,
-# activities/rule_engine.py).
+# and the Resolve Driver, Normalize and Rule Engine activities
+# (activities/resolve_driver.py, normalize.py, rule_engine.py).
 
 from __future__ import annotations
 
@@ -28,13 +28,14 @@ from azure.durable_functions.models.OrchestrationRuntimeStatus import (
 )
 from dmer_common.telemetry import document_id_context, get_logger
 
-from .activities import normalize, rule_engine
+from .activities import normalize, resolve_driver, rule_engine
 from .orchestrators import document_orchestration
 
 _log = get_logger(__name__)
 
 app = df.DFApp()
 
+resolve_driver.register(app)
 normalize.register(app)
 rule_engine.register(app)
 document_orchestration.register(app)

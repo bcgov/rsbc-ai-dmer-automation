@@ -77,7 +77,12 @@ rule_evaluation = Table(
 driver_evaluation = Table(
     "driver_evaluation",
     metadata,
-    Column("id", PG_UUID(as_uuid=False), primary_key=True),
+    Column(
+        "id",
+        PG_UUID(as_uuid=False),
+        primary_key=True,
+        server_default="gen_random_uuid()",
+    ),
     Column("driver_key", PG_UUID(as_uuid=False), nullable=False),
     Column("open", Boolean, nullable=False),
     Column("completed_document_count", Integer, nullable=False),

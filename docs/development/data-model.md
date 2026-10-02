@@ -53,6 +53,8 @@ document's current position in the pipeline.
 | `pipeline_status` | enum | Health/lifecycle state — see [Status modelling](#status-modelling). |
 | `current_stage` | enum | Position — see [Status modelling](#status-modelling). A stage that finishes sets the **next** stage (Ingest → `EXTRACT` with `DOWNLOADED`; Extraction → `NORMALIZE` with `EXTRACTED`). Status-only writes such as `MANUAL_REVIEW` leave it unchanged, so it still shows where the document stopped. |
 | `attempt_count` | int | Incremented on republish (sweeper) or stage retry. |
+| `driver_resolved_by` | text, nullable | V0005, set by Resolve Driver: `MERCURY_SUPPLIED` (Mercury's batch record named the driver) or `LICENCE_LOOKUP` (the page's licence matched exactly one Mercury driver — the Decision Gateway records it as `proposed_driver_key` / `MAP_DRIVER`, I-11). |
+| `licence_mismatch` | bool, nullable | V0005. The licence read off the page differs from the Mercury-supplied driver's; Mercury's driver is kept. |
 | `first_seen_at` / `updated_at` | timestamptz | `updated_at` is set on **every** write to this row, by every stage — it is what the reconciliation sweeper's stall-detection query scans. |
 
 `pipeline_status` changes are **atomic compare-and-set** writes (`UPDATE ... WHERE id = :id AND
@@ -73,7 +75,7 @@ repeated in each stage doc.
 |---|---|---|
 | `id` | bigserial PK | |
 | `document_id` | uuid FK → `dmer_document.id` | |
-| `stage` | enum | `INGEST`, `EXTRACT`, `NORMALIZE`, `RULES`, `DECISION`, `POST` (see stage docs for exact value per stage). |
+| `stage` | enum | `INGEST`, `EXTRACT`, `RESOLVE_DRIVER` (V0005), `NORMALIZE`, `RULES`, `DECISION`, `POST` (see stage docs for exact value per stage). |
 | `status` | enum | `RUNNING`, `SUCCEEDED`, `FAILED`. |
 | `attempt_no` | int | Previous attempts for the same `(document_id, stage)` + 1, computed by the writer — **not** the queue message's `attempt` (Service Bus redelivery doesn't change it). |
 | `started_at` / `ended_at` | timestamptz | |

@@ -108,9 +108,31 @@ Idempotency: an activity retry must not create a second driver or evaluation, or
 target; `expected_document_count` is **set** from Mercury, not incremented, so a retry rewrites the
 same value.
 
-**Blocked on:** the meaning of "open" for the `driver_evaluation (driver_key, open)` conflict target
-(`../data-model.md#open-questions--decisions-required`), and the Mercury `GET by driver_licence`
-API contract (response shape, auth); `libs/dmer_common/src/dmer_common/mercury_client/` is a stub.
+**Implemented** (`workflow_orchestrator/activities/resolve_driver.py`, DB unit of work
+`dmer_common.db.resolve_driver`), on these working assumptions until the open questions below are
+answered:
+
+- **Mercury `GET by driver_licence`** is `GET {MERCURY_DRIVER_LICENCE_API_BASE_URL}/{licence_number}`
+  with the batch API's Bearer key, returning one driver object — `driver_id`, `first_name`,
+  `middle_name`, `last_name`, `licence_number`, `active_documents[]` (`file_name`,
+  `document_type`, `document_status`, `uploaded_date`, `dps_date`, `document_url`) and `case` — or a
+  list of drivers, and 404 when there is none. The dev mock (`func-mock-mercury-api-dev`,
+  `services/intake-processor/tests/local/mock-mercury-function-app/`) serves exactly this.
+- **`expected_document_count`** = the driver's `active_documents` whose `document_type` is in
+  `MERCURY_COUNTED_DOCUMENT_TYPES` (default `DMER`) and whose `document_status` is not in
+  `MERCURY_UNCOUNTED_DOCUMENT_STATUSES` (default `Rejected`).
+- **"Open"** is the V0001 `open` boolean: the activity upserts `ON CONFLICT (driver_key, open)` with
+  `open = true`.
+- **Discrepancy recording**: `dmer_document.licence_mismatch` (V0005), alongside
+  `driver_resolved_by` (`MERCURY_SUPPLIED` / `LICENCE_LOOKUP` — the latter is the Decision Gateway's
+  `MAP_DRIVER` flag).
+- **Manual review**: `pipeline_status = MANUAL_REVIEW`, with the reason (`LICENCE_UNREADABLE`,
+  `DRIVER_NOT_FOUND`, `DRIVER_AMBIGUOUS`) as the `RESOLVE_DRIVER` stage run's `error_code`. The
+  orchestration ends there.
+
+The licence is never logged or returned; the activity returns `{"driver_key": ...}` or
+`{"manual_review": true, "reason": ...}`, and a retry after a committed result returns it without
+calling Mercury again.
 
 ## Failure handling
 
@@ -141,7 +163,9 @@ fully-parallel stage — everything after this point is serialized per driver.
 |---|---|
 | `AzureWebJobsStorage` / task hub storage account | Durable Functions history/control-queue storage — separate from `dmer_common`'s own storage client. |
 | `SERVICEBUS_NAMESPACE`, `DMER_EXTRACTED_QUEUE`, `DRIVER_DECISION_QUEUE` | See `../message-contracts.md`. |
-| `MERCURY_DRIVER_LICENCE_API_BASE_URL` + Mercury credentials | Resolve Driver's `GET by driver_licence` call; shared with [Decision Gateway](07-decision-gateway.md). |
+| `MERCURY_DRIVER_LICENCE_API_BASE_URL` + `MERCURY_API_KEY` | Resolve Driver's `GET by driver_licence` call (`{base}/{licence_number}`); shared with [Decision Gateway](07-decision-gateway.md). Dev: `https://func-mock-mercury-api-dev.azurewebsites.net/api/mercury/drivers`. |
+| `MERCURY_COUNTED_DOCUMENT_TYPES` | Comma-separated `document_type`s counted toward `expected_document_count`; default `DMER`. |
+| `MERCURY_UNCOUNTED_DOCUMENT_STATUSES` | Comma-separated `document_status`es not counted; default `Rejected`. |
 
 ## Authentication / identity
 
@@ -198,10 +222,13 @@ for the recommended folder).
 
 ## Open Questions / Decisions Required
 
-- **`driver_evaluation (driver_key, open)`**: what "open" means (blocks Resolve Driver step 3).
-- **Mercury `GET by driver_licence` contract**: response shape and auth (blocks Resolve Driver).
-- **Discrepancy recording**: where a Mercury-driver vs page-licence mismatch is stored (a flag on
-  `dmer_extraction`, or a `processing_error` row); no column is defined yet.
+- **`driver_evaluation (driver_key, open)`**: what "open" means. Resolve Driver currently uses the
+  V0001 `open` boolean (see [Activity: Resolve Driver](#activity-resolve-driver)).
+- **Mercury `GET by driver_licence` contract**: response shape and auth. Resolve Driver is built
+  against the assumed shape above (served by the dev mock); confirm with Mercury.
+- **Which documents count toward `expected_document_count`**: assumed DMERs not `Rejected`;
+  configurable.
+- **Discrepancy recording**: implemented as `dmer_document.licence_mismatch` (V0005); confirm.
 - Whether Normalize and Rule Engine activity code lives as Python functions directly inside
   `services/workflow-orchestrator/`, or as importable modules in `libs/dmer_common` invoked from
   there — the architecture document specifies them as "a Durable Functions activity" and "a library
