@@ -15,6 +15,7 @@ and the evidence checks).
 from __future__ import annotations
 
 import pytest
+
 from dmer_common.normalization.pipeline import (
     NormalizationValidationError,
     accept_analysis_output,
@@ -163,9 +164,21 @@ def test_normalize_dates_fixes_ocr_digit_confusion(raw, expected):
     assert result["dmer"]["x_date"] == expected
 
 
-def test_normalize_dates_leaves_unparseable_value_as_is():
-    result = normalize_dates({"dmer": {"x_date": "not a date at all"}})
-    assert result["dmer"]["x_date"] == "not a date at all"
+@pytest.mark.parametrize("raw", ["not a date at all", ":_._", "__/__/____"])
+def test_normalize_dates_blanks_an_unreadable_date(raw):
+    # The rule engine's input schema accepts a date or "" only.
+    result = normalize_dates({"dmer": {"x_date": raw}})
+    assert result["dmer"]["x_date"] == ""
+
+
+def test_normalize_dates_leaves_blank_dates_and_evidence_alone():
+    result = normalize_dates(
+        {"dmer": {"x_date": "", "x_date_evidence": 'details_of_condition: "TIA 2019"'}}
+    )
+    assert result["dmer"] == {
+        "x_date": "",
+        "x_date_evidence": 'details_of_condition: "TIA 2019"',
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1062,7 +1075,8 @@ def test_an_invented_field_name_is_dropped_not_retried():
     from dmer_common.normalization.schema import ConditionCategory
 
     out = accept_analysis_output(
-        ConditionCategory.CNS, {"dmer": {"cns.epilepsy": True, "cns.epilepsy_has_concerns": True}}
+        ConditionCategory.CNS,
+        {"dmer": {"cns.epilepsy": True, "cns.epilepsy_has_concerns": True}},
     )
     assert out == {"dmer": {"cns.epilepsy": True}}
 
@@ -1072,11 +1086,17 @@ def test_a_concern_spelled_differently_maps_to_the_schema_field():
 
     out = accept_analysis_output(
         ConditionCategory.TRAUMATIC_BRAIN_INJURY,
-        {"dmer": {"traumatic_brain_injury_has_concerns": True,
-                  "traumatic_brain_injury_has_concerns_evidence": 'details_of_condition: "x"'}},
+        {
+            "dmer": {
+                "traumatic_brain_injury_has_concerns": True,
+                "traumatic_brain_injury_has_concerns_evidence": 'details_of_condition: "x"',
+            }
+        },
     )["dmer"]
-    assert out == {"traumatic_brain_injury.has_concerns": True,
-                   "traumatic_brain_injury.has_concerns_evidence": 'details_of_condition: "x"'}
+    assert out == {
+        "traumatic_brain_injury.has_concerns": True,
+        "traumatic_brain_injury.has_concerns_evidence": 'details_of_condition: "x"',
+    }
 
 
 def test_a_real_field_from_another_category_is_dropped_not_retried():
@@ -1284,13 +1304,19 @@ def test_unsupported_llm_concern_is_reverted_condition_is_kept(monkeypatch):
         '{"supported": {"cns.intracranial_tumors": true, '
         '"cns.intracranial_tumors_has_concerns": false}}'
     )
-    result = pipeline.normalize_document(client, {"details_of_condition": "Brain tumor."})
+    result = pipeline.normalize_document(
+        client, {"details_of_condition": "Brain tumor."}
+    )
     assert result["cns.intracranial_tumors"] is True
     assert result["cns.intracranial_tumors_has_concerns"] is False
     assert "cns.intracranial_tumors_has_concerns_evidence" not in result
     assert result["evidence_flags"] == [
-        {"field": "cns.intracranial_tumors_has_concerns", "check": "support",
-         "reason": "source does not support the value", "action": "reverted"}
+        {
+            "field": "cns.intracranial_tumors_has_concerns",
+            "check": "support",
+            "reason": "source does not support the value",
+            "action": "reverted",
+        }
     ]
 
 
@@ -1298,7 +1324,13 @@ def test_concern_the_support_check_could_not_judge_is_kept():
     from dmer_common.normalization.pipeline import revert_unsupported_concerns
 
     dmer = {"cns.parkinsons_has_concerns": True}
-    flags = [{"field": "cns.parkinsons_has_concerns", "check": "support_unavailable", "reason": "x"}]
+    flags = [
+        {
+            "field": "cns.parkinsons_has_concerns",
+            "check": "support_unavailable",
+            "reason": "x",
+        }
+    ]
     revert_unsupported_concerns(dmer, {}, {"cns.parkinsons_has_concerns": True}, flags)
     assert dmer["cns.parkinsons_has_concerns"] is True
     assert flags[0]["action"] == "kept"
@@ -1309,7 +1341,9 @@ def test_concern_from_the_source_form_is_never_reverted():
 
     dmer = {"priority.has_concerns": True}
     flags = [{"field": "priority.has_concerns", "check": "support", "reason": "x"}]
-    revert_unsupported_concerns(dmer, {"priority.has_concerns": True}, {"priority.has_concerns": True}, flags)
+    revert_unsupported_concerns(
+        dmer, {"priority.has_concerns": True}, {"priority.has_concerns": True}, flags
+    )
     assert dmer["priority.has_concerns"] is True
 
 
@@ -1327,7 +1361,9 @@ def test_routing_backstop_adds_a_category_named_in_the_text(text, category):
     from dmer_common.normalization.pipeline import _force_categories_from_schema_terms
 
     categories, seen = [], set()
-    _force_categories_from_schema_terms({"dmer": {"details_of_condition": text}}, categories, seen)
+    _force_categories_from_schema_terms(
+        {"dmer": {"details_of_condition": text}}, categories, seen
+    )
     assert category in [c.value for c in categories]
 
 
@@ -1336,7 +1372,9 @@ def test_routing_backstop_ignores_ordinary_words(text):
     from dmer_common.normalization.pipeline import _force_categories_from_schema_terms
 
     categories, seen = [], set()
-    _force_categories_from_schema_terms({"dmer": {"details_of_condition": text}}, categories, seen)
+    _force_categories_from_schema_terms(
+        {"dmer": {"details_of_condition": text}}, categories, seen
+    )
     assert categories == []
 
 
@@ -1354,6 +1392,661 @@ def test_unchanged_checked_source_field_gets_direct_evidence_without_verifier(
     assert result["vision.cataracts_evidence"] == "vision.cataracts: true"
     assert result["evidence_flags"] == []
     client.complete.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Masked model output -- words the deployment replaced with asterisks are
+# restored from the input the call sent
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "masked,expected",
+    [
+        ("Permanent *********.", "Permanent pacemaker."),
+        (
+            'details_of_condition: "*** noted on ****."',
+            'details_of_condition: "MVP noted on echo."',
+        ),
+        ("******.", "Hernia."),
+        ("Status post ******** extraction", "Status post cataract extraction"),
+    ],
+)
+def test_masked_value_is_restored_from_the_call_input(masked, expected):
+    from dmer_common.normalization.unmask import restore_masked
+
+    source = {
+        "details_of_condition": "Permanent pacemaker. MVP noted on echo. Hernia. Diabetes.",
+        "vision.other": "status post cataract extraction",
+    }
+    out = restore_masked({"x": masked}, [*source.values()], step="test")
+    assert out["x"].casefold() == expected.casefold()
+
+
+@pytest.mark.parametrize(
+    "masked",
+    [
+        "*********",  # several 9-letter words, no context -> ambiguous
+        "Implanted *********.",  # context not in the source -> no match
+    ],
+)
+def test_masked_value_that_cant_be_pinned_down_is_left_masked(masked):
+    from dmer_common.normalization.unmask import restore_masked
+
+    source = ["Permanent pacemaker. Psoriasis and arthritis."]
+    assert restore_masked({"x": masked}, source, step="test") == {"x": masked}
+
+
+def test_asterisks_that_are_really_in_the_source_are_left_alone():
+    from dmer_common.normalization.unmask import restore_masked
+
+    assert restore_masked({"x": "MoCA ***"}, ["MoCA *** (illegible)"], step="test") == {
+        "x": "MoCA ***"
+    }
+
+
+def test_masked_field_name_is_restored_and_ties_are_broken_by_the_input():
+    from dmer_common.normalization.pipeline import _ANALYSIS_KEYS
+    from dmer_common.normalization.unmask import restore_masked
+
+    out = restore_masked(
+        {
+            "cardiovascular.*********": True,  # only one schema name fits
+            "general.******": True,  # crohns/ulcers/hernia/cancer fit
+            "general.******_evidence": 'details_of_condition: "******."',
+        },
+        ["Hernia."],
+        _ANALYSIS_KEYS,
+        step="test",
+    )
+    assert out == {
+        "cardiovascular.pacemaker": True,
+        "general.hernia": True,
+        "general.hernia_evidence": 'details_of_condition: "Hernia."',
+    }
+
+
+def test_ambiguous_masked_field_name_is_left_masked():
+    from dmer_common.normalization.pipeline import _ANALYSIS_KEYS
+    from dmer_common.normalization.unmask import restore_masked
+
+    assert restore_masked(
+        {"general.******": True}, ["Nothing named."], _ANALYSIS_KEYS, step="t"
+    ) == {"general.******": True}
+
+
+def test_analysis_call_restores_masked_output_before_validating_it():
+    from unittest.mock import Mock
+
+    from dmer_common.normalization.pipeline import analyze_condition_category
+    from dmer_common.normalization.schema import ConditionCategory
+
+    client = Mock()
+    client.complete.return_value = (
+        '{"dmer": {"cardiovascular.*********": true, '
+        '"cardiovascular.*********_evidence": "details_of_condition: \\"Permanent *********.\\""}}'
+    )
+    out = analyze_condition_category(
+        client,
+        {"dmer": {"details_of_condition": "Permanent pacemaker."}},
+        ConditionCategory.CARDIOVASCULAR,
+    )["dmer"]
+    assert out["cardiovascular.pacemaker"] is True
+    assert (
+        out["cardiovascular.pacemaker_evidence"]
+        == 'details_of_condition: "Permanent pacemaker."'
+    )
+    assert client.complete.call_count == 1
+
+
+def test_mask_logs_carry_field_names_and_outcomes_never_text(monkeypatch):
+    from unittest.mock import Mock
+
+    from dmer_common.normalization import unmask
+
+    log = Mock()
+    monkeypatch.setattr(unmask, "_log", log)
+    unmask.restore_masked(
+        {
+            "cardiovascular.*********_evidence": "Permanent *********.",
+            "general.other": "*********",
+        },
+        ["Permanent pacemaker. Psoriasis."],
+        {"cardiovascular.pacemaker_evidence", "general.other"},
+        step="analyze:cardiovascular",
+    )
+    calls = log.info.call_args_list + log.warning.call_args_list
+    extras = [c.kwargs["extra"] for c in calls]
+    assert {(e["location"], e["outcome"]) for e in extras} == {
+        ("key", "restored"),
+        ("value", "restored"),
+        ("value", "ambiguous"),
+    }
+    assert all(e["step"] == "analyze:cardiovascular" for e in extras)
+    logged = repr([c.args for c in calls]) + repr(extras)
+    assert "pacemaker" not in logged.replace("cardiovascular.pacemaker", "")
+    assert "Psoriasis" not in logged and "Permanent" not in logged
+
+
+# ---------------------------------------------------------------------------
+# Text fallbacks -- conditions the model leaves out when their word is masked
+# ---------------------------------------------------------------------------
+
+_FALLBACK_REASON = "set from the source text; the model returned nothing for it"
+
+
+@pytest.mark.parametrize(
+    "text,field,sentence",
+    [
+        (
+            "MVP noted on echo. TIA.",
+            "cardiovascular.mitral_valve_prolapse",
+            "MVP noted on echo.",
+        ),
+        (
+            "Mitral valve prolapse.",
+            "cardiovascular.mitral_valve_prolapse",
+            "Mitral valve prolapse.",
+        ),
+        (
+            "Psoriasis. Permanent pacemaker.",
+            "cardiovascular.pacemaker",
+            "Permanent pacemaker.",
+        ),
+        (
+            "PPM in situ since 2019.",
+            "cardiovascular.pacemaker",
+            "PPM in situ since 2019.",
+        ),
+        ("Hernia. Type 2 diabetes.", "general.hernia", "Hernia."),
+        ("COPD, on inhalers.", "respiratory.copd", "COPD, on inhalers."),
+        ("C0PD.", "respiratory.copd", "C0PD."),
+        ("Hx of multiple scler", "cns.multiple_sclerosis", "Hx of multiple scler"),
+        ("Profound hearing loss. CMT.", "cns.charcot_marie_tooth_disease", "CMT."),
+        (
+            "Charcot-Marie-Tooth.",
+            "cns.charcot_marie_tooth_disease",
+            "Charcot-Marie-Tooth.",
+        ),
+        ("Crohn's disease. DDD.", "general.crohns", "Crohn's disease."),
+        ("Crohns.", "general.crohns", "Crohns."),
+        ("CABG in 2019.", "cardiovascular.cad", "CABG in 2019."),
+        ("Coronary artery disease.", "cardiovascular.cad", "Coronary artery disease."),
+        ("Bilateral cataracts.", "vision.cataracts", "Bilateral cataracts."),
+        ("Nephrectomy. NIDDM.", "endocrine.diabetes", "NIDDM."),
+        ("Type 2 diabetes.", "endocrine.diabetes", "Type 2 diabetes."),
+        # related terms from the field's schema description
+        ("Angina.", "cardiovascular.cad", "Angina."),
+        ("Angioplasty last year.", "cardiovascular.cad", "Angioplasty last year."),
+        ("Coronary stent 2020.", "cardiovascular.cad", "Coronary stent 2020."),
+        ("Post-MI.", "cardiovascular.cad", "Post-MI."),
+        ("Diabetic retinopathy.", "endocrine.diabetes", "Diabetic retinopathy."),
+        ("DM on metformin.", "endocrine.diabetes", "DM on metformin."),
+        (
+            "Permanent pacemaker in situ.",
+            "cardiovascular.pacemaker",
+            "Permanent pacemaker in situ.",
+        ),
+        # masked and dropped when they are the only condition
+        ("Colostomy.", "general.colostomy", "Colostomy."),
+        ("Urostomy.", "general.uro", "Urostomy."),
+        ("Spina bifida.", "musculoskeletal.spinal_bifida", "Spina bifida."),
+        ("GERD.", "general.gerd", "GERD."),
+        ("Acid reflux.", "general.gerd", "Acid reflux."),
+        ("Leukemia.", "general.cancer", "Leukemia."),
+        ("Lymphoma, in remission.", "general.cancer", "Lymphoma, in remission."),
+        ("AMD.", "vision.progressive_eye_condition", "AMD."),
+        (
+            "Sleep apnea, CPAP compliant.",
+            "sleep.cpap_compliant",
+            "Sleep apnea, CPAP compliant.",
+        ),
+        ("Compliant with CPAP.", "sleep.cpap_compliant", "Compliant with CPAP."),
+        (
+            "Macular degeneration.",
+            "vision.progressive_eye_condition",
+            "Macular degeneration.",
+        ),
+    ],
+)
+def test_text_fallback_sets_a_condition_the_model_left_out(text, field, sentence):
+    from dmer_common.normalization.pipeline import apply_text_fallbacks
+
+    source = {"details_of_condition": text}
+    dmer = dict(source)
+    flags = apply_text_fallbacks(dmer, source, updates={})
+    assert dmer[field] is True
+    assert dmer[f"{field}_evidence"] == f'details_of_condition: "{sentence}"'
+    assert {
+        "field": field,
+        "check": "text_fallback",
+        "reason": _FALLBACK_REASON,
+    } in flags
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "No hernia.",
+        "Pacemaker removed 2019.",
+        "Inguinal hernia repaired 2015.",
+        "Family history of MVP.",
+        "?MVP on echo.",
+        "mvp",  # acronyms are case-sensitive
+        "Herniated disc.",  # a disc herniation is not a hernia
+        "MS, mild.",  # could be mitral stenosis
+        "Diabetes insipidus.",  # its own field
+        "Pre-diabetes.",  # its own field
+        "Prediabetes.",
+        "Cataracts removed 2018.",
+        "Carotid stent 2020.",  # not coronary
+        "Femoral angioplasty.",
+        "Diabetes insipidus, on desmopressin.",
+        "No COPD.",
+        "Malignant hypertension.",  # not cancer
+        "OSA, CPAP non-compliant.",
+        "Poorly compliant with CPAP.",
+    ],
+)
+def test_text_fallback_ignores_negated_or_unrelated_mentions(text):
+    from dmer_common.normalization.pipeline import _TEXT_FALLBACKS, apply_text_fallbacks
+
+    source = {"details_of_condition": text}
+    dmer = dict(source)
+    assert apply_text_fallbacks(dmer, source, updates={}) == []
+    assert not any(dmer.get(field) for field in _TEXT_FALLBACKS)
+
+
+@pytest.mark.parametrize(
+    "text,field,value,quote",
+    [
+        ("Cognitive impairment, SIMARD 60.", "cns.simard_score", 60, "SIMARD 60"),
+        ("SIMARD MD -5.", "cns.simard_score", -5, "SIMARD MD -5"),
+        ("Cognitive impairment, MoCA 22/30.", "cns.moca_score", 22, "MoCA 22"),
+        ("MMSE score 24.", "cns.mmse_score", 24, "MMSE score 24"),
+    ],
+)
+def test_score_fallback_reads_the_number_after_the_test_name(text, field, value, quote):
+    from dmer_common.normalization.pipeline import apply_text_fallbacks
+
+    source = {"details_of_condition": text}
+    dmer = dict(source)
+    flags = apply_text_fallbacks(dmer, source, updates={})
+    assert dmer[field] == value
+    assert dmer[f"{field}_evidence"] == f'details_of_condition: "{quote}"'
+    assert [f["field"] for f in flags] == [field]
+
+
+@pytest.mark.parametrize(
+    "text,dmer_extra,updates",
+    [
+        ("MMSE not done, 2019.", {}, {}),  # no score written
+        ("MoCA 22.", {"cns.moca_score": "24/30"}, {}),  # the form's box wins
+        ("MoCA 22.", {}, {"cns.moca_score": 21}),  # the model's value wins
+    ],
+)
+def test_score_fallback_leaves_other_scores_alone(text, dmer_extra, updates):
+    from dmer_common.normalization.pipeline import apply_text_fallbacks
+
+    source = {"details_of_condition": text, **dmer_extra}
+    dmer = {**source, **updates}
+    before = dict(dmer)
+    assert apply_text_fallbacks(dmer, source, updates) == []
+    assert dmer == before
+
+
+def test_score_fallback_fills_a_null_score_from_the_model():
+    from dmer_common.normalization.pipeline import apply_text_fallbacks
+
+    source = {"details_of_condition": "Cognitive impairment, SIMARD 60."}
+    dmer = {**source, "cns.simard_score": None}
+    apply_text_fallbacks(dmer, source, updates={"cns.simard_score": None})
+    assert dmer["cns.simard_score"] == 60
+
+
+def test_text_fallback_respects_what_the_model_returned():
+    from dmer_common.normalization.pipeline import apply_text_fallbacks
+
+    source = {"details_of_condition": "Hernia."}
+    dmer = {**source, "general.hernia": False}
+    assert apply_text_fallbacks(dmer, source, updates={"general.hernia": False}) == []
+    assert dmer["general.hernia"] is False
+
+
+def test_text_fallback_reads_other_fields_too():
+    from dmer_common.normalization.pipeline import apply_text_fallbacks
+
+    source = {"details_of_condition": "", "cardiovascular.other": "PPM"}
+    dmer = dict(source)
+    apply_text_fallbacks(dmer, source, updates={})
+    assert dmer["cardiovascular.pacemaker_evidence"] == 'cardiovascular.other: "PPM"'
+
+
+def test_text_fallback_end_to_end_is_flagged_and_skips_the_verifier(monkeypatch):
+    from unittest.mock import Mock
+
+    from dmer_common.normalization import pipeline
+
+    monkeypatch.setattr(pipeline, "analyze_conditions", lambda *_: {"dmer": {}})
+    client = Mock()
+    result = pipeline.normalize_document(
+        client, {"details_of_condition": "Permanent pacemaker."}
+    )
+    assert result["cardiovascular.pacemaker"] is True
+    assert result["cardiovascular.pacemaker_has_concerns"] is False
+    assert result["no_other_conditions"] is False
+    assert result["evidence_flags"] == [
+        {
+            "field": "cardiovascular.pacemaker",
+            "check": "text_fallback",
+            "reason": _FALLBACK_REASON,
+            "action": "kept",
+        }
+    ]
+    client.complete.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Normalization checklist -- deterministic behaviour each item depends on
+# (the model-dependent half is in the black-box suite)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("III", 3),
+        ("Class II", 2),
+        ("NYHA IV", 4),
+        ("lll", 3),  # handwritten I read as l
+        ("NYHA class Il", 2),
+        ("|V", 4),
+        ("class 3", 3),
+        ("V", None),  # out of range is never guessed
+        ("unknown", None),
+    ],
+)
+def test_nyha_roman_numeral_to_integer(raw, expected):
+    out = standardize_field_types({"dmer": {"cardiovascular.nyha_class": raw}})
+    assert out["dmer"]["cardiovascular.nyha_class"] == expected
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("26/30", 26),
+        ("MMSE 24", 24),
+        ("24/30 on 2025-03-01", 24),
+        ("28", 28),
+        ("", None),
+        ("not done", None),
+        ("N/A", None),
+        (None, None),
+    ],
+)
+def test_mmse_is_a_single_number_or_null(raw, expected):
+    out = standardize_field_types({"dmer": {"cns.mmse_score": raw}})
+    assert out["dmer"]["cns.mmse_score"] == expected
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [("20, 21", [20, 21]), ("R20", [20]), ("none", []), ("", []), (None, [])],
+)
+def test_restrictions_become_an_integer_array_for_the_rule_engine(raw, expected):
+    out = apply_rule_engine_input_formats({"dmer": {"restrictions": raw}})
+    assert out["dmer"]["restrictions"] == expected
+
+
+@pytest.mark.parametrize(
+    "psych,drugs",
+    [
+        (
+            "psychiatric.compliant_with_treatment",
+            "psychotropic_drugs.perscribed_drugs_compliant",
+        ),
+        (
+            "psychiatric.non_compliant_with_treatment",
+            "psychotropic_drugs.perscribed_drugs_non_compliant",
+        ),
+    ],
+)
+def test_prescribed_drug_compliance_also_reads_the_psychiatric_checkbox(psych, drugs):
+    out = resolve_conflicts({"dmer": {psych: True, drugs: False}})["dmer"]
+    assert out[drugs] is True
+    assert out[f"{drugs}_evidence"] == f"{psych}: true"
+
+
+def test_prescribed_drug_compliance_is_unchanged_without_the_psychiatric_checkbox():
+    dmer = {
+        "psychiatric.compliant_with_treatment": False,
+        "psychotropic_drugs.perscribed_drugs_compliant": True,
+        "psychotropic_drugs.perscribed_drugs_compliant_evidence": "x: true",
+    }
+    out = resolve_conflicts({"dmer": dict(dmer)})["dmer"]
+    assert out == dmer
+
+
+def test_alcohol_withdrawal_seizure_is_normalized_to_a_seizure_end_to_end(monkeypatch):
+    from unittest.mock import Mock
+
+    from dmer_common.normalization import pipeline
+
+    monkeypatch.setattr(pipeline, "analyze_conditions", lambda *_: {"dmer": {}})
+    result = pipeline.normalize_document(
+        Mock(), {"psychotropic_drugs.alcohol_withdrawal_seizure": "selected"}
+    )
+    assert result["cns.epilepsy"] is True
+    assert result["cns.provoked_seizure"] is True
+    assert result["field_sources"]["cns.epilepsy"] == "rule"
+
+
+def test_no_other_conditions_end_to_end(monkeypatch):
+    from unittest.mock import Mock
+
+    from dmer_common.normalization import pipeline
+
+    monkeypatch.setattr(pipeline, "analyze_conditions", lambda *_: {"dmer": {}})
+    blank = pipeline.normalize_document(Mock(), {"details_of_condition": ""})
+    assert blank["no_other_conditions"] is True
+    ticked = pipeline.normalize_document(Mock(), {"vision.cataracts": "selected"})
+    assert ticked["no_other_conditions"] is False
+
+
+def test_multiple_conditions_from_details_are_all_kept(monkeypatch):
+    import json
+    from unittest.mock import Mock
+
+    from dmer_common.normalization import pipeline
+
+    text = "Epilepsy. Type 2 diabetes on metformin. Cataracts. Sleep apnea on CPAP."
+    updates = {
+        "cns.epilepsy": True,
+        "cns.epilepsy_evidence": 'details_of_condition: "Epilepsy."',
+        "endocrine.diabetes": True,
+        "endocrine.diabetes_evidence": 'details_of_condition: "Type 2 diabetes on metformin."',
+        "vision.cataracts": True,
+        "vision.cataracts_evidence": 'details_of_condition: "Cataracts."',
+        "sleep.obstructive_sleep_apnea": True,
+        "sleep.obstructive_sleep_apnea_evidence": 'details_of_condition: "Sleep apnea on CPAP."',
+    }
+    monkeypatch.setattr(pipeline, "analyze_conditions", lambda *_: {"dmer": updates})
+    client = Mock()
+    client.complete.return_value = json.dumps(
+        {"supported": {f: True for f in updates if not f.endswith("_evidence")}}
+    )
+    result = pipeline.normalize_document(client, {"details_of_condition": text})
+    for field, value in updates.items():
+        assert result[field] == value
+    assert result["evidence_flags"] == []
+    assert {
+        result["field_sources"][f] for f in updates if not f.endswith("_evidence")
+    } == {"model"}
+
+
+def test_condition_written_in_details_that_is_also_a_ticked_checkbox(monkeypatch):
+    import json
+    from unittest.mock import Mock
+
+    from dmer_common.normalization import pipeline
+
+    # The model sees the ticked box and the Section D mention and agrees.
+    field = "sleep.obstructive_sleep_apnea"
+    updates = {
+        field: True,
+        f"{field}_evidence": 'details_of_condition: "Sleep apnea, stable on CPAP."',
+    }
+    monkeypatch.setattr(pipeline, "analyze_conditions", lambda *_: {"dmer": updates})
+    client = Mock()
+    client.complete.return_value = json.dumps({"supported": {field: True}})
+    result = pipeline.normalize_document(
+        client,
+        {"details_of_condition": "Sleep apnea, stable on CPAP.", field: "selected"},
+    )
+    assert result[field] is True
+    assert (
+        result[f"{field}_evidence"]
+        == 'details_of_condition: "Sleep apnea, stable on CPAP."'
+    )
+    assert result[f"{field}_has_concerns"] is False
+    assert result["evidence_flags"] == []
+
+
+def test_ticked_checkbox_stays_true_when_the_model_returns_nothing(monkeypatch):
+    from unittest.mock import Mock
+
+    from dmer_common.normalization import pipeline
+
+    monkeypatch.setattr(pipeline, "analyze_conditions", lambda *_: {"dmer": {}})
+    result = pipeline.normalize_document(
+        Mock(), {"details_of_condition": "Cataracts.", "vision.cataracts": "selected"}
+    )
+    assert result["vision.cataracts"] is True
+    assert result["vision.cataracts_evidence"] == "vision.cataracts: true"
+    assert result["field_sources"]["vision.cataracts"] == "di"
+
+
+def test_non_schema_di_checkbox_still_becomes_a_bool():
+    out = adapt_combined_fields(
+        {
+            "hearing.hearing_aid": "selected",
+            "hearing.no_hearing_aid": "unselected",
+            "first_name": "x",
+        }
+    )["dmer"]
+    assert out == {
+        "hearing.hearing_aid": True,
+        "hearing.no_hearing_aid": False,
+        "first_name": "x",
+    }
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("AGE", "age"),
+        (" Age DMER ", "age"),
+        ("age-related", "age"),
+        ("Routine", "routine"),
+        ("", ""),
+        (None, ""),
+    ],
+)
+def test_dmer_type_is_what_the_rules_compare(raw, expected):
+    from dmer_common.normalization.pipeline import normalize_dmer_type
+
+    assert normalize_dmer_type(raw) == expected
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("5", "5"),
+        ("100", "1"),
+        ("l", "1"),
+        ("Class 5", "5"),
+        ("5, 6", "5,6"),
+        ("O", ""),
+        ("", ""),
+        (None, ""),
+    ],
+)
+def test_licence_class_ocr_cleanup(raw, expected):
+    from dmer_common.normalization.pipeline import normalize_licence_class
+
+    assert normalize_licence_class(raw) == expected
+
+
+def test_field_sources_label_every_schema_field(monkeypatch):
+    import json
+    from unittest.mock import Mock
+
+    from dmer_common.normalization import pipeline
+    from dmer_common.normalization.schema import CONDITIONS
+
+    apnea = "sleep.obstructive_sleep_apnea"
+    updates = {
+        apnea: True,
+        f"{apnea}_evidence": 'details_of_condition: "Sleep apnea."',
+        f"{apnea}_has_concerns": True,
+        f"{apnea}_has_concerns_evidence": "made up",
+    }
+    monkeypatch.setattr(pipeline, "analyze_conditions", lambda *_: {"dmer": updates})
+    client = Mock()
+    client.complete.return_value = json.dumps(
+        {"supported": {apnea: True, f"{apnea}_has_concerns": False}}
+    )
+    result = pipeline.normalize_document(
+        client,
+        {
+            "details_of_condition": "Sleep apnea. Hernia.",
+            "vision.cataracts": "selected",
+            "cns.mmse_score": "26/30",
+        },
+    )
+    sources = result["field_sources"]
+    assert set(CONDITIONS) <= set(sources)
+    assert sources[apnea] == "model"
+    assert sources[f"{apnea}_has_concerns"] == "model_reverted"
+    assert sources["general.hernia"] == "text_fallback"
+    assert sources["vision.cataracts"] == "di"
+    assert sources["cns.mmse_score"] == "di"
+    assert sources["no_other_conditions"] == "rule"
+    assert sources["cardiovascular.pacemaker"] == "default"
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["Meniere's disease. AMD. Applying for class 4.", "Diabetes. Upgrade to class 1."],
+)
+def test_applying_for_class_is_priority_language(text):
+    from dmer_common.normalization.pipeline import _has_priority_details_signal
+
+    assert _has_priority_details_signal({"dmer": {"details_of_condition": text}})
+
+
+@pytest.mark.parametrize(
+    "text,category",
+    [
+        ("Cognitive impairment, SIMARD 60.", "cognition"),
+        ("Trails B 3 minutes 10 seconds.", "cognition"),
+        ("Alzheimer's disease.", "cognition"),
+        ("NIDDM.", "endocrine"),
+        ("Persistent hypoglycemia unawareness.", "endocrine"),
+    ],
+)
+def test_common_phrasings_route_to_their_category(text, category):
+    from dmer_common.normalization.pipeline import (
+        _force_categories_from_keywords,
+        _force_categories_from_schema_terms,
+    )
+    from dmer_common.normalization.schema import ConditionCategory
+
+    slim = {"dmer": {"details_of_condition": text}}
+    categories, seen = [], set()
+    _force_categories_from_keywords(slim, categories, seen)
+    _force_categories_from_schema_terms(slim, categories, seen)
+    assert ConditionCategory(category) in categories
 
 
 def test_eye_nerve_palsy_concern_is_analyzed_with_vision_and_requires_evidence():

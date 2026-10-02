@@ -49,7 +49,10 @@ CONDITIONS: dict[str, dict] = {
         "type": "bool",
         "description": "check details of condition to for any concerns specific to strabismus",
     },
-    "vision.monocular": {"type": "bool", "description": "monocular, monocular vision, loss of depth perception, lack of depth perception, blind in one eye"},
+    "vision.monocular": {
+        "type": "bool",
+        "description": "monocular, monocular vision, loss of depth perception, lack of depth perception, blind in one eye",
+    },
     "vision.monocular_has_concerns": {"type": "bool", "description": ""},
     "vision.monocular_date": {"type": "str", "description": ""},
     "vision.color_blindness": {"type": "bool", "description": ""},
@@ -72,7 +75,10 @@ CONDITIONS: dict[str, dict] = {
         "type": "bool",
         "description": "only look for keywords 'cognitive' or specific diagnosis",
     },
-    "cns.dementia": {"type": "bool", "description": ""},
+    "cns.dementia": {
+        "type": "bool",
+        "description": "dementia, Alzheimer's, Alzheimer's disease, Lewy body",
+    },
     "cns.dementia_details": {"type": "str", "description": ""},
     "cns.alzheimers": {"type": "bool", "description": ""},
     "cns.mmse_score": {"type": "int", "description": ""},
@@ -200,7 +206,10 @@ CONDITIONS: dict[str, dict] = {
         "type": "bool",
         "description": "",
     },
-    "cardiovascular.mitral_valve_prolapse": {"type": "bool", "description": "mitral valve prolapse, MVP"},
+    "cardiovascular.mitral_valve_prolapse": {
+        "type": "bool",
+        "description": "mitral valve prolapse, MVP",
+    },
     "cardiovascular.mitral_valve_prolapse_has_concerns": {
         "type": "bool",
         "description": "",
@@ -266,16 +275,25 @@ CONDITIONS: dict[str, dict] = {
     "cardiovascular.hyperlipidemia": {"type": "bool", "description": ""},
     "cardiovascular.dyslipidemia": {"type": "bool", "description": ""},
     "cardiovascular.hypertension": {"type": "bool", "description": "HTN"},
-    "cardiovascular.pacemaker": {"type": "bool", "description": "permanent pacemaker, pacemaker, PPM"},
+    "cardiovascular.pacemaker": {
+        "type": "bool",
+        "description": "permanent pacemaker, pacemaker, PPM",
+    },
     "cardiovascular.pacemaker_date": {"type": "str", "description": ""},
     "cardiovascular.pacemaker_has_concerns": {"type": "bool", "description": ""},
     "cardiovascular.other": {"type": "str", "description": ""},
-    "cardiovascular.syncope": {"type": "bool", "description": "syncope, fainting, fainted, blackout"},
+    "cardiovascular.syncope": {
+        "type": "bool",
+        "description": "syncope, fainting, fainted, blackout",
+    },
     "cardiovascular.syncope_has_concerns": {"type": "bool", "description": ""},
     "cardiovascular.syncope_date": {"type": "str", "description": ""},
     "cardiovascular.syncope_cause": {"type": "str", "description": ""},
     # --- Endocrine ---
-    "endocrine.diabetes": {"type": "bool", "description": ""},
+    "endocrine.diabetes": {
+        "type": "bool",
+        "description": "diabetes, diabetes mellitus, diabetic, NIDDM, IDDM, T1DM, T2DM, DM",
+    },
     "endocrine.diabetes_has_concerns": {"type": "bool", "description": ""},
     "endocrine.diabetes.diet": {"type": "bool", "description": ""},
     "endocrine.diabetes.oral_meds": {"type": "bool", "description": ""},
@@ -299,13 +317,19 @@ CONDITIONS: dict[str, dict] = {
         "type": "bool",
         "description": "impaired glucose tolerance, IGT, prediabetes, pre-diabetes",
     },
-    "endocrine.hypoglycemic_unawareness": {"type": "bool", "description": ""},
+    "endocrine.hypoglycemic_unawareness": {
+        "type": "bool",
+        "description": "hypoglycemia unawareness, hypoglycemic unawareness",
+    },
     "endocrine.hypoglycemic_unawareness_date": {"type": "str", "description": ""},
-    "endocrine.severe_hypoglycemia": {"type": "bool", "description": ""},
+    "endocrine.severe_hypoglycemia": {
+        "type": "bool",
+        "description": "severe hypoglycemia, hypoglycemic episode",
+    },
     "endocrine.severe_hypoglycemia_date": {"type": "str", "description": ""},
     "endocrine.persistent_hypoglycemic_unawareness": {
         "type": "bool",
-        "description": "",
+        "description": "persistent hypoglycemia unawareness, persistent hypoglycemic unawareness",
     },
     "endocrine.persistent_hypoglycemic_unawareness_date": {
         "type": "str",
@@ -330,7 +354,7 @@ CONDITIONS: dict[str, dict] = {
     },
     "general.cancer": {
         "type": "bool",
-        "description": "cancer, malignant, malignancy, carcinoma",
+        "description": "cancer, malignant, malignancy, carcinoma, leukemia, leukaemia, lymphoma",
     },
     "general.cancer_has_concerns": {"type": "bool", "description": ""},
     "general.blood_disorders": {
@@ -345,17 +369,29 @@ CONDITIONS: dict[str, dict] = {
     "general.uro": {"type": "bool", "description": "urostomy, uro-ostomy"},
     "general.ileostomy": {"type": "bool", "description": ""},
     "general.crohns": {"type": "bool", "description": "Crohn's disease, Crohns"},
-    "general.tremors": {"type": "bool", "description": "familial tremor, essential tremor, tremors"},
+    "general.tremors": {
+        "type": "bool",
+        "description": "familial tremor, essential tremor, tremors",
+    },
     "general.gout": {"type": "bool", "description": ""},
     "general.hemochromatosis": {"type": "bool", "description": ""},
     "general.hepatitis": {"type": "bool", "description": ""},
     "general.hernia": {"type": "bool", "description": "hernia"},
     "general.migraines": {"type": "bool", "description": "migraine, migraines"},
     "general.morbid_obesity": {"type": "bool", "description": " BMI"},
-    "general.skin_conditions": {"type": "bool", "description": "eczema, psoriasis, skin condition"},
+    "general.skin_conditions": {
+        "type": "bool",
+        "description": "eczema, psoriasis, skin condition",
+    },
     "general.tupr": {"type": "bool", "description": "Transurethral Prostate Resection"},
-    "general.ulcers": {"type": "bool", "description": "ulcer, ulcers, stomach ulcer, peptic ulcer"},
-    "general.gerd": {"type": "bool", "description": "gastroesophageal reflux"},
+    "general.ulcers": {
+        "type": "bool",
+        "description": "ulcer, ulcers, stomach ulcer, peptic ulcer",
+    },
+    "general.gerd": {
+        "type": "bool",
+        "description": "gastroesophageal reflux, GERD, GORD, acid reflux",
+    },
     "general.stomach_ailments": {"type": "bool", "description": ""},
     "general.aids": {"type": "bool", "description": "AIDS, HIV"},
     "general.aids_has_concerns": {"type": "bool", "description": ""},
@@ -451,16 +487,28 @@ CONDITIONS: dict[str, dict] = {
     "musculoskeletal.quadriplegia_has_concerns": {"type": "bool", "description": ""},
     "musculoskeletal.tetraplegia": {"type": "bool", "description": ""},
     "musculoskeletal.tetraplegia_has_concerns": {"type": "bool", "description": ""},
-    "musculoskeletal.spinal_bifida": {"type": "bool", "description": "spina bifida, spinal bifida"},
+    "musculoskeletal.spinal_bifida": {
+        "type": "bool",
+        "description": "spina bifida, spinal bifida",
+    },
     "musculoskeletal.spinal_bifida_has_concerns": {"type": "bool", "description": ""},
     "musculoskeletal.polio": {"type": "bool", "description": ""},
-    "musculoskeletal.post_polio": {"type": "bool", "description": "post-polio, post-polio syndrome"},
-    "musculoskeletal.range_of_motion_loss": {"type": "bool", "description": "range of motion loss, reduced range of motion, limited range of motion"},
+    "musculoskeletal.post_polio": {
+        "type": "bool",
+        "description": "post-polio, post-polio syndrome",
+    },
+    "musculoskeletal.range_of_motion_loss": {
+        "type": "bool",
+        "description": "range of motion loss, reduced range of motion, limited range of motion",
+    },
     "musculoskeletal.range_of_motion_loss_details": {"type": "str", "description": ""},
     "musculoskeletal.spinal_injury": {"type": "bool", "description": ""},
     "musculoskeletal.neck_injury": {"type": "bool", "description": ""},
     "musculoskeletal.back_injury": {"type": "bool", "description": ""},
-    "musculoskeletal.restless_leg_syndrome": {"type": "bool", "description": "restless leg syndrome, restless legs, RLS"},
+    "musculoskeletal.restless_leg_syndrome": {
+        "type": "bool",
+        "description": "restless leg syndrome, restless legs, RLS",
+    },
     "musculoskeletal.spinal_stenosis": {"type": "bool", "description": ""},
     "musculoskeletal.dwarfism": {"type": "bool", "description": ""},
     "musculoskeletal.dwarfism_has_concerns": {"type": "bool", "description": ""},
@@ -578,6 +626,10 @@ CONDITIONS: dict[str, dict] = {
         "type": "bool",
         "description": "concerns specific to the substance or alcohol use",
     },
+    "psychotropic_drugs.alcohol_withdrawal_seizure": {
+        "type": "bool",
+        "description": "seizure during alcohol withdrawal, alcohol withdrawal seizure",
+    },
     "psychotropic_drugs.alcohol_withdrawal_seizure_date": {
         "type": "str",
         "description": "",
@@ -602,7 +654,10 @@ CONDITIONS: dict[str, dict] = {
     "sleep.no_daytime_sleepiness": {"type": "bool", "description": ""},
     "sleep.with_daytime_sleepiness": {"type": "bool", "description": ""},
     "sleep.insomnia": {"type": "bool", "description": ""},
-    "sleep.narcolepsy": {"type": "bool", "description": "narcolepsy, cataplexy, sleep attacks"},
+    "sleep.narcolepsy": {
+        "type": "bool",
+        "description": "narcolepsy, cataplexy, sleep attacks",
+    },
     "sleep.narcolepsy_has_concerns": {"type": "bool", "description": ""},
     "sleep.narcolepsy_over_12_months": {"type": "bool", "description": ""},
     "sleep.narcolepsy_under_12_months": {"type": "bool", "description": ""},
@@ -624,7 +679,10 @@ CONDITIONS: dict[str, dict] = {
     "traumatic_brain_injury.vehicle_modifications": {"type": "bool", "description": ""},
     "traumatic_brain_injury.complex_deficits": {"type": "bool", "description": ""},
     # --- Vestibular ---
-    "vestibular.drop_attacks": {"type": "bool", "description": "drop attacks, Tumarkin's crisis, Tumarkin otolithic crisis"},
+    "vestibular.drop_attacks": {
+        "type": "bool",
+        "description": "drop attacks, Tumarkin's crisis, Tumarkin otolithic crisis",
+    },
     "vestibular.drop_attacks_has_concerns": {"type": "bool", "description": ""},
     "vestibular.drop_attack_date": {"type": "str", "description": ""},
     "vestibular.recurrent_vertigo": {
@@ -692,7 +750,10 @@ CONDITIONS: dict[str, dict] = {
         "type": "bool",
         "description": "look for reason for should not drive",
     },
-    "priority.applying_for_class": {"type": "bool", "description": ""},
+    "priority.applying_for_class": {
+        "type": "bool",
+        "description": "applying for class, upgrade to class, class upgrade",
+    },
     "priority.applying_for_class_has_class": {
         "type": "bool",
         "description": "check to see if current_license_class contains the class driver is applying for",
@@ -707,7 +768,10 @@ CONDITIONS: dict[str, dict] = {
     },
     # --- Respiratory ---
     "respiratory.asthma": {"type": "bool", "description": "asthma"},
-    "respiratory.copd": {"type": "bool", "description": "COPD, chronic obstructive pulmonary disease"},
+    "respiratory.copd": {
+        "type": "bool",
+        "description": "COPD, chronic obstructive pulmonary disease",
+    },
     "respiratory.emphysema": {"type": "bool", "description": "emphysema"},
     "respiratory.other_respiratory_condition": {"type": "bool", "description": ""},
     "respiratory.has_concerns": {"type": "bool", "description": ""},

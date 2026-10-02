@@ -104,6 +104,15 @@ _BLANK_STRINGS = frozenset(
 # Written values that mean "no" for a checkbox. Any other non-blank text
 # counts as "yes" -- a stray value errs toward reviewing the condition.
 _FALSE_STRINGS = frozenset({"false", "no", "n", "0", "unchecked", "unselected", "off"})
+# The exact values DI writes for a checkbox (selection mark).
+_CHECKBOX_STRINGS = {
+    "selected": True,
+    "unselected": False,
+    ":selected:": True,
+    ":unselected:": False,
+    "true": True,
+    "false": False,
+}
 
 
 def _is_blank(value: object) -> bool:
@@ -144,7 +153,9 @@ def adapt_combined_fields(fields: dict[str, object]) -> dict:
 
     A field this schema doesn't recognize is passed through unchanged --
     permissive, matching ``TopLevelExtraction``'s own "kept permissive so a
-    model revision that adds fields does not break parsing" design.
+    model revision that adds fields does not break parsing" design -- except
+    that a checkbox value ("selected"/"unselected"/"true"/"false") still
+    becomes a bool.
     """
     dmer: dict[str, object] = {}
     for key, value in fields.items():
@@ -153,7 +164,13 @@ def adapt_combined_fields(fields: dict[str, object]) -> dict:
             continue  # a blank alias never overwrites a real value
         cfg = CONDITIONS.get(name)
         if cfg is None:
-            dmer[name] = value
+            # Not a schema field, but a DI checkbox is still a checkbox.
+            checkbox = (
+                _CHECKBOX_STRINGS.get(value.strip().lower())
+                if isinstance(value, str)
+                else None
+            )
+            dmer[name] = value if checkbox is None else checkbox
         elif cfg["type"] == "bool":
             dmer[name] = _to_bool(value)
         elif cfg["type"] in ("int", "float"):
@@ -312,6 +329,8 @@ def categorize_conditions(
         temperature=CATEGORY_TEMPERATURE,
         accept=accept,
         step="categorize",
+        source=[slim_json, [c.value for c in ConditionCategory]],
+        known_keys=("categories",),
     )
     seen = set(categories)
     _force_categories_from_keywords(slim_json, categories, seen)
@@ -382,7 +401,15 @@ def analyze_condition_category(
         temperature=ANALYZE_TEMPERATURE,
         accept=lambda result: accept_analysis_output(category, result),
         step=f"analyze:{category.value}",
+        source=category_json,
+        known_keys=_ANALYSIS_KEYS,
     )
+
+
+# Field names an analysis response may use (masked ones are restored to these).
+_ANALYSIS_KEYS = frozenset(
+    {"dmer", *CONDITIONS, *(f"{field}_evidence" for field in CONDITIONS)}
+)
 
 
 def accept_analysis_output(category: ConditionCategory, result: dict) -> dict:
@@ -521,6 +548,18 @@ def _has_priority_details_signal(slim_json: dict) -> bool:
 # ---------------------------------------------------------------------------
 
 
+_COMPLIANCE_PAIRS = (
+    (
+        "psychiatric.compliant_with_treatment",
+        "psychotropic_drugs.perscribed_drugs_compliant",
+    ),
+    (
+        "psychiatric.non_compliant_with_treatment",
+        "psychotropic_drugs.perscribed_drugs_non_compliant",
+    ),
+)
+
+
 def resolve_conflicts(dmer_result: dict) -> dict:
     """Apply deterministic field-conflict rules that must not be left to the LLM.
 
@@ -534,6 +573,8 @@ def resolve_conflicts(dmer_result: dict) -> dict:
       withdrawal seizure is still a seizure -- it must not be recorded only
       under its cause and left invisible to every seizure-related field
       that matters for a driving-fitness decision.
+    - ``psychiatric.compliant_with_treatment`` / ``non_compliant_with_treatment``
+      → the matching ``psychotropic_drugs.perscribed_drugs_(non_)compliant``.
     """
     dmer = dmer_result.get("dmer", dmer_result)
 
@@ -572,6 +613,14 @@ def resolve_conflicts(dmer_result: dict) -> dict:
                 "alcohol withdrawal is the provoking cause, so this seizure "
                 "is provoked rather than unprovoked/idiopathic epilepsy"
             )
+
+    # Treatment compliance is ticked in the psychiatric section as often as in
+    # the psychotropic-drugs one; the rules read the psychotropic fields, so a
+    # tick in either place counts for both.
+    for psych, drugs in _COMPLIANCE_PAIRS:
+        if dmer.get(psych) is True and dmer.get(drugs) is not True:
+            dmer[drugs] = True
+            dmer[f"{drugs}_evidence"] = f"{psych}: true"
 
     if "dmer" in dmer_result:
         dmer_result["dmer"] = dmer
@@ -732,10 +781,17 @@ def parse_aneurysm_size_cm(raw: object) -> float | None:
     return number / 10 if "mm" in str(raw).lower() else number
 
 
+# A roman numeral written by hand is often read as l / | for I ("lll", "Il").
+_NYHA_OCR_NUMERAL_RE = re.compile(r"(?<![A-Za-z])[IVl|]{1,3}(?![A-Za-z])")
+
+
 def _parse_nyha(raw: object) -> int | None:
     value = parse_nyha_class(raw)
     if value is None and isinstance(raw, str):
-        token = _NYHA_TOKEN_RE.search(raw.upper())
+        text = _NYHA_OCR_NUMERAL_RE.sub(
+            lambda m: m.group().replace("l", "I").replace("|", "I"), raw
+        )
+        token = _NYHA_TOKEN_RE.search(text.upper())
         value = parse_nyha_class(token.group(1)) if token else None
     return value
 
@@ -1080,6 +1136,17 @@ _KEYWORD_CATEGORY_RULES: list[
         ConditionCategory.CNS,
         "generic 'plegia' (unspecified type)",
     ),
+    # Cognitive tests and impairment → COGNITION (its main field's description is
+    # an instruction, so it contributes no schema terms)
+    (
+        re.compile(
+            r"\bcognitive\b|\bMMSE\b|\bMoCA\b|\bSIMARD\b|\btrails\s+[AB]\b",
+            re.IGNORECASE,
+        ),
+        None,
+        ConditionCategory.COGNITION,
+        "cognitive impairment / cognitive test",
+    ),
     # Aortic dissection → PVD (LLM confuses with cardiovascular aortic conditions)
     (
         re.compile(r"\baortic\s+dissection\b", re.IGNORECASE),
@@ -1156,20 +1223,38 @@ def _schema_term_patterns() -> list[tuple[re.Pattern, ConditionCategory, str]]:
         for field, cfg in fields.items():
             if cfg["type"] != "bool" or field.endswith(_INDEX_SKIP_SUFFIXES):
                 continue
-            local = field.rsplit(".", 1)[-1]
-            if local not in _INDEX_SKIP_LOCALS and len(local) >= 5:
-                terms.add(local.replace("_", " "))
-            desc = cfg.get("description", "").strip()
-            if desc and len(desc) <= 120 and not desc.lower().startswith(_INSTRUCTION_STARTERS):
-                for kw in desc.split(","):
-                    kw = kw.strip().rstrip(".")
-                    if len(kw) >= 4 or (kw.isupper() and len(kw) >= 2):
-                        terms.add(kw)
+            terms |= _field_terms(field, cfg)
         for term in terms:
-            body = r"[\s\-]+".join(re.escape(word) for word in term.split()).replace("\\'", "'?")
-            flags = 0 if term.isupper() and len(term) <= 4 else re.IGNORECASE
-            patterns.append((re.compile(rf"\b{body}\b", flags), category, term))
+            patterns.append((_term_pattern(term), category, term))
     return patterns
+
+
+def _field_terms(field: str, cfg: dict) -> set[str]:
+    """The condition terms a schema field names: its own name (5+ letters)
+    and the keywords in its description (an instruction is not a keyword
+    list)."""
+    terms: set[str] = set()
+    local = field.rsplit(".", 1)[-1]
+    if local not in _INDEX_SKIP_LOCALS and len(local) >= 5:
+        terms.add(local.replace("_", " "))
+    desc = cfg.get("description", "").strip()
+    if desc and len(desc) <= 120 and not desc.lower().startswith(_INSTRUCTION_STARTERS):
+        for kw in desc.split(","):
+            kw = kw.strip().rstrip(".")
+            if len(kw) >= 4 or (kw.isupper() and len(kw) >= 2):
+                terms.add(kw)
+    return terms
+
+
+def _term_pattern(term: str) -> re.Pattern:
+    """Whole-word pattern for a schema term; spaces and hyphens are
+    interchangeable, an apostrophe optional, and a short all-caps
+    abbreviation only matches in capitals."""
+    body = r"[\s\-]+".join(re.escape(word) for word in term.split()).replace(
+        "\\'", "'?"
+    )
+    flags = 0 if term.isupper() and len(term) <= 4 else re.IGNORECASE
+    return re.compile(rf"\b{body}\b", flags)
 
 
 _SCHEMA_TERM_PATTERNS = _schema_term_patterns()
@@ -1188,7 +1273,10 @@ def _force_categories_from_schema_terms(
     text = "\n".join(v for v in dmer.values() if isinstance(v, str))
     for pattern, category, term in _SCHEMA_TERM_PATTERNS:
         if category not in seen and pattern.search(text):
-            _log.info("schema-term-forced category", extra={"category": category.value, "term": term})
+            _log.info(
+                "schema-term-forced category",
+                extra={"category": category.value, "term": term},
+            )
             categories.append(category)
             seen.add(category)
 
@@ -1366,8 +1454,8 @@ def normalize_dates(dmer_result: dict, *, today: date | None = None) -> dict:
     parse the value, falling back to a deterministic OCR-digit-confusion
     fix (see _fix_ocr_digit_confusion) when the raw value doesn't parse
     as-is. Partial dates resolve to the latest possible day, never later
-    than *today* (see _latest_possible_date). Unparseable values are left
-    as-is -- this function never raises.
+    than *today* (see _latest_possible_date). An unreadable value becomes ""
+    (the rule engine accepts a date or "") -- this function never raises.
     """
     dmer = dmer_result.get("dmer", dmer_result)
     today = today or datetime.now(UTC).date()
@@ -1379,11 +1467,16 @@ def normalize_dates(dmer_result: dict, *, today: date | None = None) -> dict:
         return _latest_possible_date(*parts, reference) if parts else None
 
     for key, val in dmer.items():
-        if "date" not in key.lower():
+        if "date" not in key.lower() or key.endswith("_evidence"):
             continue
         resolved = resolve(val, today)
         if resolved is not None:
             dmer[key] = resolved.isoformat()
+        elif isinstance(val, str) and val.strip():
+            # The rule engine accepts a date or "" only; OCR residue such as
+            # ":_._" is not a date.
+            _log.warning("unreadable date left blank", extra={"field": key})
+            dmer[key] = ""
 
     if "dmer" in dmer_result:
         dmer_result["dmer"] = dmer
@@ -1796,6 +1889,41 @@ def parse_guide_number(raw: object) -> int | float | None:
     return float(f"{section}.{subsection}") if subsection else int(section)
 
 
+_AGE_WORD_RE = re.compile(r"\bage\b", re.IGNORECASE)
+
+
+def normalize_dmer_type(raw: object) -> str:
+    """DI's free-text DMER ``type`` as the rule engine compares it: trimmed
+    and lower-case, and "age" for any age-related DMER ("AGE", "Age DMER",
+    "age-related") -- the diabetes rules test ``dmer['type'] == 'age'``
+    exactly. Blank or missing -> ""."""
+    if not isinstance(raw, str) or not raw.strip():
+        return ""
+    text = " ".join(raw.split()).lower()
+    return "age" if _AGE_WORD_RE.search(text) else text
+
+
+# BC licence classes are 1-8; OCR reads 1 as l/I/| and the class box's
+# frame or tick as extra 0s/Os (e.g. "100" for a written "1").
+# Only a lone l/I/| (not one inside a word such as "Class") is a misread 1.
+_LICENCE_CLASS_OCR_RE = re.compile(r"(?<![A-Za-z])[lIi|](?![A-Za-z])")
+_LICENCE_CLASS_RE = re.compile(r"[1-8]")
+
+
+def normalize_licence_class(raw: object) -> str:
+    """The licence class(es) in *raw* as "5" or "5,6" -- only the digits
+    1-8 are classes, so OCR noise around them (0/O, punctuation, the word
+    "class") is dropped. Nothing readable -> ""."""
+    if raw is None or isinstance(raw, bool):
+        return ""
+    text = _LICENCE_CLASS_OCR_RE.sub("1", str(raw))
+    classes = list(dict.fromkeys(_LICENCE_CLASS_RE.findall(text)))
+    result = ",".join(classes)
+    if result != str(raw).strip():
+        _log.info("licence class standardized", extra={"readable": bool(result)})
+    return result
+
+
 def apply_rule_engine_input_formats(dmer_result: dict) -> dict:
     """Final shape fixes so the output passes the rule engine's input schema.
 
@@ -1803,12 +1931,19 @@ def apply_rule_engine_input_formats(dmer_result: dict) -> dict:
       field was never set (ensure_all_fields' ``str`` default would be "").
     - ``guide``: a number. The schema allows neither "" nor null, so a DMER
       without a guide number has the key removed rather than blanked.
+    - ``type`` and ``current_licence_class``: see :func:`normalize_dmer_type`
+      and :func:`normalize_licence_class`.
 
     Must run after every step that reads the raw guide text
     (check_guide_matching, check_diabetes_guide_9_1).
     """
     dmer = dmer_result.get("dmer", dmer_result)
     dmer["restrictions"] = normalize_restrictions(dmer.get("restrictions"))
+    dmer["type"] = normalize_dmer_type(dmer.get("type"))
+    if "current_licence_class" in dmer:
+        dmer["current_licence_class"] = normalize_licence_class(
+            dmer["current_licence_class"]
+        )
     guide = parse_guide_number(dmer.get("guide"))
     if guide is None:
         dmer.pop("guide", None)
@@ -1854,6 +1989,232 @@ def revert_unsupported_concerns(
         flag["action"] = "reverted" if flag["field"] in reverted else "kept"
 
 
+# Conditions the analysis model reliably fails to return -- some because the
+# Azure deployment masks the word and the model then leaves the field out
+# (nothing for unmask.py to restore), others when Section D lists several
+# conditions and the model skips one. Each is set from the source text
+# instead. Acronyms match case-sensitively.
+_TEXT_FALLBACKS: dict[str, re.Pattern] = {
+    "cns.charcot_marie_tooth_disease": re.compile(
+        r"\bCMT\b|\b(?i:charcot[\s-]+marie[\s-]+tooth)\b"
+    ),
+    "general.crohns": re.compile(r"\bcrohn'?s\b|\bcrohn\b", re.IGNORECASE),
+    "cardiovascular.cad": re.compile(
+        r"\bCABG\b|\bCAD\b|\b(?i:coronary\s+artery\s+(?:disease|bypass))\b"
+    ),
+    "vision.cataracts": re.compile(r"\bcataracts?\b", re.IGNORECASE),
+    # Not diabetes insipidus or pre-diabetes, which have fields of their own.
+    "endocrine.diabetes": re.compile(
+        r"\b(?:NIDDM|IDDM|T1DM|T2DM)\b"
+        r"|(?<![Pp][Rr][Ee]-)(?<![Pp][Rr][Ee])\b(?i:diabetes)\b(?!\s+(?i:insipidus))"
+    ),
+    "cardiovascular.mitral_valve_prolapse": re.compile(
+        r"\bMVP\b|\b(?i:mitral\s+valve\s+prolapse)\b"
+    ),
+    "cardiovascular.pacemaker": re.compile(r"\bPPM\b|\b(?i:pace\s?makers?)\b"),
+    "general.hernia": re.compile(r"\bhernias?\b", re.IGNORECASE),
+    # "C0PD" is a common OCR misread.
+    "respiratory.copd": re.compile(
+        r"\bC[O0]PD\b|\b(?i:chronic\s+obstructive\s+pulmonary\s+disease)\b"
+    ),
+    # Not "MS": on this form that is as likely to mean mitral stenosis.
+    # Matches a cut-off "multiple scler" too.
+    "cns.multiple_sclerosis": re.compile(r"\bmultiple\s+scler\w*", re.IGNORECASE),
+    # Masked and dropped when Section D names only this condition.
+    "general.colostomy": re.compile(r"\bcolostomy\b", re.IGNORECASE),
+    "general.uro": re.compile(r"\buro-?stomy\b", re.IGNORECASE),
+    "musculoskeletal.spinal_bifida": re.compile(r"\bspinal?\s+bifida\b", re.IGNORECASE),
+    "general.gerd": re.compile(
+        r"\bGERD\b|\bGORD\b|\b(?i:gastro-?o?esophageal\s+reflux|acid\s+reflux)\b"
+    ),
+    "general.cancer": re.compile(r"\b(?:leuka?emia|lymphoma)\b", re.IGNORECASE),
+    # "CPAP" is masked; the model sets sleep.cpap but drops its compliance.
+    "sleep.cpap_compliant": re.compile(
+        r"\bCPAP\b[^.;]{0,30}\bcomplian|\bcomplian\w*\s+(?:with\s+)?(?:\w+\s+)?CPAP\b",
+        re.IGNORECASE,
+    ),
+    # The field's description is longer than a keyword list, so it adds no
+    # schema terms; the progressive eye diseases are listed here.
+    "vision.progressive_eye_condition": re.compile(
+        r"\bAMD\b|\b(?i:macular\s+degeneration|glaucoma|retinitis\s+pigmentosa)\b"
+    ),
+}
+# Schema terms too broad to set the condition on their own.
+_FALLBACK_SKIP_TERMS: dict[str, frozenset[str]] = {
+    "cns.multiple_sclerosis": frozenset({"MS"}),  # also mitral stenosis
+}
+# A sentence that matches one of these is about something else.
+_FALLBACK_EXCLUDE: dict[str, re.Pattern] = {
+    # A stent or angioplasty elsewhere is not coronary.
+    "cardiovascular.cad": re.compile(
+        r"\b(carotid|femoral|iliac|renal|peripheral|leg|limb)\b", re.IGNORECASE
+    ),
+    # Non-compliance has its own field.
+    "sleep.cpap_compliant": re.compile(
+        r"\bnon-?complian|\b(?:poor|partial)(?:ly)?\s+complian", re.IGNORECASE
+    ),
+    # Malignant hypertension / hyperthermia are not cancer.
+    "general.cancer": re.compile(r"\bmalignant\s+hyper", re.IGNORECASE),
+    # Diabetes insipidus and pre-diabetes have fields of their own.
+    "endocrine.diabetes": re.compile(r"\binsipidus\b|\bpre-?diabet", re.IGNORECASE),
+}
+
+
+def _fallback_patterns() -> dict[str, list[re.Pattern]]:
+    """Each fallback field's own pattern (OCR misreads, cut-off words) plus
+    every condition term the schema defines for it."""
+    patterns = {}
+    for field, own in _TEXT_FALLBACKS.items():
+        skip = _FALLBACK_SKIP_TERMS.get(field, frozenset())
+        terms = sorted(_field_terms(field, CONDITIONS[field]) - skip)
+        patterns[field] = [own, *(_term_pattern(term) for term in terms)]
+    return patterns
+
+
+# A sentence that negates or removes the condition doesn't count.
+_FALLBACK_NEGATION_RE = re.compile(
+    r"\b(no|not|denies|denied|without|negative\s+for|ruled\s+out|r/o|"
+    r"removed|explanted|repaired|resolved|family\s+history|fhx?)\b|\?",
+    re.IGNORECASE,
+)
+_SENTENCE_RE = re.compile(r"[^.;\n]+[.;]?")
+# Scores written next to their test's name in Section D ("SIMARD 60",
+# "MoCA 22/30"), for when the model returns no score.
+_SCORE_FALLBACKS: dict[str, re.Pattern] = {
+    "cns.simard_score": re.compile(r"\bSIMARD\b\D{0,20}?(-?\d{1,3})\b", re.IGNORECASE),
+    "cns.moca_score": re.compile(r"\bMoCA\b\D{0,20}?(\d{1,2})\b", re.IGNORECASE),
+    "cns.mmse_score": re.compile(r"\bMMSE\b\D{0,20}?(\d{1,2})\b", re.IGNORECASE),
+}
+_FALLBACK_REASON = "set from the source text; the model returned nothing for it"
+
+
+_FALLBACK_PATTERNS = _fallback_patterns()
+
+
+def _fallback_sources(dmer: dict) -> list[str]:
+    """Free-text source fields searched by the text fallbacks."""
+    return [
+        name
+        for name in dmer
+        if name == "details_of_condition" or name.endswith(".other")
+    ]
+
+
+def apply_text_fallbacks(dmer: dict, source: dict, updates: dict) -> list[dict]:
+    """Set a :data:`_TEXT_FALLBACKS` condition the model returned nothing for
+    when the source text names it -- by its own pattern or any term the
+    schema defines for it (less :data:`_FALLBACK_SKIP_TERMS`) -- and doesn't
+    negate it or match :data:`_FALLBACK_EXCLUDE`. The evidence is
+    the source sentence, quoted exactly; its concern stays false (only the
+    model judges concerns). A :data:`_SCORE_FALLBACKS` score the model and
+    the form both left blank is read from the number after the test's name.
+    Returns one ``text_fallback`` flag per field set, so reviewers can see
+    the model missed it."""
+    flags = []
+    for field, patterns in _FALLBACK_PATTERNS.items():
+        if field in updates or dmer.get(field) is True:
+            continue  # the model (or the form) already decided
+        exclude = _FALLBACK_EXCLUDE.get(field)
+        for name in _fallback_sources(source):
+            text = source.get(name)
+            if not isinstance(text, str):
+                continue
+            sentence = next(
+                (
+                    s.strip()
+                    for s in _SENTENCE_RE.findall(text)
+                    if any(p.search(s) for p in patterns)
+                    and not _FALLBACK_NEGATION_RE.search(s)
+                    and not (exclude and exclude.search(s))
+                ),
+                None,
+            )
+            if sentence:
+                dmer[field] = True
+                dmer[f"{field}_evidence"] = f'{name}: "{sentence}"'
+                flags.append(
+                    {
+                        "field": field,
+                        "check": "text_fallback",
+                        "reason": _FALLBACK_REASON,
+                    }
+                )
+                _log.info("text fallback set condition", extra={"field": field})
+                break
+    for field, pattern in _SCORE_FALLBACKS.items():
+        # A score the form's own box gave, or the model set, stands. (A null
+        # from the model is no score.)
+        if not _is_empty_value(dmer.get(field)):
+            continue
+        for name in _fallback_sources(source):
+            text = source.get(name)
+            match = pattern.search(text) if isinstance(text, str) else None
+            if match:
+                dmer[field] = int(match.group(1))
+                dmer[f"{field}_evidence"] = f'{name}: "{match.group(0)}"'
+                flags.append(
+                    {
+                        "field": field,
+                        "check": "text_fallback",
+                        "reason": _FALLBACK_REASON,
+                    }
+                )
+                _log.info("text fallback set score", extra={"field": field})
+                break
+    return flags
+
+
+def field_sources(
+    source: dict, updates: dict, dmer: dict, flags: list[dict]
+) -> dict[str, str]:
+    """Where each schema field's final value came from:
+
+    - ``di``: the DI extraction, as read (formats standardized).
+    - ``model``: the analysis model.
+    - ``model_reverted``: the model set a concern that failed its evidence
+      check and was set back to false.
+    - ``text_fallback``: set from the source text because the model returned
+      nothing for it (:func:`apply_text_fallbacks`).
+    - ``rule``: a deterministic rule set or changed it (e.g. an alcohol
+      withdrawal seizure -> provoked seizure, no_other_conditions).
+    - ``default``: nothing set it; the schema default.
+    """
+    fallback = {f["field"] for f in flags if f["check"] == "text_fallback"}
+    reverted = {f["field"] for f in flags if f.get("action") == "reverted"}
+    sources = {}
+    for field, cfg in CONDITIONS.items():
+        value, is_bool = dmer.get(field), cfg["type"] == "bool"
+        if field in fallback:
+            origin = "text_fallback"
+        elif field in reverted:
+            origin = "model_reverted"
+        elif field in updates:
+            origin = "rule" if is_bool and value != updates[field] else "model"
+        elif field in source:
+            src = source[field]
+            if is_bool:
+                origin = "di" if value == src else "rule"
+            else:
+                origin = (
+                    "di" if not _is_blank(src) or _is_empty_value(value) else "rule"
+                )
+        else:
+            origin = "default" if _is_empty_value(value) else "rule"
+        sources[field] = origin
+    for field in _RULE_OUTPUT_FIELDS:
+        if field in dmer:
+            sources[field] = "rule"
+    return sources
+
+
+# Outputs that only exist because a deterministic rule computes them.
+_RULE_OUTPUT_FIELDS = (
+    *META_FIELD_DEFAULTS,
+    "diabetes_guide_9_1",
+    "endocrine.diabetes_treatment_not_indicated",
+)
+
+
 def missing_evidence(dmer: dict) -> list[str]:
     """True boolean fields without a non-blank ``{field}_evidence`` string.
     Each becomes an evidence flag; the value itself is kept."""
@@ -1894,6 +2255,9 @@ def normalize_document(
     - Evidence validation (step 4) is per value (:func:`check_evidence`): a
       value that fails is kept and recorded in ``evidence_flags``.
 
+    ``field_sources`` records where each schema field's value came from
+    (:func:`field_sources`).
+
     Raises :class:`NormalizationValidationError` only when a model call's
     output still fails schema validation after its retries -- poison, not
     transient; the caller should route the document to MANUAL_REVIEW.
@@ -1901,6 +2265,9 @@ def normalize_document(
     dmer_input = flag_monocular_from_bad_eye(adapt_combined_fields(extracted_fields))
     updates = analyze_conditions(openai, dmer_input)
     result = apply_updates(dmer_input, updates)
+    fallback_flags = apply_text_fallbacks(
+        result["dmer"], dmer_input["dmer"], updates["dmer"]
+    )
     result = derive_other_psych_diagnosis(result)
     result = apply_deterministic_field_formats(result)
     result = apply_visual_acuity_thresholds(result)
@@ -1934,9 +2301,13 @@ def normalize_document(
         }
         for field in missing_evidence(dmer)
     ]
+    flags += fallback_flags
     flags += check_evidence(openai, dmer_input["dmer"], updates["dmer"], dmer)
     revert_unsupported_concerns(dmer, dmer_input["dmer"], updates["dmer"], flags)
     dmer["evidence_flags"] = flags
+    dmer["field_sources"] = field_sources(
+        dmer_input["dmer"], updates["dmer"], dmer, flags
+    )
 
     _log.info(
         "normalization complete",

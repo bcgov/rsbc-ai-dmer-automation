@@ -3,10 +3,11 @@ schema-validated model call every normalization LLM step goes through."""
 
 import json
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 
 from ..openai_client import OpenAIClient
 from ..telemetry import get_logger
+from .unmask import restore_masked, source_strings
 
 _log = get_logger(__name__)
 
@@ -45,6 +46,8 @@ def call_model[T](
     temperature: float,
     accept: Callable[[dict], T],
     step: str,
+    source: object = None,
+    known_keys: Collection[str] = (),
 ) -> T:
     """Make a JSON-mode model call and validate its output against the schema.
 
@@ -52,7 +55,12 @@ def call_model[T](
     conversion DI input gets) and raises :class:`InvalidModelOutput` for
     anything that can't be fixed that way; the call is then retried, up to
     :data:`MODEL_ATTEMPTS` times in total, before the output is poison.
+
+    Before that, words the deployment masked with asterisks are restored
+    from *source* (the input this call sent) and *known_keys* (the field
+    names it may return) -- see :mod:`.unmask`.
     """
+    texts = source_strings(source)
     for attempt in range(1, MODEL_ATTEMPTS + 1):
         raw = openai.complete(
             messages=messages,
@@ -60,7 +68,8 @@ def call_model[T](
             temperature=temperature,
         )
         try:
-            return accept(model_object(raw))
+            response = restore_masked(model_object(raw), texts, known_keys, step=step)
+            return accept(response)
         except (NormalizationValidationError, InvalidModelOutput) as exc:
             _log.warning(
                 "model output failed schema validation",

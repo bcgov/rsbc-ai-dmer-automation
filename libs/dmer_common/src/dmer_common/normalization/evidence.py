@@ -195,6 +195,8 @@ def _support_flags(openai: OpenAIClient, source: dict, claims: dict) -> list[dic
             temperature=0.0,
             accept=accept,
             step="evidence",
+            source=request["source_fields"],
+            known_keys={"supported", *claims},
         )
     except NormalizationValidationError:
         return [
