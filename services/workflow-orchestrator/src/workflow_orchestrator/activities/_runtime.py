@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import functools
 import os
+from collections.abc import Awaitable
 from typing import Any
 
 from azure.identity import DefaultAzureCredential
@@ -59,3 +60,21 @@ async def get_async_engine() -> AsyncEngine:
     )
     connect_args = {} if sslmode == "disable" else {"ssl": sslmode}
     return create_async_engine(url, poolclass=NullPool, connect_args=connect_args)
+
+
+async def poison_as_result(
+    call: Awaitable[dict], poison: tuple[type[BaseException], ...]
+) -> dict:
+    """Await an activity, returning ``{"poison": True, "error_code": ...}``
+    instead of raising for an error retrying can't fix.
+
+    A raised error is retried by the orchestrator's retry policy -- right for a
+    transient failure, wasted (and for Normalize, paid for again) on one that
+    will fail the same way every time. The orchestrator routes a poison result
+    straight to MANUAL_REVIEW. The error code is the exception type's name;
+    the message is never passed on (it can carry document content).
+    """
+    try:
+        return await call
+    except poison as exc:
+        return {"poison": True, "error_code": type(exc).__name__}

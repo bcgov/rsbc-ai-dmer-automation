@@ -19,6 +19,17 @@ docs/development/stages/03-document-orchestration.md).
   The evaluation is `dmer_common.rules`; the DB unit of work is
   `dmer_common.db.rule_engine`.
 
+- **Signal Driver** (`signal_driver.py`) -- last: publishes `driver-decision`
+  (`SessionId = driver_key`) and moves the document to
+  `AWAITING_DRIVER_COMPLETION`.
+- **Route To Manual Review** (`manual_review.py`) -- called by the orchestrator
+  when an activity returns a poison result or exhausts its retries; sets
+  `MANUAL_REVIEW` with a reason code.
+
+Errors retrying can't fix are returned as `{"poison": true, "error_code": ...}`
+(each module's `POISON`, via `_runtime.poison_as_result`) rather than raised,
+so the orchestrator routes them to manual review instead of retrying.
+
 This previously described a different, single-orchestration design
 (metadata loading, duplicate validation, case creation, Mercury update,
 completion) that the revised architecture superseded -- that work now

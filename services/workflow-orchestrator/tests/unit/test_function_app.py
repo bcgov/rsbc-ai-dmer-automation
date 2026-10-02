@@ -7,10 +7,11 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-import workflow_orchestrator.function_app as fa
 from azure.durable_functions.models.OrchestrationRuntimeStatus import (
     OrchestrationRuntimeStatus,
 )
+
+import workflow_orchestrator.function_app as fa
 
 DOCUMENT_ID = "123e4567-e89b-12d3-a456-426655440000"
 DOCUMENT_GUID = "258a9a03-ee50-4363-8519-ae546fab4add"
@@ -54,6 +55,17 @@ def test_parses_envelope_into_orchestration_input():
         "document_id": DOCUMENT_ID,
         "driver_key": DRIVER_KEY,
         "extracted_blob_url": BLOB_URL,
+        "retry": {"first_retry_interval_ms": 30_000, "max_attempts": 3},
+    }
+
+
+def test_retry_settings_come_from_the_environment(monkeypatch):
+    monkeypatch.setenv("ORCHESTRATION_RETRY_FIRST_INTERVAL_SECONDS", "2.5")
+    monkeypatch.setenv("ORCHESTRATION_RETRY_MAX_ATTEMPTS", "5")
+    _, orchestration_input = fa._parse_trigger_message(_envelope())
+    assert orchestration_input["retry"] == {
+        "first_retry_interval_ms": 2500,
+        "max_attempts": 5,
     }
 
 
@@ -87,6 +99,7 @@ def test_no_existing_instance_starts_a_new_one():
             "document_id": DOCUMENT_ID,
             "driver_key": DRIVER_KEY,
             "extracted_blob_url": BLOB_URL,
+            "retry": {"first_retry_interval_ms": 30_000, "max_attempts": 3},
         },
     )
 

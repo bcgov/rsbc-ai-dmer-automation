@@ -27,6 +27,7 @@ from dmer_common.storage import BlobClient, rules, rules_active_path
 from dmer_common.telemetry import document_id_context, get_logger
 
 from ._runtime import get_async_engine as _get_async_engine
+from ._runtime import poison_as_result
 from ._runtime import run_sync as _run_sync
 
 _log = get_logger(__name__)
@@ -223,6 +224,11 @@ async def run_rule_engine_activity(payload: dict) -> dict:
                     _log.error("rule engine: unable to dispose database engine")
 
 
+# Errors retrying can't fix: returned as a poison result for the orchestrator
+# to route to MANUAL_REVIEW, instead of being retried.
+POISON = (RuleEngineValidationError, RuleEngineStateError)
+
+
 def register(app: df.DFApp) -> None:
     """Register the Rule Engine activity on *app* (called once from
     function_app.py); kept out of import time like ``normalize.register``."""
@@ -230,4 +236,4 @@ def register(app: df.DFApp) -> None:
     @app.function_name(name=ACTIVITY_NAME)
     @app.activity_trigger(input_name="payload")
     async def _run_rule_engine(payload: dict) -> dict:
-        return await run_rule_engine_activity(payload)
+        return await poison_as_result(run_rule_engine_activity(payload), POISON)

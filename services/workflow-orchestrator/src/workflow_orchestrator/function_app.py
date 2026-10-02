@@ -12,12 +12,13 @@
 # Registered here: the dmer-extracted queue trigger that starts one
 # DocumentOrchestration instance per document (this module), the
 # DocumentOrchestration orchestrator (orchestrators/document_orchestration.py),
-# and the Resolve Driver, Normalize and Rule Engine activities
-# (activities/resolve_driver.py, normalize.py, rule_engine.py).
+# and its activities: Resolve Driver, Normalize, Rule Engine, Signal Driver
+# and Route To Manual Review (activities/*.py).
 
 from __future__ import annotations
 
 import json
+import os
 from urllib.parse import urlparse
 from uuid import UUID
 
@@ -28,7 +29,13 @@ from azure.durable_functions.models.OrchestrationRuntimeStatus import (
 )
 from dmer_common.telemetry import document_id_context, get_logger
 
-from .activities import normalize, resolve_driver, rule_engine
+from .activities import (
+    manual_review,
+    normalize,
+    resolve_driver,
+    rule_engine,
+    signal_driver,
+)
 from .orchestrators import document_orchestration
 
 _log = get_logger(__name__)
@@ -38,6 +45,8 @@ app = df.DFApp()
 resolve_driver.register(app)
 normalize.register(app)
 rule_engine.register(app)
+signal_driver.register(app)
+manual_review.register(app)
 document_orchestration.register(app)
 
 # An instance in any of these states is already in flight or already done --
@@ -54,6 +63,21 @@ _SKIP_START_STATUSES = frozenset(
         OrchestrationRuntimeStatus.Completed,
     }
 )
+
+
+def _retry_settings() -> dict:
+    """The activity retry policy, from the environment -- read here, by the
+    starter, because the orchestrator itself must not read the environment
+    (replay determinism). ``ORCHESTRATION_RETRY_FIRST_INTERVAL_SECONDS``
+    (default 30) and ``ORCHESTRATION_RETRY_MAX_ATTEMPTS`` (default 3)."""
+    first_interval = float(
+        os.environ.get("ORCHESTRATION_RETRY_FIRST_INTERVAL_SECONDS", "30")
+    )
+    max_attempts = int(os.environ.get("ORCHESTRATION_RETRY_MAX_ATTEMPTS", "3"))
+    return {
+        "first_retry_interval_ms": max(1, round(first_interval * 1000)),
+        "max_attempts": max(1, max_attempts),
+    }
 
 
 def _parse_trigger_message(body: bytes) -> tuple[str, dict]:
@@ -78,6 +102,7 @@ def _parse_trigger_message(body: bytes) -> tuple[str, dict]:
         "document_id": document_id,
         "driver_key": envelope.get("driverKey"),
         "extracted_blob_url": blob_url,
+        "retry": _retry_settings(),
     }
     return document_guid, orchestration_input
 

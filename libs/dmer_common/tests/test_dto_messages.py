@@ -11,12 +11,13 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import pytest
+from pydantic import ValidationError
+
 from dmer_common.dto import (
     PIPELINE_SCHEMA_VERSION,
     ExtractedMessage,
     RawMessage,
 )
-from pydantic import ValidationError
 
 RAW_WIRE = {
     "messageId": "11111111-1111-1111-1111-111111111111",
@@ -131,3 +132,30 @@ def test_event_message_id_is_stable_across_releases():
 
 # event_message_id("dmer-extracted", "doc-1") — pinned; see the stability test.
 PINNED_EXTRACTED_DOC_1 = "5893ac38-40b3-5070-bb1e-0236fb1fd093"
+
+
+def test_driver_decision_message_requires_a_driver_key():
+    from datetime import UTC, datetime
+
+    import pytest
+    from pydantic import ValidationError
+
+    from dmer_common.dto import (
+        DRIVER_DECISION_EVENT,
+        DriverDecisionMessage,
+        event_message_id,
+    )
+
+    fields = {
+        "message_id": event_message_id(DRIVER_DECISION_EVENT, "doc-1"),
+        "document_id": "doc-1",
+        "document_guid": "guid-1",
+        "blob_url": "https://blob/normalized-dmer/doc-1.json",
+        "enqueued_at": datetime(2026, 10, 2, tzinfo=UTC),
+    }
+    with pytest.raises(ValidationError):
+        DriverDecisionMessage(**fields)
+    message = DriverDecisionMessage(**fields, driver_key="drv-1")
+    assert message.model_dump(by_alias=True)["driverKey"] == "drv-1"
+    # One event per document on this queue, distinct from its other events.
+    assert message.message_id != event_message_id("dmer-extracted", "doc-1")

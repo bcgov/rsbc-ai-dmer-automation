@@ -32,11 +32,9 @@ pytestmark = pytest.mark.skipif(
     not os.getenv("NORMALIZATION_TEST_DSN"), reason="requires disposable PostgreSQL"
 )
 _MIGRATIONS = Path(__file__).resolve().parents[4] / "database/migrations"
-_SCHEMA = [
-    _MIGRATIONS / "V0001__create_dmer_pipeline_schema.sql",
-    _MIGRATIONS / "V0004__rule_engine_activity.sql",
-    _MIGRATIONS / "V0005__resolve_driver_activity.sql",
-]
+# Every migration, in version order -- the schema production runs, so a
+# new column the code needs can never be missing here.
+_SCHEMA = sorted(_MIGRATIONS.glob("V*.sql"), key=lambda path: int(path.name[1:5]))
 LICENCE = "01234567"
 MERCURY = MercuryDriver(
     licence_number="1234567",
@@ -250,6 +248,9 @@ def test_manual_review_routes_the_document_and_replays_its_reason():
                 assert await _one(
                     conn, "SELECT status::text, error_code FROM dmer_stage_run"
                 ) == ("FAILED", DRIVER_NOT_FOUND)
+                assert await _one(
+                    conn, "SELECT manual_review_reason FROM dmer_document"
+                ) == (DRIVER_NOT_FOUND,)
                 assert await _one(conn, "SELECT count(*) FROM driver_evaluation") == (
                     0,
                 )

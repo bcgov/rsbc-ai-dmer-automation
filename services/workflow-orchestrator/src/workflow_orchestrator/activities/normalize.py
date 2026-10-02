@@ -30,6 +30,7 @@ from dmer_common.storage import BlobClient, normalized_dmer, normalized_path
 from dmer_common.telemetry import document_id_context, get_logger
 
 from ._runtime import get_async_engine as _get_async_engine
+from ._runtime import poison_as_result
 from ._runtime import run_sync as _run_sync
 
 _log = get_logger(__name__)
@@ -140,6 +141,11 @@ async def normalize_dmer_activity(payload: dict) -> dict:
                     _log.error("normalize: unable to dispose database engine")
 
 
+# Errors retrying can't fix: returned as a poison result for the orchestrator
+# to route to MANUAL_REVIEW, instead of being retried.
+POISON = (NormalizationValidationError, NormalizationStateError)
+
+
 def register(app: df.DFApp) -> None:
     """Register the Normalize activity on *app* -- called once from
     function_app.py. Kept as a separate registration step (rather than a
@@ -151,4 +157,4 @@ def register(app: df.DFApp) -> None:
     @app.function_name(name=ACTIVITY_NAME)
     @app.activity_trigger(input_name="payload")
     async def _normalize_dmer(payload: dict) -> dict:
-        return await normalize_dmer_activity(payload)
+        return await poison_as_result(normalize_dmer_activity(payload), POISON)

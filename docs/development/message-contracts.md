@@ -196,5 +196,9 @@ per-event `message_id`s (`event_message_id`). The consumer uses a durable, atomi
 [Message idempotency](#message-idempotency-consumer-side) — and takes the broker `MessageId`
 when a producer (e.g. Ingest) sets it only as the Service Bus property.
 
-**Still to add:** `IngestMessage` (`dmer-ingest`) and `DriverDecisionMessage` (`driver-decision`,
-session-aware) as envelope subclasses, when their stages are built.
+`DriverDecisionMessage` (`driver-decision`) is implemented: `driver_key` is required, and
+`ServiceBusPublisher.publish(message, session_id=driver_key)` sets the session (the Document
+Orchestration's `SignalDriver` activity). The session-aware **receive** path is still new work, for
+the Driver Orchestration.
+
+**Still to add:** `IngestMessage` (`dmer-ingest`) as an envelope subclass.

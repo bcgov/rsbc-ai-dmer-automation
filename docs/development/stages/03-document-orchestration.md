@@ -63,7 +63,11 @@ table to skip work already done. Three consequences follow:
 4. `CallActivityAsync("RunRuleEngine", ...)` — see [Activity: Rule Engine](05-activity-rule-engine.md).
 5. Publish to `driver-decision` with `SessionId = driver_key` (the one resolved in step 2) — this
    is the hand-off to [Driver Orchestration](06-driver-orchestration.md); the per-document
-   orchestration's job ends here.
+   orchestration's job ends here. **Implemented** as the `SignalDriver` activity (orchestrators
+   can't do I/O): a `DriverDecisionMessage` with `message_id = event_message_id("driver-decision",
+   document_id)` and `blob_url` = the normalized document, then `RULES_APPLIED` →
+   `AWAITING_DRIVER_COMPLETION`. A document already signalled isn't published again; a retry that
+   republishes sends the same `message_id`.
 
 Two conventions apply to every activity in this orchestration (and to every stage in the pipeline)
 and are not repeated per-activity: each activity writes its own `dmer_stage_run` row
@@ -145,6 +149,17 @@ an activity without custom code. Distinguish, same as every other stage:
   `MANUAL_REVIEW` (`pipeline_status`) rather than letting the orchestration instance fail silently.
   This is what "retries exhausted → MANUAL_REVIEW" means on
   `docs/architecture/Figure3_Status_Lifecycle.png`.
+**Implemented** in `orchestrators/document_orchestration.py`: every activity is called with
+`call_activity_with_retry`, the policy coming from the orchestration input (the starter reads
+`ORCHESTRATION_RETRY_FIRST_INTERVAL_SECONDS` / `ORCHESTRATION_RETRY_MAX_ATTEMPTS`, because the
+orchestrator itself may not read the environment). Each activity returns errors retrying can't fix
+as `{"poison": true, "error_code": ...}` instead of raising (`POISON` in each activity module), so
+they aren't retried — and Normalize's model calls aren't paid for again. A poison result or
+exhausted retries → the `RouteToManualReview` activity sets `MANUAL_REVIEW` with
+`dmer_document.manual_review_reason = "<activity>:<error>"` (e.g. `NormalizeDmer:RETRIES_EXHAUSTED`)
+and the orchestration ends. A corrupt or missing active `rules.json` is retried (it isn't the
+document's fault) and logged at ERROR each time for alerting.
+
 - Driver not resolvable (Resolve Driver: no readable licence, no match, or ambiguous match) → the
   activity routes the document to `MANUAL_REVIEW` (I-12) and the orchestrator ends **without**
   publishing to `driver-decision`; a document with no `driver_key` can never join a driver batch.
@@ -162,7 +177,8 @@ fully-parallel stage — everything after this point is serialized per driver.
 | Variable | Purpose |
 |---|---|
 | `AzureWebJobsStorage` / task hub storage account | Durable Functions history/control-queue storage — separate from `dmer_common`'s own storage client. |
-| `SERVICEBUS_NAMESPACE`, `DMER_EXTRACTED_QUEUE`, `DRIVER_DECISION_QUEUE` | See `../message-contracts.md`. |
+| `SERVICE_BUS_NAMESPACE_FQDN`, `DMER_EXTRACTED_QUEUE`, `DRIVER_DECISION_QUEUE` | See `../message-contracts.md`. `DRIVER_DECISION_QUEUE` defaults to `driver-decision`. |
+| `ORCHESTRATION_RETRY_FIRST_INTERVAL_SECONDS`, `ORCHESTRATION_RETRY_MAX_ATTEMPTS` | Activity retry policy (defaults 30 s, 3 attempts); read by the starter and passed in the orchestration input. |
 | `MERCURY_DRIVER_LICENCE_API_BASE_URL` + `MERCURY_API_KEY` | Resolve Driver's `GET by driver_licence` call (`{base}/{licence_number}`); shared with [Decision Gateway](07-decision-gateway.md). Dev: `https://func-mock-mercury-api-dev.azurewebsites.net/api/mercury/drivers`. |
 | `MERCURY_COUNTED_DOCUMENT_TYPES` | Comma-separated `document_type`s counted toward `expected_document_count`; default `DMER`. |
 | `MERCURY_UNCOUNTED_DOCUMENT_STATUSES` | Comma-separated `document_status`es not counted; default `Rejected`. |

@@ -43,6 +43,7 @@ from dmer_common.mercury_client import MercuryClient
 from dmer_common.telemetry import document_id_context, get_logger
 
 from ._runtime import get_async_engine as _get_async_engine
+from ._runtime import poison_as_result
 from ._runtime import run_sync as _run_sync
 
 _log = get_logger(__name__)
@@ -221,6 +222,11 @@ async def _route_to_review(repository, run_id: int, reason: str) -> dict:
     return _manual(reason)
 
 
+# Errors retrying can't fix: returned as a poison result for the orchestrator
+# to route to MANUAL_REVIEW, instead of being retried.
+POISON = (ResolveDriverValidationError, ResolveDriverStateError)
+
+
 def register(app: df.DFApp) -> None:
     """Register the Resolve Driver activity on *app* (called once from
     function_app.py); kept out of import time like ``normalize.register``."""
@@ -228,4 +234,4 @@ def register(app: df.DFApp) -> None:
     @app.function_name(name=ACTIVITY_NAME)
     @app.activity_trigger(input_name="payload")
     async def _resolve_driver(payload: dict) -> dict:
-        return await resolve_driver_activity(payload)
+        return await poison_as_result(resolve_driver_activity(payload), POISON)

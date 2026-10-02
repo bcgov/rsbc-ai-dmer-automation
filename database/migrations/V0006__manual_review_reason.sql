@@ -1,0 +1,11 @@
+-- V0006__manual_review_reason.sql
+--
+-- Why a document was routed to MANUAL_REVIEW by the Document Orchestration
+-- (docs/development/stages/03-document-orchestration.md, "Failure handling").
+-- A code, never document content: either Resolve Driver's reason
+-- (LICENCE_UNREADABLE, DRIVER_NOT_FOUND, DRIVER_AMBIGUOUS) or
+-- "<activity>:<error>" when an activity failed for good -- e.g.
+-- "NormalizeDmer:NormalizationValidationError" (poison) or
+-- "RunRuleEngine:RETRIES_EXHAUSTED". Carried into the Mercury comment later.
+-- Additive only (expand step).
+ALTER TABLE dmer_document ADD COLUMN IF NOT EXISTS manual_review_reason text;

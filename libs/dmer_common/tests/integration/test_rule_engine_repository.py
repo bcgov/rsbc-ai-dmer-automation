@@ -32,10 +32,9 @@ pytestmark = pytest.mark.skipif(
     not os.getenv("NORMALIZATION_TEST_DSN"), reason="requires disposable PostgreSQL"
 )
 _MIGRATIONS = Path(__file__).resolve().parents[4] / "database/migrations"
-_SCHEMA = [
-    _MIGRATIONS / "V0001__create_dmer_pipeline_schema.sql",
-    _MIGRATIONS / "V0004__rule_engine_activity.sql",
-]
+# Every migration, in version order -- the schema production runs, so a
+# new column the code needs can never be missing here.
+_SCHEMA = sorted(_MIGRATIONS.glob("V*.sql"), key=lambda path: int(path.name[1:5]))
 RECEIVED = datetime(2026, 9, 1, tzinfo=UTC)
 CHECKSUM = hashlib.sha256(b"rules").hexdigest()
 EVALUATION = select_outcome(
