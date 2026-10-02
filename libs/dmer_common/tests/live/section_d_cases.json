@@ -1,0 +1,1403 @@
+[
+ {
+  "chapter": "cardio",
+  "section_d": "Aortic stenosis, stable.",
+  "expected": "cardiovascular.aortic_stenosis"
+ },
+ {
+  "chapter": "cardio",
+  "section_d": "Known aortic regurgitation.",
+  "expected": "cardiovascular.aortic_regurgitation"
+ },
+ {
+  "chapter": "cardio",
+  "section_d": "Mitral stenosis.",
+  "expected": "cardiovascular.mitral_stenosis"
+ },
+ {
+  "chapter": "cardio",
+  "section_d": "Mitral regurgitation.",
+  "expected": "cardiovascular.mitral_regurgitation"
+ },
+ {
+  "chapter": "cardio",
+  "section_d": "Mitral valve prolapse.",
+  "expected": "cardiovascular.mitral_valve_prolapse"
+ },
+ {
+  "chapter": "cardio",
+  "section_d": "MVP noted on echo.",
+  "expected": "cardiovascular.mitral_valve_prolapse"
+ },
+ {
+  "chapter": "cardio",
+  "section_d": "Cardiomyopathy.",
+  "expected": "cardiovascular.cardiomyopathy"
+ },
+ {
+  "chapter": "cardio",
+  "section_d": "Had surgical valve repair.",
+  "expected": "cardiovascular.surgical_valve_repair"
+ },
+ {
+  "chapter": "cardio",
+  "section_d": "Tachycardia (rapid heart rate).",
+  "expected": "cardiovascular.arrhythmia"
+ },
+ {
+  "chapter": "cardio",
+  "section_d": "Bradycardia.",
+  "expected": "cardiovascular.arrhythmia"
+ },
+ {
+  "chapter": "cardio",
+  "section_d": "Atrial fibrillation, treated.",
+  "expected": "cardiovascular.arrhythmia"
+ },
+ {
+  "chapter": "cardio",
+  "section_d": "Atrial flutter.",
+  "expected": "cardiovascular.arrhythmia"
+ },
+ {
+  "chapter": "cardio",
+  "section_d": "First degree heart block.",
+  "expected": "cardiovascular.arrhythmia"
+ },
+ {
+  "chapter": "cardio",
+  "section_d": "Right bundle branch block (BBB).",
+  "expected": "cardiovascular.arrhythmia"
+ },
+ {
+  "chapter": "cardio",
+  "section_d": "Arrhythmia.",
+  "expected": "cardiovascular.arrhythmia"
+ },
+ {
+  "chapter": "cardio",
+  "section_d": "CABG in 2019.",
+  "expected": "cardiovascular.cad"
+ },
+ {
+  "chapter": "cardio",
+  "section_d": "Coronary artery bypass grafting.",
+  "expected": "cardiovascular.cad"
+ },
+ {
+  "chapter": "cardio",
+  "section_d": "Coronary artery disease.",
+  "expected": "cardiovascular.cad"
+ },
+ {
+  "chapter": "cardio",
+  "section_d": "CAD.",
+  "expected": "cardiovascular.cad"
+ },
+ {
+  "chapter": "cardio",
+  "section_d": "Angina.",
+  "expected": "cardiovascular.cad"
+ },
+ {
+  "chapter": "cardio",
+  "section_d": "Angioplasty last year.",
+  "expected": "cardiovascular.cad"
+ },
+ {
+  "chapter": "cardio",
+  "section_d": "Two stents placed.",
+  "expected": "cardiovascular.cad"
+ },
+ {
+  "chapter": "cardio",
+  "section_d": "Post-PCI.",
+  "expected": "cardiovascular.cad"
+ },
+ {
+  "chapter": "cardio",
+  "section_d": "Post-MI.",
+  "expected": "cardiovascular.cad"
+ },
+ {
+  "chapter": "cardio",
+  "section_d": "Myocardial infarction in 2022.",
+  "expected": "cardiovascular.cad"
+ },
+ {
+  "chapter": "cardio",
+  "section_d": "Heart attack in 2021.",
+  "expected": "cardiovascular.cad"
+ },
+ {
+  "chapter": "cardio",
+  "section_d": "Congestive heart failure.",
+  "expected": "cardiovascular.congestive_heart_failure"
+ },
+ {
+  "chapter": "cardio",
+  "section_d": "CHF, NYHA class 2.",
+  "expected": {
+   "cardiovascular.congestive_heart_failure": true,
+   "cardiovascular.nyha_class": 2
+  }
+ },
+ {
+  "chapter": "cardio",
+  "section_d": "Heart failure with LVEF 30%.",
+  "expected": {
+   "cardiovascular.congestive_heart_failure": true,
+   "cardiovascular.lvef": 30
+  }
+ },
+ {
+  "chapter": "cardio",
+  "section_d": "Cardiac transplant in 2020.",
+  "expected": "cardiovascular.cardiac_transplant"
+ },
+ {
+  "chapter": "cardio",
+  "section_d": "Heart transplant.",
+  "expected": "cardiovascular.cardiac_transplant"
+ },
+ {
+  "chapter": "cardio",
+  "section_d": "High cholesterol.",
+  "expected": {
+   "any_of": [
+    "cardiovascular.cholesterol",
+    "cardiovascular.hypercholesterolemia"
+   ]
+  }
+ },
+ {
+  "chapter": "cardio",
+  "section_d": "Hypercholesterolemia.",
+  "expected": "cardiovascular.hypercholesterolemia"
+ },
+ {
+  "chapter": "cardio",
+  "section_d": "Hyperlipidemia.",
+  "expected": "cardiovascular.hyperlipidemia"
+ },
+ {
+  "chapter": "cardio",
+  "section_d": "Dyslipidemia.",
+  "expected": "cardiovascular.dyslipidemia"
+ },
+ {
+  "chapter": "cardio",
+  "section_d": "Hypertension.",
+  "expected": "cardiovascular.hypertension"
+ },
+ {
+  "chapter": "cardio",
+  "section_d": "HTN, controlled.",
+  "expected": "cardiovascular.hypertension"
+ },
+ {
+  "chapter": "cardio",
+  "section_d": "Implanted cardiac defibrillator.",
+  "expected": "cardiovascular.icd"
+ },
+ {
+  "chapter": "cardio",
+  "section_d": "ICD therapy: shock delivered last month.",
+  "expected": "cardiovascular.icd_therapy"
+ },
+ {
+  "chapter": "cardio",
+  "section_d": "Cardiac arrest for sustained ventricular tachycardia.",
+  "expected": "cardiovascular.ventricular_tachycardia"
+ },
+ {
+  "chapter": "cardio",
+  "section_d": "Ventricular fibrillation.",
+  "expected": "cardiovascular.ventricular_fibrillation"
+ },
+ {
+  "chapter": "cardio",
+  "section_d": "Permanent pacemaker.",
+  "expected": "cardiovascular.pacemaker"
+ },
+ {
+  "chapter": "cardio",
+  "section_d": "Syncope.",
+  "expected": "cardiovascular.syncope"
+ },
+ {
+  "chapter": "cardio",
+  "section_d": "Fainting episode.",
+  "expected": "cardiovascular.syncope"
+ },
+ {
+  "chapter": "cerebro",
+  "section_d": "Cerebral aneurysm.",
+  "expected": "cerebrovascular.cerebral_aneurysm"
+ },
+ {
+  "chapter": "cerebro",
+  "section_d": "Brain aneurysm.",
+  "expected": "cerebrovascular.cerebral_aneurysm"
+ },
+ {
+  "chapter": "cerebro",
+  "section_d": "Stroke in 2023.",
+  "expected": "cerebrovascular.cva"
+ },
+ {
+  "chapter": "cerebro",
+  "section_d": "CVA.",
+  "expected": "cerebrovascular.cva"
+ },
+ {
+  "chapter": "cerebro",
+  "section_d": "Cerebral vascular accident.",
+  "expected": "cerebrovascular.cva"
+ },
+ {
+  "chapter": "cerebro",
+  "section_d": "TIA.",
+  "expected": "cerebrovascular.tia"
+ },
+ {
+  "chapter": "cerebro",
+  "section_d": "Transient ischemic attack.",
+  "expected": "cerebrovascular.tia"
+ },
+ {
+  "chapter": "cerebro",
+  "section_d": "Subdural hematoma.",
+  "expected": "cerebrovascular.subdural_hematoma"
+ },
+ {
+  "chapter": "renal",
+  "section_d": "On dialysis.",
+  "expected": "chronicrenal.dialysis"
+ },
+ {
+  "chapter": "renal",
+  "section_d": "Kidney stones.",
+  "expected": "chronicrenal.kidney_stones"
+ },
+ {
+  "chapter": "renal",
+  "section_d": "Nephrectomy.",
+  "expected": "chronicrenal.nephrectomy"
+ },
+ {
+  "chapter": "renal",
+  "section_d": "Surgery to remove a kidney.",
+  "expected": "chronicrenal.nephrectomy"
+ },
+ {
+  "chapter": "renal",
+  "section_d": "Renal failure.",
+  "expected": {
+   "any_of": [
+    "chronicrenal.renal_failure",
+    "chronicrenal.chronic_renal_failure"
+   ]
+  }
+ },
+ {
+  "chapter": "renal",
+  "section_d": "Chronic renal failure.",
+  "expected": {
+   "any_of": [
+    "chronicrenal.chronic_renal_failure",
+    "chronicrenal.renal_failure"
+   ]
+  }
+ },
+ {
+  "chapter": "renal",
+  "section_d": "Renal transplant.",
+  "expected": "chronicrenal.renal_transplants"
+ },
+ {
+  "chapter": "renal",
+  "section_d": "Kidney transplant.",
+  "expected": "chronicrenal.renal_transplants"
+ },
+ {
+  "chapter": "cognitive",
+  "section_d": "Cognitive impairment.",
+  "expected": "cns.cognitiveimpairment"
+ },
+ {
+  "chapter": "cognitive",
+  "section_d": "Dementia.",
+  "expected": "cns.dementia"
+ },
+ {
+  "chapter": "cognitive",
+  "section_d": "Alzheimer's disease.",
+  "expected": "cns.alzheimers"
+ },
+ {
+  "chapter": "cognitive",
+  "section_d": "Mild cognitive decline.",
+  "expected": "cns.cognitiveimpairment_is_mild_or_moderate"
+ },
+ {
+  "chapter": "cognitive",
+  "section_d": "Cognitive impairment, MMSE 24.",
+  "expected": {
+   "cns.mmse_score": 24
+  }
+ },
+ {
+  "chapter": "cognitive",
+  "section_d": "Cognitive impairment, MoCA 22.",
+  "expected": {
+   "cns.moca_score": 22
+  }
+ },
+ {
+  "chapter": "cognitive",
+  "section_d": "Cognitive impairment, SIMARD 60.",
+  "expected": {
+   "cns.simard_score": 60
+  }
+ },
+ {
+  "chapter": "cognitive",
+  "section_d": "Cognitive impairment, GDS level 3.",
+  "expected": {
+   "cns.gds_level_score": 3
+  }
+ },
+ {
+  "chapter": "cognitive",
+  "section_d": "Cognitive impairment, Trails A 80 seconds.",
+  "expected": {
+   "cns.trails_a_seconds": 80
+  }
+ },
+ {
+  "chapter": "cognitive",
+  "section_d": "Cognitive impairment, Trails B 3 minutes 10 seconds.",
+  "expected": {
+   "cns.trails_b_seconds": 190
+  }
+ },
+ {
+  "chapter": "diabetes",
+  "section_d": "Diabetes.",
+  "expected": "endocrine.diabetes"
+ },
+ {
+  "chapter": "diabetes",
+  "section_d": "Type 2 diabetes.",
+  "expected": "endocrine.diabetes"
+ },
+ {
+  "chapter": "diabetes",
+  "section_d": "NIDDM.",
+  "expected": "endocrine.diabetes"
+ },
+ {
+  "chapter": "diabetes",
+  "section_d": "IDDM.",
+  "expected": "endocrine.diabetes"
+ },
+ {
+  "chapter": "diabetes",
+  "section_d": "Type 1 diabetes on insulin.",
+  "expected": {
+   "endocrine.diabetes": true,
+   "endocrine.diabetes_treatment_mentioned_in_text": true
+  }
+ },
+ {
+  "chapter": "diabetes",
+  "section_d": "Diabetes, diet and exercise controlled.",
+  "expected": {
+   "endocrine.diabetes": true,
+   "endocrine.diabetes_treatment_mentioned_in_text": true
+  }
+ },
+ {
+  "chapter": "diabetes",
+  "section_d": "Diabetes on oral medications (metformin).",
+  "expected": {
+   "endocrine.diabetes": true,
+   "endocrine.diabetes_treatment_mentioned_in_text": true
+  }
+ },
+ {
+  "chapter": "diabetes",
+  "section_d": "Diabetes on an insulin secretagogue (gliclazide).",
+  "expected": {
+   "endocrine.diabetes": true,
+   "endocrine.diabetes_treatment_mentioned_in_text": true
+  }
+ },
+ {
+  "chapter": "diabetes",
+  "section_d": "Diabetes insipidus.",
+  "expected": "endocrine.diabetes_insipidus"
+ },
+ {
+  "chapter": "diabetes",
+  "section_d": "Glycosuria.",
+  "expected": "endocrine.glycosuria_igt_impaired"
+ },
+ {
+  "chapter": "diabetes",
+  "section_d": "Impaired glucose tolerance.",
+  "expected": {
+   "any_of": [
+    "endocrine.glucose_tolerance",
+    "endocrine.glycosuria_igt_impaired"
+   ]
+  }
+ },
+ {
+  "chapter": "diabetes",
+  "section_d": "Hypothyroid.",
+  "expected": "endocrine.hypothyroid"
+ },
+ {
+  "chapter": "diabetes",
+  "section_d": "Diabetes, HbA1C 12.5%.",
+  "expected": {
+   "endocrine.HbA1C": 12.5
+  }
+ },
+ {
+  "chapter": "diabetes",
+  "section_d": "Severe hypoglycemia with loss of consciousness, needed assistance to treat.",
+  "expected": "endocrine.severe_hypoglycemia"
+ },
+ {
+  "chapter": "diabetes",
+  "section_d": "Hypoglycemic unawareness.",
+  "expected": "endocrine.hypoglycemic_unawareness"
+ },
+ {
+  "chapter": "diabetes",
+  "section_d": "Persistent hypoglycemia unawareness.",
+  "expected": "endocrine.persistent_hypoglycemic_unawareness"
+ },
+ {
+  "chapter": "general",
+  "section_d": "General debility.",
+  "expected": "general.general_debility"
+ },
+ {
+  "chapter": "general",
+  "section_d": "Frailty.",
+  "expected": "general.general_debility"
+ },
+ {
+  "chapter": "general",
+  "section_d": "Reduced reaction time.",
+  "expected": "general.general_debility"
+ },
+ {
+  "chapter": "general",
+  "section_d": "Cancer, controlled and stable.",
+  "expected": "general.cancer"
+ },
+ {
+  "chapter": "general",
+  "section_d": "Neutropenia.",
+  "expected": "general.blood_disorders"
+ },
+ {
+  "chapter": "general",
+  "section_d": "Anemia.",
+  "expected": "general.blood_disorders"
+ },
+ {
+  "chapter": "general",
+  "section_d": "Thalassemia.",
+  "expected": "general.blood_disorders"
+ },
+ {
+  "chapter": "general",
+  "section_d": "Leukemia.",
+  "expected": {
+   "any_of": [
+    "general.blood_disorders",
+    "general.cancer"
+   ]
+  }
+ },
+ {
+  "chapter": "general",
+  "section_d": "Applying for Christian Science exemption.",
+  "expected": "general.christian_science_exemption"
+ },
+ {
+  "chapter": "general",
+  "section_d": "Colostomy.",
+  "expected": "general.colostomy"
+ },
+ {
+  "chapter": "general",
+  "section_d": "Urostomy.",
+  "expected": "general.uro"
+ },
+ {
+  "chapter": "general",
+  "section_d": "Ileostomy.",
+  "expected": "general.ileostomy"
+ },
+ {
+  "chapter": "general",
+  "section_d": "Crohn's disease.",
+  "expected": "general.crohns"
+ },
+ {
+  "chapter": "general",
+  "section_d": "Essential tremor.",
+  "expected": "general.tremors"
+ },
+ {
+  "chapter": "general",
+  "section_d": "Familial tremors.",
+  "expected": "general.tremors"
+ },
+ {
+  "chapter": "general",
+  "section_d": "Gout.",
+  "expected": "general.gout"
+ },
+ {
+  "chapter": "general",
+  "section_d": "Hemochromatosis.",
+  "expected": "general.hemochromatosis"
+ },
+ {
+  "chapter": "general",
+  "section_d": "Hepatitis C.",
+  "expected": "general.hepatitis"
+ },
+ {
+  "chapter": "general",
+  "section_d": "Hernia.",
+  "expected": "general.hernia"
+ },
+ {
+  "chapter": "general",
+  "section_d": "Migraines.",
+  "expected": "general.migraines"
+ },
+ {
+  "chapter": "general",
+  "section_d": "Morbid obesity.",
+  "expected": "general.morbid_obesity"
+ },
+ {
+  "chapter": "general",
+  "section_d": "Eczema.",
+  "expected": "general.skin_conditions"
+ },
+ {
+  "chapter": "general",
+  "section_d": "Psoriasis.",
+  "expected": "general.skin_conditions"
+ },
+ {
+  "chapter": "general",
+  "section_d": "TUPR.",
+  "expected": "general.tupr"
+ },
+ {
+  "chapter": "general",
+  "section_d": "Transurethral prostate resection.",
+  "expected": "general.tupr"
+ },
+ {
+  "chapter": "general",
+  "section_d": "Stomach ulcers.",
+  "expected": "general.ulcers"
+ },
+ {
+  "chapter": "general",
+  "section_d": "GERD.",
+  "expected": "general.gerd"
+ },
+ {
+  "chapter": "general",
+  "section_d": "Stomach ailments.",
+  "expected": "general.stomach_ailments"
+ },
+ {
+  "chapter": "general",
+  "section_d": "HIV.",
+  "expected": "general.aids"
+ },
+ {
+  "chapter": "general",
+  "section_d": "AIDS.",
+  "expected": "general.aids"
+ },
+ {
+  "chapter": "hearing",
+  "section_d": "Cochlear implants.",
+  "expected": "hearing.cochlear_implants"
+ },
+ {
+  "chapter": "hearing",
+  "section_d": "Hearing loss.",
+  "expected": "hearing.hearing_loss"
+ },
+ {
+  "chapter": "hearing",
+  "section_d": "High frequency hearing loss only.",
+  "expected": "hearing.hearing_loss_high_frequency"
+ },
+ {
+  "chapter": "hearing",
+  "section_d": "Hearing loss, passed whisper test.",
+  "expected": "hearing.passed_whisper_test"
+ },
+ {
+  "chapter": "hearing",
+  "section_d": "Mild hearing loss.",
+  "expected": "hearing.mild_hearing_loss"
+ },
+ {
+  "chapter": "hearing",
+  "section_d": "Tinnitus.",
+  "expected": "hearing.tinnitus"
+ },
+ {
+  "chapter": "hearing",
+  "section_d": "Non-progressive hearing loss.",
+  "expected": "hearing.non_progressive"
+ },
+ {
+  "chapter": "hearing",
+  "section_d": "Deaf.",
+  "expected": "hearing.deaf"
+ },
+ {
+  "chapter": "hearing",
+  "section_d": "Profound hearing loss.",
+  "expected": "hearing.profound_hearing_loss"
+ },
+ {
+  "chapter": "hearing",
+  "section_d": "Hearing aid in one ear only.",
+  "expected": "hearing.hearing_aid_one_ear"
+ },
+ {
+  "chapter": "hearing",
+  "section_d": "Hearing loss in one ear only.",
+  "expected": "hearing.hearing_loss_one_ear"
+ },
+ {
+  "chapter": "tumour",
+  "section_d": "Brain tumor.",
+  "expected": "cns.intracranial_tumors"
+ },
+ {
+  "chapter": "tumour",
+  "section_d": "Intracranial tumour, resected.",
+  "expected": {
+   "cns.intracranial_tumors": true,
+   "cns.intracranial_tumors.resected": true
+  }
+ },
+ {
+  "chapter": "msk",
+  "section_d": "Left below knee amputation (BKA).",
+  "expected": {
+   "musculoskeletal.limb_amputation": true,
+   "musculoskeletal.amputation_left_sided": true,
+   "musculoskeletal.amputation_below_knee": true
+  }
+ },
+ {
+  "chapter": "msk",
+  "section_d": "Right above knee amputation (AKA).",
+  "expected": {
+   "musculoskeletal.limb_amputation": true,
+   "musculoskeletal.amputation_right_sided": true,
+   "musculoskeletal.amputation_above_knee": true
+  }
+ },
+ {
+  "chapter": "msk",
+  "section_d": "Amputation of two fingers.",
+  "expected": "musculoskeletal.limb_amputation_fingers_or_toes"
+ },
+ {
+  "chapter": "msk",
+  "section_d": "Toe amputation.",
+  "expected": "musculoskeletal.limb_amputation_fingers_or_toes"
+ },
+ {
+  "chapter": "msk",
+  "section_d": "Arthritis.",
+  "expected": "musculoskeletal.arthritis"
+ },
+ {
+  "chapter": "msk",
+  "section_d": "Ankylosing spondylitis.",
+  "expected": "musculoskeletal.ankylosing_spondylitis"
+ },
+ {
+  "chapter": "msk",
+  "section_d": "Rheumatoid arthritis.",
+  "expected": "musculoskeletal.rheumatoid_arthritis"
+ },
+ {
+  "chapter": "msk",
+  "section_d": "Osteoarthritis.",
+  "expected": "musculoskeletal.osteoarthritis"
+ },
+ {
+  "chapter": "msk",
+  "section_d": "Osteoporosis.",
+  "expected": "musculoskeletal.osteoporosis"
+ },
+ {
+  "chapter": "msk",
+  "section_d": "Lupus.",
+  "expected": "musculoskeletal.lupus"
+ },
+ {
+  "chapter": "msk",
+  "section_d": "Back pain.",
+  "expected": "musculoskeletal.back_pain"
+ },
+ {
+  "chapter": "msk",
+  "section_d": "Degenerative disc disease.",
+  "expected": "musculoskeletal.degenerative_disk_disease"
+ },
+ {
+  "chapter": "msk",
+  "section_d": "DDD.",
+  "expected": "musculoskeletal.degenerative_disk_disease"
+ },
+ {
+  "chapter": "msk",
+  "section_d": "Fibromyalgia.",
+  "expected": "musculoskeletal.fibromyalgia"
+ },
+ {
+  "chapter": "msk",
+  "section_d": "Polymyalgia.",
+  "expected": "musculoskeletal.polymyalgia"
+ },
+ {
+  "chapter": "msk",
+  "section_d": "Right foot drop.",
+  "expected": "musculoskeletal.foot_drop"
+ },
+ {
+  "chapter": "msk",
+  "section_d": "Paraplegia.",
+  "expected": "musculoskeletal.paraplegia"
+ },
+ {
+  "chapter": "msk",
+  "section_d": "Quadriplegia.",
+  "expected": "musculoskeletal.quadriplegia"
+ },
+ {
+  "chapter": "msk",
+  "section_d": "Tetraplegia.",
+  "expected": "musculoskeletal.tetraplegia"
+ },
+ {
+  "chapter": "msk",
+  "section_d": "Spina bifida.",
+  "expected": "musculoskeletal.spinal_bifida"
+ },
+ {
+  "chapter": "msk",
+  "section_d": "Polio.",
+  "expected": "musculoskeletal.polio"
+ },
+ {
+  "chapter": "msk",
+  "section_d": "Post-polio syndrome.",
+  "expected": "musculoskeletal.post_polio"
+ },
+ {
+  "chapter": "msk",
+  "section_d": "Range of motion loss in the neck.",
+  "expected": "musculoskeletal.range_of_motion_loss"
+ },
+ {
+  "chapter": "msk",
+  "section_d": "Spinal injury.",
+  "expected": "musculoskeletal.spinal_injury"
+ },
+ {
+  "chapter": "msk",
+  "section_d": "Neck injury.",
+  "expected": "musculoskeletal.neck_injury"
+ },
+ {
+  "chapter": "msk",
+  "section_d": "Back injury.",
+  "expected": "musculoskeletal.back_injury"
+ },
+ {
+  "chapter": "msk",
+  "section_d": "Restless leg syndrome.",
+  "expected": "musculoskeletal.restless_leg_syndrome"
+ },
+ {
+  "chapter": "msk",
+  "section_d": "Spinal stenosis.",
+  "expected": "musculoskeletal.spinal_stenosis"
+ },
+ {
+  "chapter": "msk",
+  "section_d": "Dwarfism.",
+  "expected": "musculoskeletal.dwarfism"
+ },
+ {
+  "chapter": "msk",
+  "section_d": "Functional decline with weakness.",
+  "expected": {
+   "any_of": [
+    "musculoskeletal.weakness",
+    "general.general_debility"
+   ]
+  }
+ },
+ {
+  "chapter": "msk",
+  "section_d": "Requires vehicle modifications.",
+  "expected": "musculoskeletal.vehicle_modifications"
+ },
+ {
+  "chapter": "neuro",
+  "section_d": "Multiple sclerosis.",
+  "expected": "cns.multiple_sclerosis"
+ },
+ {
+  "chapter": "neuro",
+  "section_d": "MS, stable.",
+  "expected": "cns.multiple_sclerosis"
+ },
+ {
+  "chapter": "neuro",
+  "section_d": "Parkinson's disease.",
+  "expected": "cns.parkinsons"
+ },
+ {
+  "chapter": "neuro",
+  "section_d": "Mitochondrial myopathy.",
+  "expected": "cns.mitochondrial_myopathy"
+ },
+ {
+  "chapter": "neuro",
+  "section_d": "Muscular dystrophy.",
+  "expected": "cns.muscular_dystrophy"
+ },
+ {
+  "chapter": "neuro",
+  "section_d": "Myasthenia gravis.",
+  "expected": "cns.myasthenia_gravis"
+ },
+ {
+  "chapter": "neuro",
+  "section_d": "MG, controlled.",
+  "expected": "cns.myasthenia_gravis"
+ },
+ {
+  "chapter": "neuro",
+  "section_d": "Charcot-Marie-Tooth disease.",
+  "expected": "cns.charcot_marie_tooth_disease"
+ },
+ {
+  "chapter": "neuro",
+  "section_d": "CMT.",
+  "expected": "cns.charcot_marie_tooth_disease"
+ },
+ {
+  "chapter": "neuro",
+  "section_d": "ALS.",
+  "expected": "cns.als"
+ },
+ {
+  "chapter": "neuro",
+  "section_d": "Cerebral palsy.",
+  "expected": "cns.non_progressive_stable"
+ },
+ {
+  "chapter": "neuro",
+  "section_d": "Hemiplegia, non-progressive.",
+  "expected": "cns.non_progressive_stable"
+ },
+ {
+  "chapter": "neuro",
+  "section_d": "Peripheral neuropathy.",
+  "expected": "cns.peripheral_neuropathy"
+ },
+ {
+  "chapter": "neuro",
+  "section_d": "Huntington's disease (progressive neurological disorder).",
+  "expected": "cns.progressive_deficit"
+ },
+ {
+  "chapter": "pvd",
+  "section_d": "Abdominal aortic aneurysm 5.0 cm.",
+  "expected": {
+   "pvd.abdominal_aortic_aneurysm": true,
+   "pvd.aneurysm_size": 5.0
+  }
+ },
+ {
+  "chapter": "pvd",
+  "section_d": "AAA.",
+  "expected": "pvd.abdominal_aortic_aneurysm"
+ },
+ {
+  "chapter": "pvd",
+  "section_d": "AAA, clipped.",
+  "expected": "pvd.abdominal_aortic_aneurysm_repaired"
+ },
+ {
+  "chapter": "pvd",
+  "section_d": "AAA with imminent rupture risk.",
+  "expected": "pvd.abdominal_aortic_aneurysm_has_concerns"
+ },
+ {
+  "chapter": "pvd",
+  "section_d": "Aortic dissection, repaired.",
+  "expected": "pvd.aortic_dissection"
+ },
+ {
+  "chapter": "pvd",
+  "section_d": "Carotid stenosis.",
+  "expected": "pvd.carotid_stenosis"
+ },
+ {
+  "chapter": "pvd",
+  "section_d": "Claudication.",
+  "expected": "pvd.claudication"
+ },
+ {
+  "chapter": "pvd",
+  "section_d": "DVT.",
+  "expected": "pvd.deep_vein_thrombosis"
+ },
+ {
+  "chapter": "pvd",
+  "section_d": "Deep vein thrombosis.",
+  "expected": "pvd.deep_vein_thrombosis"
+ },
+ {
+  "chapter": "pvd",
+  "section_d": "Peripheral arterial disease.",
+  "expected": "pvd.peripheral_arterial_disease"
+ },
+ {
+  "chapter": "pvd",
+  "section_d": "Peripheral vascular disease.",
+  "expected": "pvd.peripheral_vascular_disease"
+ },
+ {
+  "chapter": "psych",
+  "section_d": "ADHD.",
+  "expected": "psychiatric.adhd"
+ },
+ {
+  "chapter": "psych",
+  "section_d": "ADD.",
+  "expected": "psychiatric.add"
+ },
+ {
+  "chapter": "psych",
+  "section_d": "OCD.",
+  "expected": "psychiatric.ocd"
+ },
+ {
+  "chapter": "psych",
+  "section_d": "Anxiety.",
+  "expected": "psychiatric.anxiety"
+ },
+ {
+  "chapter": "psych",
+  "section_d": "PTSD.",
+  "expected": {
+   "any_of": [
+    "psychiatric.ptsd",
+    "psychiatric.anxiety"
+   ]
+  }
+ },
+ {
+  "chapter": "psych",
+  "section_d": "Mild depression.",
+  "expected": "psychiatric.mild_depression"
+ },
+ {
+  "chapter": "psych",
+  "section_d": "Autism.",
+  "expected": "psychiatric.autism"
+ },
+ {
+  "chapter": "psych",
+  "section_d": "Mental handicap.",
+  "expected": "psychiatric.mental_handicap"
+ },
+ {
+  "chapter": "psych",
+  "section_d": "IQ concerns.",
+  "expected": "psychiatric.mental_handicap"
+ },
+ {
+  "chapter": "psych",
+  "section_d": "Bipolar disorder.",
+  "expected": "psychiatric.bipolar"
+ },
+ {
+  "chapter": "psych",
+  "section_d": "Schizophrenia.",
+  "expected": "psychiatric.schizophrenia"
+ },
+ {
+  "chapter": "psych",
+  "section_d": "Psychosis.",
+  "expected": "psychiatric.psychosis"
+ },
+ {
+  "chapter": "psych",
+  "section_d": "Severe depression.",
+  "expected": "psychiatric.other_psych_diagnosis"
+ },
+ {
+  "chapter": "drugs",
+  "section_d": "On prescribed psychotropic medication.",
+  "expected": "psychotropic_drugs.perscribed_drugs"
+ },
+ {
+  "chapter": "drugs",
+  "section_d": "Prescribed marijuana.",
+  "expected": "psychotropic_drugs.perscribed_drugs"
+ },
+ {
+  "chapter": "drugs",
+  "section_d": "Alcohol use disorder, active.",
+  "expected": "psychotropic_drugs.alcohol_use"
+ },
+ {
+  "chapter": "drugs",
+  "section_d": "Substance use disorder, active.",
+  "expected": "psychotropic_drugs.substance_use"
+ },
+ {
+  "chapter": "drugs",
+  "section_d": "Alcohol dependence within the last 2 years, now abstinent.",
+  "expected": "psychotropic_drugs.substance_abuse_or_dependence"
+ },
+ {
+  "chapter": "drugs",
+  "section_d": "Substance abuse within the last 2 years.",
+  "expected": "psychotropic_drugs.substance_abuse_or_dependence"
+ },
+ {
+  "chapter": "resp",
+  "section_d": "Asthma.",
+  "expected": "respiratory.asthma"
+ },
+ {
+  "chapter": "resp",
+  "section_d": "COPD.",
+  "expected": "respiratory.copd"
+ },
+ {
+  "chapter": "resp",
+  "section_d": "Emphysema.",
+  "expected": "respiratory.emphysema"
+ },
+ {
+  "chapter": "resp",
+  "section_d": "Uses home oxygen.",
+  "expected": "respiratory.oxygen_use"
+ },
+ {
+  "chapter": "resp",
+  "section_d": "Permanent tracheostomy.",
+  "expected": "respiratory.permanent_tracheostomy"
+ },
+ {
+  "chapter": "resp",
+  "section_d": "Pulmonary embolism, resolved.",
+  "expected": {
+   "respiratory.pulmonary_embolism": true,
+   "respiratory.pulmonary_embolism_resolved": true
+  }
+ },
+ {
+  "chapter": "seizure",
+  "section_d": "Epilepsy.",
+  "expected": "cns.epilepsy"
+ },
+ {
+  "chapter": "seizure",
+  "section_d": "Provoked seizure.",
+  "expected": "cns.provoked_seizure"
+ },
+ {
+  "chapter": "sleep",
+  "section_d": "Sleep apnea.",
+  "expected": "sleep.obstructive_sleep_apnea"
+ },
+ {
+  "chapter": "sleep",
+  "section_d": "OSA, moderate.",
+  "expected": {
+   "sleep.obstructive_sleep_apnea": true,
+   "sleep.osa_mod": true
+  }
+ },
+ {
+  "chapter": "sleep",
+  "section_d": "Sleep apnea, AHI 35.",
+  "expected": {
+   "sleep.ahi_score": 35
+  }
+ },
+ {
+  "chapter": "sleep",
+  "section_d": "Sleep apnea, Epworth score 12.",
+  "expected": {
+   "sleep.epworth_score": 12
+  }
+ },
+ {
+  "chapter": "sleep",
+  "section_d": "Sleep apnea, CPAP compliant.",
+  "expected": "sleep.cpap_compliant"
+ },
+ {
+  "chapter": "sleep",
+  "section_d": "Sleep apnea with daytime sleepiness.",
+  "expected": "sleep.with_daytime_sleepiness"
+ },
+ {
+  "chapter": "sleep",
+  "section_d": "Insomnia.",
+  "expected": "sleep.insomnia"
+ },
+ {
+  "chapter": "sleep",
+  "section_d": "Narcolepsy.",
+  "expected": "sleep.narcolepsy"
+ },
+ {
+  "chapter": "sleep",
+  "section_d": "Episodes of cataplexy.",
+  "expected": "sleep.narcolepsy"
+ },
+ {
+  "chapter": "sleep",
+  "section_d": "Sudden sleep attacks.",
+  "expected": "sleep.narcolepsy"
+ },
+ {
+  "chapter": "tbi",
+  "section_d": "Traumatic brain injury.",
+  "expected": "traumatic_brain_injury"
+ },
+ {
+  "chapter": "tbi",
+  "section_d": "Head injury last year.",
+  "expected": "traumatic_brain_injury"
+ },
+ {
+  "chapter": "tbi",
+  "section_d": "Concussion.",
+  "expected": "traumatic_brain_injury"
+ },
+ {
+  "chapter": "vestibular",
+  "section_d": "Drop attacks.",
+  "expected": "vestibular.drop_attacks"
+ },
+ {
+  "chapter": "vestibular",
+  "section_d": "Tumarkin's crisis.",
+  "expected": "vestibular.drop_attacks"
+ },
+ {
+  "chapter": "vestibular",
+  "section_d": "Recurrent vertigo.",
+  "expected": "vestibular.recurrent_vertigo"
+ },
+ {
+  "chapter": "vestibular",
+  "section_d": "Meniere's disease.",
+  "expected": "vestibular.recurrent_vertigo"
+ },
+ {
+  "chapter": "vestibular",
+  "section_d": "Vestibular neuronitis.",
+  "expected": "vestibular.recurrent_vertigo"
+ },
+ {
+  "chapter": "vestibular",
+  "section_d": "Psychogenic vertigo.",
+  "expected": "vestibular.recurrent_vertigo"
+ },
+ {
+  "chapter": "vestibular",
+  "section_d": "Anxiety hyperventilation syndrome with vertigo.",
+  "expected": "vestibular.recurrent_vertigo"
+ },
+ {
+  "chapter": "vestibular",
+  "section_d": "Recurrent vertigo with warnings.",
+  "expected": "vestibular.vertigo_with_warnings"
+ },
+ {
+  "chapter": "vestibular",
+  "section_d": "Recurrent vertigo without warnings.",
+  "expected": "vestibular.vertigo_without_warnings"
+ },
+ {
+  "chapter": "vision",
+  "section_d": "Cataracts.",
+  "expected": "vision.cataracts"
+ },
+ {
+  "chapter": "vision",
+  "section_d": "Cataract surgery done.",
+  "expected": "vision.cataracts_had_surgery"
+ },
+ {
+  "chapter": "vision",
+  "section_d": "Macular degeneration.",
+  "expected": "vision.progressive_eye_condition"
+ },
+ {
+  "chapter": "vision",
+  "section_d": "AMD.",
+  "expected": "vision.progressive_eye_condition"
+ },
+ {
+  "chapter": "vision",
+  "section_d": "Glaucoma.",
+  "expected": "vision.progressive_eye_condition"
+ },
+ {
+  "chapter": "vision",
+  "section_d": "Retinopathy.",
+  "expected": "vision.retinopathy"
+ },
+ {
+  "chapter": "vision",
+  "section_d": "Diabetic retinopathy.",
+  "expected": {
+   "any_of": [
+    "vision.retinopathy",
+    "vision.progressive_eye_condition"
+   ]
+  }
+ },
+ {
+  "chapter": "vision",
+  "section_d": "Retinal detachment.",
+  "expected": "vision.retinal_detachment"
+ },
+ {
+  "chapter": "vision",
+  "section_d": "CRAO.",
+  "expected": "vision.crao"
+ },
+ {
+  "chapter": "vision",
+  "section_d": "Central retinal vein occlusion.",
+  "expected": "vision.crvo"
+ },
+ {
+  "chapter": "vision",
+  "section_d": "Colour blindness.",
+  "expected": "vision.color_blindness"
+ },
+ {
+  "chapter": "vision",
+  "section_d": "Diplopia.",
+  "expected": "vision.diplopia"
+ },
+ {
+  "chapter": "vision",
+  "section_d": "Double vision.",
+  "expected": "vision.diplopia"
+ },
+ {
+  "chapter": "vision",
+  "section_d": "Diabetic eye nerve palsy.",
+  "expected": "vision.eye_nerve_palsy"
+ },
+ {
+  "chapter": "vision",
+  "section_d": "Post-CVA eye nerve palsy.",
+  "expected": "vision.eye_nerve_palsy"
+ },
+ {
+  "chapter": "vision",
+  "section_d": "Strabismus.",
+  "expected": "vision.strabismus"
+ },
+ {
+  "chapter": "vision",
+  "section_d": "Esotropia.",
+  "expected": "vision.strabismus"
+ },
+ {
+  "chapter": "vision",
+  "section_d": "Hypertropia.",
+  "expected": "vision.strabismus"
+ },
+ {
+  "chapter": "vision",
+  "section_d": "Eye misalignment.",
+  "expected": "vision.strabismus"
+ },
+ {
+  "chapter": "vision",
+  "section_d": "Monocular.",
+  "expected": "vision.monocular"
+ },
+ {
+  "chapter": "vision",
+  "section_d": "Loss of depth perception.",
+  "expected": "vision.monocular"
+ },
+ {
+  "chapter": "other",
+  "section_d": "Patient should not drive.",
+  "expected": "priority.should_not_drive"
+ },
+ {
+  "chapter": "other",
+  "section_d": "Can't drive now.",
+  "expected": "priority.should_not_drive"
+ },
+ {
+  "chapter": "other",
+  "section_d": "Unfit for class 1, fit for downgrade to class 5.",
+  "expected": "priority.unfit_for_current_class"
+ },
+ {
+  "chapter": "other",
+  "section_d": "Applying for class 4.",
+  "expected": "priority.applying_for_class"
+ },
+ {
+  "chapter": "other",
+  "section_d": "I have concerns about this patient's ability to drive.",
+  "expected": "priority.has_concerns"
+ },
+ {
+  "chapter": "other",
+  "section_d": "Road test recommended.",
+  "expected": "recommendations.road_test_to_assess"
+ }
+]
