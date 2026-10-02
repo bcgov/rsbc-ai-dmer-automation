@@ -76,7 +76,7 @@ repeated in each stage doc.
 |---|---|---|
 | `id` | bigserial PK | |
 | `document_id` | uuid FK → `dmer_document.id` | |
-| `stage` | enum | `INGEST`, `EXTRACT`, `RESOLVE_DRIVER` (V0005), `NORMALIZE`, `RULES`, `DECISION`, `POST` (see stage docs for exact value per stage). |
+| `stage` | enum | `INGEST`, `EXTRACT`, `DRIVER_LOOKUP` (V0005), `NORMALIZE`, `RULES`, `DECISION`, `POST` (see stage docs for exact value per stage). |
 | `status` | enum | `RUNNING`, `SUCCEEDED`, `FAILED`. |
 | `attempt_no` | int | Previous attempts for the same `(document_id, stage)` + 1, computed by the writer — **not** the queue message's `attempt` (Service Bus redelivery doesn't change it). |
 | `started_at` / `ended_at` | timestamptz | |

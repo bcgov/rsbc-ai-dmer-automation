@@ -4,7 +4,7 @@
 -- "Activity: Resolve Driver") needs beyond V0001. Additive only (expand step).
 
 -- Its own dmer_stage_run rows: every activity writes one (03, "Two conventions").
-ALTER TYPE dmer_stage ADD VALUE IF NOT EXISTS 'RESOLVE_DRIVER' BEFORE 'NORMALIZE';
+ALTER TYPE dmer_stage ADD VALUE IF NOT EXISTS 'DRIVER_LOOKUP' BEFORE 'NORMALIZE';
 
 -- dmer_document ---------------------------------------------------------------
 -- How driver_key was decided:

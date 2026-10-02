@@ -140,7 +140,7 @@ def test_a_looked_up_driver_is_created_attached_and_given_an_open_evaluation():
                 ) == (evaluation, "WAITING", True, 2, 0)
                 assert await _one(
                     conn, "SELECT stage::text, status::text FROM dmer_stage_run"
-                ) == ("RESOLVE_DRIVER", "SUCCEEDED")
+                ) == ("DRIVER_LOOKUP", "SUCCEEDED")
 
     asyncio.run(run())
 

@@ -60,7 +60,7 @@ class StageRunStatus(str, enum.Enum):
 _stage_enum = PG_ENUM(
     "INGEST",
     "EXTRACT",
-    "RESOLVE_DRIVER",  # V0005
+    "DRIVER_LOOKUP",  # V0005
     "NORMALIZE",
     "RULES",
     "DECISION",

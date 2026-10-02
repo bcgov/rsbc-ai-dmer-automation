@@ -12,7 +12,7 @@ A resolved document, in one transaction:
 - creates or attaches the driver's open ``driver_evaluation`` and **sets**
   ``expected_document_count`` from Mercury (set, never incremented, so a
   retry rewrites the same value);
-- marks the ``RESOLVE_DRIVER`` stage run ``SUCCEEDED``.
+- marks the ``DRIVER_LOOKUP`` stage run ``SUCCEEDED``.
 
 A document that can't be resolved goes to ``MANUAL_REVIEW``, with the reason
 as the stage run's ``error_code`` and ``dmer_document.manual_review_reason``.
@@ -96,7 +96,7 @@ MANUAL_REVIEW_REASONS: Final = {
     DRIVER_AMBIGUOUS: "Mercury has more than one driver with the page's licence.",
 }
 
-_STAGE = "RESOLVE_DRIVER"
+_STAGE = "DRIVER_LOOKUP"
 _RUNNING = "RUNNING"
 _SUCCEEDED = "SUCCEEDED"
 _FAILED = "FAILED"

@@ -131,7 +131,7 @@ answered:
   `driver_resolved_by` (`MERCURY_SUPPLIED` / `LICENCE_LOOKUP` — the latter is the Decision Gateway's
   `MAP_DRIVER` flag).
 - **Manual review**: `pipeline_status = MANUAL_REVIEW`, with the reason (`LICENCE_UNREADABLE`,
-  `DRIVER_NOT_FOUND`, `DRIVER_AMBIGUOUS`) as the `RESOLVE_DRIVER` stage run's `error_code`. The
+  `DRIVER_NOT_FOUND`, `DRIVER_AMBIGUOUS`) as the `DRIVER_LOOKUP` stage run's `error_code`. The
   orchestration ends there.
 
 The licence is never logged or returned; the activity returns `{"driver_key": ...}` or
