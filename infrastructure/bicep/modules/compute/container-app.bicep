@@ -14,7 +14,8 @@
 // Scaling is defined here (KEDA), never in the application, per
 // docs/development/coding-standards.md#azure-container-apps.
 
-@description('Container App resource name, e.g. ca-rsbc-dmer-di-processor-dev-001.')
+@description('Container App resource name, e.g. ca-rsbc-dmer-di-proc-dev-001. Azure allows at most 32 characters, so the service part of the name must be short (di-processor is abbreviated to di-proc).')
+@maxLength(32)
 param name string
 
 @description('Azure region (Canada Central by default).')
@@ -95,16 +96,12 @@ var openAiEnv = empty(openAiApiKeySecretUri)
       }
     ]
 
-// KEDA authenticates to Service Bus with the attached Managed Identity
-// (workload identity) — no connection-string secret.
-// KEDA authenticates to Service Bus with the attached Managed Identity — the
-// identity is set on the rule (sibling of `custom`), not inside it, so no
-// connection-string secret is needed.
-// Managed-identity auth for the KEDA scaler is valid at runtime but the
-// `identity` property is not yet modelled on the ScaleRule type in the bundled
-// Bicep types (a BCP037 false positive). Build the rule via `any()` so the
-// runtime shape is preserved without falling back to a connection-string
-// secret, which would violate "Managed Identity everywhere".
+// KEDA authenticates to Service Bus with the attached Managed Identity — no
+// connection-string secret. The identity goes INSIDE `custom` (a sibling of
+// `metadata`); the service rejects it beside `custom` (ContainerAppInvalidSchema
+// at `$[0]`), and API versions before 2025-01-01 reject it anywhere in the rule
+// (verified with ARM preflight). `any()` keeps the shape if the bundled Bicep
+// types lag behind the API.
 var scaleRules = [
   any({
     name: 'servicebus-queue-depth'
@@ -112,11 +109,15 @@ var scaleRules = [
       type: 'azure-servicebus'
       metadata: {
         queueName: scaleQueueName
-        namespace: serviceBusNamespaceFqdn
+        // KEDA wants the namespace NAME and appends .servicebus.windows.net
+        // itself; passing the FQDN made it look up
+        // "<ns>.servicebus.windows.net.servicebus.windows.net" (KEDAScalerFailed:
+        // no such host), so the app never scaled up from zero.
+        namespace: split(serviceBusNamespaceFqdn, '.')[0]
         messageCount: string(scaleMessageCount)
       }
+      identity: userAssignedIdentityId
     }
-    identity: userAssignedIdentityId
   })
 ]
 
@@ -129,7 +130,7 @@ var registries = empty(registryServer)
       }
     ]
 
-resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
+resource containerApp 'Microsoft.App/containerApps@2025-01-01' = {
   name: name
   location: location
   tags: tags
@@ -195,18 +196,16 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
   }
 }
 
-// Optional diagnostic settings → shared Log Analytics Workspace.
+// Optional diagnostic settings → shared Log Analytics Workspace: metrics only.
+// A Container App has no resource-log categories (Azure rejects
+// categoryGroup 'allLogs': "supported ones are: ''"); its console and system
+// logs go to the workspace through the Container Apps environment's
+// appLogsConfiguration (modules/compute/container-apps-environment.bicep).
 resource diagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = if (!empty(logAnalyticsWorkspaceId)) {
   name: '${name}-diag'
   scope: containerApp
   properties: {
     workspaceId: logAnalyticsWorkspaceId
-    logs: [
-      {
-        categoryGroup: 'allLogs'
-        enabled: true
-      }
-    ]
     metrics: [
       {
         category: 'AllMetrics'

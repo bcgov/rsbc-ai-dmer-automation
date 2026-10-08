@@ -54,7 +54,7 @@ rg-rsbc-dmer-<env>                   ← created by subscription.bicep
   ├─ 3 RBAC role assignments, granted to the Managed Identity:
   │    Cognitive Services User (DI account), Storage Blob Data Reader (raw
   │    container), Storage Blob Data Contributor (extracted-dmer container)
-  └─ ca-rsbc-dmer-di-processor-<env>-<instance>       (Container App — only when
+  └─ ca-rsbc-dmer-di-proc-<env>-<instance>       (Container App — only when
                                                        containerAppsEnvironmentId is set)
 ```
 
@@ -567,7 +567,7 @@ deployed with the steps below.
 ## di-processor Container App
 
 The extraction stage (see `docs/development/stages/02-extraction.md`). One
-Container App, `ca-rsbc-dmer-di-processor-<env>-<instance>`, running as the
+Container App, `ca-rsbc-dmer-di-proc-<env>-<instance>`, running as the
 `id-rsbc-dmer-di-processor-<env>-<instance>` user-assigned identity, scaled
 by KEDA on `dmer-raw` queue depth (`minReplicas` 1 in PROD, 0 elsewhere).
 Ingress is **internal only** — it exists solely for the platform's
@@ -644,7 +644,7 @@ docker push <registry>.azurecr.io/di-processor:<tag>
 
 ### Verify
 
-- Container Apps → `ca-rsbc-dmer-di-processor-<env>-<instance>`:
+- Container Apps → `ca-rsbc-dmer-di-proc-<env>-<instance>`:
   - Revisions: the latest revision is **Running** and healthy
     (liveness/readiness probes passing).
   - Identity: user assigned = `id-rsbc-dmer-di-processor-<env>-<instance>`.

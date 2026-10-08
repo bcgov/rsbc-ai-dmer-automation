@@ -86,10 +86,10 @@ def test_reconstruct_sanitizes_binary_confidence_before_validation():
 
 
 def test_reconstruct_rejects_unrepairable_output():
-    # GIVEN LLM output with an invalid enum that sanitize does not repair
-    bad = json.dumps(
-        {"fields": {"endocrine.HbA1C": {"value": "6.5", "source": "banana"}}}
-    )
+    # GIVEN LLM output sanitize cannot repair: a field entry that is a bare
+    # string instead of an object (unknown enums like source "banana" ARE
+    # repaired now -- they become "none"/"low")
+    bad = json.dumps({"fields": {"endocrine.HbA1C": "6.5"}})
     client = _FakeOpenAI(bad)
     img = Image.new("RGB", (10, 10), "white")
     # WHEN reconstructed THEN validation fails as LLM_OUTPUT_INVALID (Req 6.5)

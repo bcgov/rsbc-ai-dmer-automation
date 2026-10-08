@@ -11,7 +11,10 @@ dependencies = [
     "azure-ai-documentintelligence>=1.0,<2",
     "openai>=1.40",
     "tenacity>=8,<10",
-    "SQLAlchemy[asyncio]>=2.0,<2.1",
+    # [asyncio] pulls in greenlet, which the async engine needs; plain
+    # SQLAlchemy no longer installs it, and without it the service fails at
+    # import ("requires that the Python 'greenlet' library is installed").
+    "SQLAlchemy[asyncio]>=2.0,<3",
     "asyncpg>=0.29",
     "python-dateutil>=2.8,<3",
     # GoRules ZEN. Pinned to a minor: rules.json was written and tested against

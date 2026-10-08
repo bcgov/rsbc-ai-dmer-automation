@@ -146,7 +146,7 @@ param containerRegistryServer string = ''
 @description('Optional Log Analytics Workspace resource ID for di-processor Container App diagnostics (shared resource, passed in by ID). Empty = diagnostics not attached here.')
 param logAnalyticsWorkspaceId string = ''
 
-@description('App Configuration endpoint, e.g. https://appcs-rsbc-dmer-shared-dev-001.azconfig.io (shared resource, other workstream). Required when containerAppsEnvironmentId is supplied.')
+@description('Optional App Configuration endpoint, e.g. https://appcs-rsbc-dmer-shared-dev-001.azconfig.io. di-processor does not read it yet and no App Configuration store exists; leave empty.')
 param appConfigurationEndpoint string = ''
 
 @description('Document Intelligence custom DMER model id di-processor analyzes with, e.g. rsbc-ocr-dmer-v9. Required when containerAppsEnvironmentId is supplied.')
@@ -163,6 +163,15 @@ param openAiDeployment string = ''
 
 @description('Azure OpenAI API version. Required when containerAppsEnvironmentId is supplied.')
 param openAiApiVersion string = ''
+
+@description('Optional: storage account Ingest writes source PDFs to, when it is not this template\'s account (dev: rsbcstorage). di-processor gets Storage Blob Data Reader on ingestRawContainerName there. Empty = skipped.')
+param ingestRawStorageAccountName string = ''
+
+@description('Resource group of ingestRawStorageAccountName (dev: rsbc-dmer-ai-optimization-rg).')
+param ingestRawStorageResourceGroup string = ''
+
+@description('Container Ingest writes source PDFs to in ingestRawStorageAccountName.')
+param ingestRawContainerName string = 'raw-dmer'
 
 @description('Key Vault secret URI of the external Azure OpenAI API key (the documented Managed Identity exception), e.g. https://kv-rsbc-dmer-dev-001.vault.azure.net/secrets/azure-openai-api-key. Resolved by the Container App via the di-processor identity, which needs Key Vault Secrets User on that vault (granted by the Key Vault workstream). Required when containerAppsEnvironmentId is supplied.')
 param openAiApiKeySecretUri string = ''
@@ -184,7 +193,10 @@ var dmerIngestQueueName = 'dmer-ingest'
 var dmerRawQueueName = 'dmer-raw'
 var dmerExtractedQueueName = 'dmer-extracted'
 var driverDecisionQueueName = 'driver-decision'
-var diProcessorContainerAppName = resourceName('ca', 'di-processor', environment, instance)
+// Container App names are limited to 32 characters: 'di-processor' would make
+// ca-rsbc-dmer-di-processor-<env>-<instance> 33+ characters, so it's
+// abbreviated here (and only here -- the identity and image keep the full name).
+var diProcessorContainerAppName = resourceName('ca', 'di-proc', environment, instance)
 var deployDiProcessorContainerApp = !empty(containerAppsEnvironmentId)
 
 // di-processor runtime settings (services/di-processor/src/di_processor/config.py
@@ -342,6 +354,20 @@ resource diProcessorRawBlobDataReader 'Microsoft.Authorization/roleAssignments@2
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', storageBlobDataReaderRoleId)
     principalId: diProcessorIdentity.outputs.principalId
     principalType: 'ServicePrincipal'
+  }
+}
+
+// Ingest (intake-processor) writes source PDFs to its own storage account in
+// dev (rsbcstorage / raw-dmer, rsbc-dmer-ai-optimization-rg), and dmer-raw
+// messages point there. Read-only, container-scoped, and only when configured.
+module diProcessorIngestRawBlobDataReader 'modules/storage/container-role-assignment.bicep' = if (!empty(ingestRawStorageAccountName)) {
+  name: '${deployment().name}-ingest-raw-reader'
+  scope: resourceGroup(ingestRawStorageResourceGroup)
+  params: {
+    storageAccountName: ingestRawStorageAccountName
+    containerName: ingestRawContainerName
+    principalId: diProcessorIdentity.outputs.principalId
+    roleDefinitionId: storageBlobDataReaderRoleId
   }
 }
 
@@ -555,6 +581,23 @@ resource diProcessorDmerRawReceiver 'Microsoft.Authorization/roleAssignments@202
   scope: dmerRawQueueExisting
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', serviceBusDataReceiverRoleId)
+    principalId: diProcessorIdentity.outputs.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// The KEDA scale rule authenticates as the same identity and reads dmer-raw's
+// message count through the Service Bus management API, which needs the Manage
+// right -- only Data Owner grants it (Data Receiver alone can't see the queue
+// depth, so the app never scales up from zero). Queue-scoped.
+var serviceBusDataOwnerRoleId = '090c5cfd-751d-490a-894a-3ce6f1109419'
+
+@description('Lets the di-processor KEDA scaler read dmer-raw\'s message count (Manage right; queue-scoped).')
+resource diProcessorDmerRawScalerOwner 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(dmerRawQueueExisting.id, diProcessorIdentityName, serviceBusDataOwnerRoleId)
+  scope: dmerRawQueueExisting
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', serviceBusDataOwnerRoleId)
     principalId: diProcessorIdentity.outputs.principalId
     principalType: 'ServicePrincipal'
   }
