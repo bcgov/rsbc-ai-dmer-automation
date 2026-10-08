@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from di_processor.extraction import comparison
 from di_processor.failures import FailureCode, PipelineFailure
 from di_processor.pipeline import Pipeline, PipelineConfig
 from dmer_common.db import PipelineStage, PipelineStatus
@@ -424,6 +425,22 @@ async def test_licence_read_persisted_normalized(monkeypatch):
 
     # THEN the canonical licence lands on the dmer_extraction row
     assert extractions.records[0].licence_number_read == "01234567"
+
+
+async def test_comparison_fields_and_hash_persisted(monkeypatch):
+    # GIVEN a normal run
+    extractions = FakeExtractionRepo()
+    pipeline = _pipeline(monkeypatch, extractions=extractions)
+
+    # WHEN the pipeline runs
+    await pipeline.run(_raw_message())
+
+    # THEN the dmer_extraction row carries the comparison subset and its hash
+    record = extractions.records[0]
+    assert record.comparison_fields["version"] == comparison.COMPARISON_VERSION
+    assert record.comparison_hash == comparison.comparison_hash(
+        record.comparison_fields
+    )
 
 
 # --- audit trail (dmer_stage_run) -------------------------------------------

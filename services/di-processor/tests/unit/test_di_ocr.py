@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import contextvars
+import io
+import threading
+import time
+
 import pytest
 from di_processor.extraction.di_ocr import di_lines, ocr_tiles, tiles_to_rows
 from di_processor.extraction.splitter import Tile
@@ -97,15 +102,21 @@ def test_tiles_in_same_band_grouped_together():
 
 
 class _FakeClient:
-    """DI client stub: returns a canned DIResult, or raises for a chosen tile."""
+    """DI client stub: returns a canned DIResult, or raises for a chosen call.
+
+    Thread-safe: tiles are analyzed concurrently, so the call counter is locked
+    (call order is not tile order under concurrency).
+    """
 
     def __init__(self, fail_tile_index=None):
         self.calls = 0
         self.fail_tile_index = fail_tile_index
+        self._lock = threading.Lock()
 
     def analyze(self, model_id, document, *, pages=None):
-        idx = self.calls
-        self.calls += 1
+        with self._lock:
+            idx = self.calls
+            self.calls += 1
         if idx == self.fail_tile_index:
             raise RuntimeError("DI throttled")
         return DIResult(content="x", pages=[_page([(f"L{idx}", 2, 2, 0.7)])])
@@ -162,3 +173,92 @@ def test_ocr_tiles_no_tiles_is_not_a_failure():
     # GIVEN no tiles at all (nothing attempted) THEN not an OCR failure
     result = ocr_tiles(_FakeClient(), [], page_number=1, page_width=10, page_height=10)
     assert result["pages"][0]["rows"] == []
+
+
+_TRACE: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "_TRACE", default=None
+)
+
+
+class _SlowWidthClient:
+    """Answers each tile with text naming the tile's image width, after a delay
+    that is longer for narrower (earlier) tiles -- so completions arrive out of
+    submission order -- and records peak concurrency and the caller's context
+    seen in each worker."""
+
+    def __init__(self, delay=0.05):
+        self.delay = delay
+        self.in_flight = 0
+        self.peak = 0
+        self.contexts = set()
+        self._lock = threading.Lock()
+
+    def analyze(self, model_id, document, *, pages=None):
+        with self._lock:
+            self.in_flight += 1
+            self.peak = max(self.peak, self.in_flight)
+            self.contexts.add(_TRACE.get())
+        width = Image.open(io.BytesIO(document)).width
+        # later tiles finish first, so completion order != submission order
+        time.sleep(self.delay * (1 + (100 - width) / 100))
+        with self._lock:
+            self.in_flight -= 1
+        return DIResult(content="x", pages=[_page([(f"W{width}", 2, 2, 0.9)])])
+
+
+def _distinct_tiles(n):
+    # tile i has image width 50+i (identifies it) and sits in its own row band
+    return [
+        Tile(i + 1, 1, 1, "full", Image.new("RGB", (50 + i, 20), "white"), 0, i * 200)
+        for i in range(n)
+    ]
+
+
+def test_ocr_tiles_parallel_keeps_each_result_on_its_own_tile():
+    # GIVEN 12 tiles analyzed 4 at a time, completing out of order
+    client = _SlowWidthClient()
+    result = ocr_tiles(
+        client,
+        _distinct_tiles(12),
+        page_number=1,
+        page_width=800,
+        page_height=3000,
+        max_workers=4,
+    )
+    rows = result["pages"][0]["rows"]
+    # THEN every tile's text is in that tile's row (results matched to tiles)
+    assert [r["segments"][0]["text"] for r in rows] == [f"W{50 + i}" for i in range(12)]
+    # AND calls really overlapped, never beyond the limit
+    assert 1 < client.peak <= 4
+
+
+def test_ocr_tiles_parallel_workers_keep_the_callers_context():
+    # GIVEN a context value set by the caller (as document_id is for logging)
+    client = _SlowWidthClient(delay=0.01)
+    token = _TRACE.set("doc-123")
+    try:
+        ocr_tiles(
+            client,
+            _distinct_tiles(6),
+            page_number=1,
+            page_width=800,
+            page_height=2000,
+            max_workers=3,
+        )
+    finally:
+        _TRACE.reset(token)
+    # THEN every worker thread saw it
+    assert client.contexts == {"doc-123"}
+
+
+def test_ocr_tiles_concurrency_one_is_sequential():
+    client = _SlowWidthClient(delay=0.01)
+    ocr_tiles(
+        client,
+        _distinct_tiles(5),
+        page_number=1,
+        page_width=800,
+        page_height=2000,
+        max_workers=1,
+    )
+    assert client.peak == 1

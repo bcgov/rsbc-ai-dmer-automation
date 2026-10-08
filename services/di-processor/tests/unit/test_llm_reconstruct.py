@@ -83,6 +83,8 @@ def test_reconstruct_sanitizes_binary_confidence_before_validation():
     # WHEN reconstructed, sanitize downgrades it to low so validation passes
     result = reconstruct(client, img, _ocr_json())
     assert result.fields["endocrine.HbA1C"].confidence.value == "low"
+    # and the low-confidence reading is withheld, not passed downstream
+    assert result.fields["endocrine.HbA1C"].value == ""
 
 
 def test_reconstruct_rejects_unrepairable_output():

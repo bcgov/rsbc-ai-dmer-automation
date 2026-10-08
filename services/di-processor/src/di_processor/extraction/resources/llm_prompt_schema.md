@@ -27,6 +27,35 @@ Decide each field's value and `source` using these four cases:
 The IMAGE is authoritative for layout, printed text, field boundaries, and checkbox state — use it
 to decide where one field ends and the next begins, and to read checkbox marks.
 
+## When do the image and OCR "agree"? (use `source: "both"`)
+
+Downstream, **only values with `source: "both"` are kept** — any value marked `"image"` or `"ocr"`
+is discarded. So `"both"` is a strong claim: use it ONLY when the OCR text, read **on its own**,
+already shows the complete answer and it matches the image. When that is true you MUST return
+`source: "both"` and `confidence: "high"` (do not under-report a genuine match as `"image"`).
+
+**The test:** cover the image — would the OCR text alone give the same complete value? If yes, they
+agree. If you needed the image to fix, complete, or decode the OCR, they do NOT agree.
+
+They AGREE only for these trivial differences:
+- letter case, extra spaces, line breaks, and punctuation (`"Dr. Smith"` = `"dr smith"`);
+- OCR splitting one answer across lines, segments, or overlapping tiles (the same words may appear
+  twice in the OCR JSON because neighbouring tiles overlap — that is one reading, not two);
+- equivalent formats of the SAME complete value (`"6.5"` = `"6,5"`; `"Dec 2023"` = `"12/2023"`).
+
+They do NOT agree — use `source: "image"` (or `"ocr"`) and `confidence: "low"` — when the OCR is:
+- **garbled, partial, or truncated**, even if it partly resembles the image (OCR `"20%"` vs image
+  `"20/40"`; OCR `"nor."` vs image `"20/20"`; OCR `"6"` vs image `"6.5"`);
+- missing characters, or has ANY wrong character, digit, or symbol (do not "correct" OCR to match);
+- absent, or found only in a different field's area;
+- something you can only interpret as the value because you saw the image.
+
+**Checkboxes / Yes-No answers:** use `source: "both"` only if the OCR text itself contains the mark
+or the selected answer for that box (e.g. `X`, `✓`, `☒`, or the chosen `Yes`/`No`) and it matches
+the image. If the OCR shows nothing for the box, use `source: "image"`.
+
+When unsure whether they agree, they do NOT — use `"image"`/`"ocr"` with `confidence: "low"`.
+
 ## Extraction rules
 
 1. **Only extract HANDWRITTEN values.** Each field key corresponds to a handwritten answer space on
@@ -48,7 +77,8 @@ to decide where one field ends and the next begins, and to read checkbox marks.
    in `notes` that the handwriting was not clearly legible (e.g. "handwriting unclear/illegible —
    best guess").
 7. **Confidence is binary in practice: use "low" whenever the image and OCR do NOT both agree.**
-   - `source: "both"` (image and OCR agree) → confidence may be `high`.
+   - `source: "both"` (image and OCR agree — see "When do the image and OCR agree?") → confidence
+     `high`.
    - `source: "image"` or `"ocr"` (only one source has it, or they disagree) → confidence MUST be
      `low`. Do NOT use `medium`.
    - Set `source` accurately so this can be verified downstream.
@@ -72,7 +102,7 @@ Return ONE JSON object. Top-level `fields` maps every provided field key to an o
   "fields": {
     "endocrine.HbA1C": { "value": "6.5", "confidence": "high", "source": "both", "notes": "image and OCR agree" },
     "endocrine.HbA1C_date": { "value": "Dec 2023", "confidence": "low", "source": "ocr", "notes": "OCR only; image unclear" },
-    "cardiovascular.arrhythmia_type": { "value": "", "confidence": "high", "source": "none", "notes": "blank field" }
+    "cardiovascular.arrhythmia_type": { "value": "", "confidence": "low", "source": "none", "notes": "blank field" }
     /* ... one entry for EVERY field key provided ... */
   },
   "uncertain_fields": [

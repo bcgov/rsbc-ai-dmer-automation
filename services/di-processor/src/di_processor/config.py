@@ -61,6 +61,9 @@ class Settings:
     postgres_password:
         Local development only. When set it is used as-is; when unset (every
         deployed environment) a fresh Entra token is fetched per connection.
+    ocr_concurrency:
+        Tiles analyzed in parallel by the tiled OCR stage (default 8; 1 = one
+        at a time).
     """
 
     app_configuration_endpoint: str | None
@@ -78,6 +81,7 @@ class Settings:
     postgres_port: int = 5432
     postgres_sslmode: str = "require"
     postgres_password: str | None = field(default=None, repr=False)
+    ocr_concurrency: int = 8
 
 
 def load_settings() -> Settings:
@@ -104,4 +108,5 @@ def load_settings() -> Settings:
         postgres_port=int(config.get("POSTGRES_PORT", "5432") or "5432"),
         postgres_sslmode=config.get("POSTGRES_SSLMODE", "require") or "require",
         postgres_password=config.get("POSTGRES_PASSWORD") or None,
+        ocr_concurrency=max(1, int(config.get("OCR_CONCURRENCY", "8") or "8")),
     )
