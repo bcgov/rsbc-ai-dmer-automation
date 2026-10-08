@@ -6,7 +6,6 @@ import hashlib
 import json
 
 import pytest
-
 from di_processor.extraction.comparison import (
     CHECKBOX_FIELDS,
     COMPARISON_VERSION,

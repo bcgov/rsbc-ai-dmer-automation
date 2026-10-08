@@ -13,14 +13,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from di_processor.extraction import comparison
+from di_processor.failures import FailureCode, PipelineFailure
+from di_processor.pipeline import Pipeline, PipelineConfig
 from dmer_common.db import PipelineStage, PipelineStatus
 from dmer_common.db.dmer_document import StaleStatusError, _validated_status
 from dmer_common.dto import EXTRACTED_EVENT, RawMessage, event_message_id
 from PIL import Image
-
-from di_processor.extraction import comparison
-from di_processor.failures import FailureCode, PipelineFailure
-from di_processor.pipeline import Pipeline, PipelineConfig
 
 pytestmark = pytest.mark.asyncio
 
