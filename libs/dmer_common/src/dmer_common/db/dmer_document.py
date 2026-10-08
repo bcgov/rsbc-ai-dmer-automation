@@ -59,6 +59,7 @@ _pipeline_status_enum = PG_ENUM(
 _stage_enum = PG_ENUM(
     "INGEST",
     "EXTRACT",
+    "DRIVER_LOOKUP",  # V0005
     "NORMALIZE",
     "RULES",
     "DECISION",

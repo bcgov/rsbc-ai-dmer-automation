@@ -31,10 +31,20 @@ def _field_value(raw: dict[str, Any]) -> str:
     Handles the value types a DMER custom model emits, including checkbox
     (``selectionMark``) and boolean fields — the top-level checkboxes the model
     surfaces must not be dropped.
+
+    Checkbox fields come back as either ``valueSelectionMark`` (DI's literal
+    ``"selected"``/``"unselected"``, confirmed against a real DI response
+    sample) or ``valueBoolean`` (a real Python bool, depending on how that
+    specific field was configured in the custom model) — both are normalized
+    to the canonical strings ``"true"``/``"false"`` here, so every consumer
+    downstream (normalization, in particular) sees one boolean encoding
+    regardless of which DI field type a given checkbox happens to use,
+    rather than ``"selected"`` for one and ``"True"`` (capitalized, Python's
+    bare ``str(bool)`` convention) for another.
     """
     for key in (
         "valueString",
-        "valueSelectionMark",  # "selected" / "unselected" (checkboxes)
+        "valueSelectionMark",
         "valueBoolean",
         "valueDate",
         "valueNumber",
@@ -44,8 +54,13 @@ def _field_value(raw: dict[str, Any]) -> str:
         "content",
     ):
         val = raw.get(key)
-        if val is not None:
-            return str(val)
+        if val is None:
+            continue
+        if key == "valueSelectionMark":
+            return "true" if val == "selected" else "false"
+        if key == "valueBoolean":
+            return "true" if val else "false"
+        return str(val)
     return ""
 
 

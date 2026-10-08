@@ -4,7 +4,7 @@ psycopg2-binary
 azure-identity
 azure-storage-blob
 azure-servicebus
-sqlalchemy
+sqlalchemy[asyncio]>=2.0,<2.1
 asyncpg
 # dmer_common has no PyPI/registry presence (private, unpublished) -- Azure's
 # remote build (Oryx) only sees this directory's own contents, so the wheel

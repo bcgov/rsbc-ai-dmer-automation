@@ -1,9 +1,10 @@
 // queue.bicep
 //
-// Reusable Service Bus queue: max delivery count, lock duration, and an
-// optional duplicate-detection window -- instantiated for dmer-ingest,
-// dmer-raw and dmer-extracted (docs/development/message-contracts.md,
-// revised architecture), each with its own settings taken from its contract.
+// Reusable Service Bus queue: max delivery count, lock duration, an optional
+// duplicate-detection window and optional sessions -- instantiated for
+// dmer-ingest, dmer-raw, dmer-extracted and driver-decision
+// (docs/development/message-contracts.md, revised architecture), each with its
+// own settings taken from its contract.
 //
 // The native $DeadLetterQueue sub-queue always exists on a Service Bus
 // queue regardless of deadLetteringOnMessageExpiration -- a message that
@@ -39,6 +40,9 @@ param duplicateDetectionWindow string = ''
 @description('Whether a message that expires (TTL elapsed) without being redelivered enough times to hit maxDeliveryCount is dead-lettered instead of silently discarded. message-contracts.md requires this enabled on every queue.')
 param deadLetteringOnMessageExpiration bool = true
 
+@description('Whether the queue requires sessions (every message must carry a SessionId). Cannot be changed after the queue is created. message-contracts.md: driver-decision only (SessionId = driver_key).')
+param requiresSession bool = false
+
 resource sbNamespace 'Microsoft.ServiceBus/namespaces@2024-01-01' existing = {
   name: namespaceName
 }
@@ -52,6 +56,7 @@ resource queue 'Microsoft.ServiceBus/namespaces/queues@2024-01-01' = {
     requiresDuplicateDetection: !empty(duplicateDetectionWindow)
     duplicateDetectionHistoryTimeWindow: empty(duplicateDetectionWindow) ? 'PT10M' : duplicateDetectionWindow
     deadLetteringOnMessageExpiration: deadLetteringOnMessageExpiration
+    requiresSession: requiresSession
   }
 }
 

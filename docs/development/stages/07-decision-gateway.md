@@ -86,9 +86,15 @@ If exactly one qualifying DMER exists, keep the rule engine outcome unchanged.
 If Mercury returned no driver object but a licence was read from the page and resolves to exactly
 one driver, record `driver_mapped = false` and `proposed_driver_key` so Post-Processing can request
 the mapping. Per question I-11 (answered): **the AI may map the driver automatically** using the
-Mercury API — this is not a human-confirm-every-mapping requirement. When the licence matches no
-driver or matches more than one (question I-12, answered): send for human review, mentioning the
-licence information and reason in the comment.
+Mercury API — this is not a human-confirm-every-mapping requirement. The mapping itself is made
+earlier, by [Document Orchestration's Driver Lookup](03-document-orchestration.md#activity-driver-lookup)
+(`dmer_document.driver_resolved_by = LICENCE_LOOKUP`), so this step only records it.
+
+When the licence matches no driver or matches more than one (question I-12, answered: send for
+human review, mentioning the licence information and reason in the comment), the document never
+reaches this gateway: Driver Lookup routes it to `MANUAL_REVIEW` and its orchestration ends, since
+without a driver it can't join a driver batch. Writing the I-12 Mercury comment for those documents
+is an open question — see [Document Orchestration](03-document-orchestration.md#open-questions--decisions-required).
 
 ## Database writes
 

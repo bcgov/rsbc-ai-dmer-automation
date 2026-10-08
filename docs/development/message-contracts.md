@@ -62,7 +62,7 @@ One shape for all four queues — pointers only, never extracted/normalized cont
 | `message_id` | Identifies **this** event on **this** queue, and is the idempotency key. Derive it deterministically from the event — `dmer_common.dto.event_message_id(<queue>, <natural key>)`, e.g. `event_message_id("dmer-extracted", document_id)` — so every retry or replay of the same event carries the same ID. **Never copy the upstream message's `message_id`**: two different events would then share an ID, and a consumer could mistake one for the other (or fail to recognise a replay triggered by a re-sent upstream message). `document_id` is what links events across stages. Also used as the Service Bus `MessageId` (broker duplicate detection, per queue). The `dmer-ingest` exception: `MessageId = document_guid`, for broker duplicate detection of re-polled documents. |
 | `document_id` | Internal `dmer_document.id` (uuid) — not `document_guid`. Use this for every DB join and log line; also the tracing key across a document's whole life — there is no separate `correlation_id`. |
 | `document_guid` | Mercury's identifier. Carried for traceability; **do not** use it as a business key downstream of Ingest (see `data-model.md#document_guid-is-not-a-content-key`). |
-| `driver_key` | Set only when Mercury supplied it at Ingest; otherwise resolved by [Document Orchestration's Resolve Driver activity](stages/03-document-orchestration.md#activity-resolve-driver) before `driver-decision` is published; Extraction forwards it as received. Required on `driver-decision`. |
+| `driver_key` | Set only when Mercury supplied it at Ingest; otherwise resolved by [Document Orchestration's Driver Lookup activity](stages/03-document-orchestration.md#activity-driver-lookup) before `driver-decision` is published; Extraction forwards it as received. Required on `driver-decision`. |
 | `blob_url` | Points at the artifact the *next* stage needs — `raw-dmer` for `dmer-ingest`→Ingest's own read, `extracted-dmer` for `dmer-extracted`, etc. Never an extraction/normalization payload inline. |
 | `attempt` | Incremented on republish (sweeper re-signal, DLQ Drain **operational-recovery redrive** for a `TRANSIENT`/`PROCESSING` failure). Bounded by `DLQ_REDRIVE_MAX_ATTEMPTS`; at the ceiling the message is re-categorized `UNKNOWN` for human triage rather than redriven again. |
 
@@ -77,7 +77,7 @@ because it's the other message-shaped contract in the system:
 
 | Operation | Purpose |
 |---|---|
-| `UPDATE_OUTCOME` | Write the outcome code (`CP`/`IN`/`PR`/`PU`/`PCM`/`CR`) and reason back to the DMER record. A **fallback** `UPDATE_OUTCOME` (`IN`, `decided_by = FALLBACK`, carrying `fallback_reason_code` + the "AI could not process" comment) is written **only** by the DLQ Drain for a `PERMANENT_BUSINESS` failure — never for a transient/processing/unknown failure. |
+| `UPDATE_OUTCOME` | Write the outcome code (`CP`/`IN`/`PR`/`PU`/`TCM`/`CR`) and reason back to the DMER record. A **fallback** `UPDATE_OUTCOME` (`IN`, `decided_by = FALLBACK`, carrying `fallback_reason_code` + the "AI could not process" comment) is written **only** by the DLQ Drain for a `PERMANENT_BUSINESS` failure — never for a transient/processing/unknown failure. |
 | `MARK_DUPLICATE` | Flag a document as a duplicate of another — Mercury's `Rejected` status per question I-7. |
 | `MAP_DRIVER` | Attach the proposed driver to the DMER record (question I-11: AI may do this automatically). |
 | `CREATE_CASE` | Create a case where none exists, or attach to an existing open case (question I-13). |
@@ -196,5 +196,9 @@ per-event `message_id`s (`event_message_id`). The consumer uses a durable, atomi
 [Message idempotency](#message-idempotency-consumer-side) — and takes the broker `MessageId`
 when a producer (e.g. Ingest) sets it only as the Service Bus property.
 
-**Still to add:** `IngestMessage` (`dmer-ingest`) and `DriverDecisionMessage` (`driver-decision`,
-session-aware) as envelope subclasses, when their stages are built.
+`DriverDecisionMessage` (`driver-decision`) is implemented: `driver_key` is required, and
+`ServiceBusPublisher.publish(message, session_id=driver_key)` sets the session (the Document
+Orchestration's `SignalDriver` activity). The session-aware **receive** path is still new work, for
+the Driver Orchestration.
+
+**Still to add:** `IngestMessage` (`dmer-ingest`) as an envelope subclass.

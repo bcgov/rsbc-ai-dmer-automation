@@ -17,7 +17,7 @@
     "documentIntelligenceSku": { "value": "S0" },
     "disableLocalAuthDocumentIntelligence": { "value": false },
     "storageSkuName": { "value": "Standard_LRS" },
-    "blobContainerNames": { "value": ["raw", "extracted-dmer"] },
+    "blobContainerNames": { "value": ["raw", "extracted-dmer", "normalized-dmer", "rules"] },
     "allowSharedKeyAccess": { "value": true },
     "serviceBusSkuName": { "value": "Premium" },
     "postgresAdministratorLogin": { "value": "rsbc_dmer_admin" },

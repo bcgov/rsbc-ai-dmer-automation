@@ -110,7 +110,7 @@ addresses four things the original architecture left open:
 | Decision gateway | Split into a per-document orchestration and a per-driver orchestration, serialized per driver | In the original design, two documents finishing at the same time either both stood down (outcome never posted) or both proceeded (conflicting outcomes posted). See [Driver Orchestration](stages/06-driver-orchestration.md#why-serialization-is-required). |
 | Waiting state | "Not all documents ready" is an explicit `driver_evaluation` row, not an implicit do-nothing branch | A row can be found by a sweeper and reported on; a silent return cannot. |
 | Ingest | Split into a Page Poller and a per-document Ingest Function | One bad document in a page of fifty shouldn't fail/re-download the other forty-nine. |
-| Driver resolution | Architecture doc moved it into Extraction; **reversed 2026-09-23**: moved to a Resolve Driver activity at the start of Document Orchestration | Must happen before `driver-decision` (which requires `driver_key`). Extraction records `licence_number_read` only. See [Document Orchestration](stages/03-document-orchestration.md#activity-resolve-driver). |
+| Driver resolution | Architecture doc moved it into Extraction; **reversed 2026-09-23**: moved to a Driver Lookup activity at the start of Document Orchestration | Must happen before `driver-decision` (which requires `driver_key`). Extraction records `licence_number_read` only. See [Document Orchestration](stages/03-document-orchestration.md#activity-driver-lookup). |
 | Cut-off detection | Performed in Extraction, persisted as three flags (`has_header`/`has_signature`/`is_cutoff`) | Cheap geometric check on OCR output; needed as a Decision Gateway input, not a late re-read. |
 | Normalizer | A Durable Functions activity calling Azure OpenAI directly — **not a Container App** | The endpoint is reachable with a key; a container adds deployment/networking with no benefit. |
 | Rule engine | An in-process library (GoRules/Zen) inside a Durable activity — **not a separate service** | It's a library, not a service. |
@@ -175,7 +175,7 @@ implements them — don't re-litigate them without a reason:
   **only** for a permanent-business failure (an un-processable DMER), never for a transient,
   processing, or unknown failure (see [ADR-0002](../architecture/decision-records/0002-dlq-fallback-decisions-gated-by-failure-category.md)).
 - AI never revises a decision after a human has reviewed it (I-2).
-- Rule engine decides PR/PU/PCM/CR entirely from medical content; `document_priority` never
+- Rule engine decides PR/PU/TCM/CR entirely from medical content; `document_priority` never
   overrides it (I-3).
 - Cut-off precedence: clear scan wins over a newer cut-off one *if content agrees*; disagreement
   routes to manual review (I-4).
@@ -246,7 +246,7 @@ instantiations, and CODEOWNERS.
 
 - `driver_evaluation (driver_key, open)` conflict target — what "open" means is unspecified. See
   [data-model.md](data-model.md#open-questions--decisions-required).
-- `dmer_decision.outcome_code` values (`CP`, `IN`, `PR`, `PU`, `PCM`, `CR`) are never defined in the
+- `dmer_decision.outcome_code` values (`CP`, `IN`, `PR`, `PU`, `TCM`, `CR`) are never defined in the
   architecture document — source definitions from Intake before building the rule engine's outcome
   table.
 - Normalized clinical JSON in Postgres — needs privacy/security sign-off before adding the column.

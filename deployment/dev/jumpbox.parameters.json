@@ -8,7 +8,7 @@
     "bastionName": { "value": "rsbc-dmer-ai-bastion" },
     "vmSize": { "value": "Standard_DC2s_v3" },
     "vmSubnetId": {
-      "value": "/subscriptions/e34c5ef8-e2f1-4a67-a94f-29cb158155c2/resourceGroups/f11861-dev-networking/providers/Microsoft.Network/virtualNetworks/f11861-dev-vwan-spoke/subnets/snet-rsbc-dmer-ai-optimization-private-endpoints"
+      "value": "/subscriptions/e34c5ef8-e2f1-4a67-a94f-29cb158155c2/resourceGroups/f11861-dev-networking/providers/Microsoft.Network/virtualNetworks/f11861-dev-vwan-spoke/subnets/snet-rsbc-dmer-pe-dev-001"
     },
     "vnetResourceGroupName": { "value": "f11861-dev-networking" },
     "vnetName": { "value": "f11861-dev-vwan-spoke" },

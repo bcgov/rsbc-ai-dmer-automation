@@ -128,3 +128,103 @@ def test_settings_default_from_config(monkeypatch):
     page = client.get_page(queue="BOTH")
     assert len(page.records) == 2
     assert "m.example.com" in http.calls[0]["url"]
+
+
+# ---------------------------------------------------------------------------
+# GET by driver_licence
+# ---------------------------------------------------------------------------
+
+from dmer_common.config import MercuryDriverSettings
+
+LICENCE = "01234567"
+DRIVER_SETTINGS = MercuryDriverSettings(
+    base_url="https://mercury.example.com/api/mercury/drivers",
+    api_key=SECRET_KEY,
+    counted_document_types=frozenset({"dmer"}),
+    uncounted_document_statuses=frozenset({"rejected"}),
+)
+DRIVER = {"driver_id": "D1234", "licence_number": "1234567", "active_documents": []}
+
+
+def _driver_client(status: int, body: object = None, *, fail_times: int = 0):
+    calls: list[dict] = []
+
+    def http_get(url, *, headers):
+        calls.append({"url": url, "headers": headers})
+        if len(calls) <= fail_times:
+            raise ConnectionError("transient network error")
+        return status, json.dumps(body).encode("utf-8")
+
+    return MercuryClient(driver_settings=DRIVER_SETTINGS, http_get=http_get), calls
+
+
+def test_driver_lookup_appends_the_licence_and_sends_the_bearer_key():
+    client, calls = _driver_client(200, DRIVER)
+    assert client.get_driver_by_licence(LICENCE) == [DRIVER]
+    assert (
+        calls[0]["url"] == f"https://mercury.example.com/api/mercury/drivers/{LICENCE}"
+    )
+    assert calls[0]["headers"]["Authorization"] == f"Bearer {SECRET_KEY}"
+
+
+def test_driver_lookup_not_found_is_an_empty_list():
+    client, _ = _driver_client(404, {"error": "driver not found"})
+    assert client.get_driver_by_licence(LICENCE) == []
+
+
+def test_driver_lookup_returning_several_drivers_returns_them_all():
+    client, _ = _driver_client(200, [DRIVER, {**DRIVER, "driver_id": "D9"}])
+    assert len(client.get_driver_by_licence(LICENCE)) == 2
+
+
+def test_driver_lookup_retries_transient_failures():
+    client, calls = _driver_client(200, DRIVER, fail_times=1)
+    assert client.get_driver_by_licence(LICENCE) == [DRIVER]
+    assert len(calls) == 2
+
+
+def test_driver_lookup_server_error_raises():
+    client, _ = _driver_client(500, {"error": "boom"})
+    with pytest.raises(MercuryApiError):
+        client.get_driver_by_licence(LICENCE)
+
+
+def test_driver_lookup_never_logs_the_licence_or_key(caplog):
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    logging.getLogger(client_module.__name__).addHandler(handler)
+    try:
+        for status in (200, 500):
+            client, _ = _driver_client(status, DRIVER)
+            try:
+                client.get_driver_by_licence(LICENCE)
+            except MercuryApiError:
+                pass
+    finally:
+        logging.getLogger(client_module.__name__).removeHandler(handler)
+    logged = stream.getvalue() + caplog.text
+    assert LICENCE not in logged and "1234567" not in logged
+    assert SECRET_KEY not in logged
+
+
+def test_batch_only_service_needs_no_driver_settings(monkeypatch):
+    # The orchestrator has no batch URL and the poller no driver URL; neither
+    # is read until that API is used.
+    monkeypatch.delenv("MERCURY_DRIVER_LICENCE_API_BASE_URL", raising=False)
+    monkeypatch.delenv("MERCURY_API_BASE_URL", raising=False)
+    MercuryClient(http_get=lambda url, *, headers: (200, b"{}"))
+
+
+def test_driver_settings_from_environment(monkeypatch):
+    from dmer_common.config import mercury_driver_settings
+
+    monkeypatch.setenv(
+        "MERCURY_DRIVER_LICENCE_API_BASE_URL", "https://m.example.com/drivers/"
+    )
+    monkeypatch.setenv("MERCURY_API_KEY", SECRET_KEY)
+    monkeypatch.setenv("MERCURY_COUNTED_DOCUMENT_TYPES", "DMER, Test Report")
+    monkeypatch.delenv("MERCURY_UNCOUNTED_DOCUMENT_STATUSES", raising=False)
+    settings = mercury_driver_settings()
+    assert settings.base_url == "https://m.example.com/drivers"
+    assert settings.counted_document_types == {"dmer", "test report"}
+    assert settings.uncounted_document_statuses == {"rejected"}

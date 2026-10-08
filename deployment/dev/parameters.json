@@ -20,7 +20,7 @@
     "documentIntelligenceSku": { "value": "S0" },
     "storageSkuName": { "value": "Standard_LRS" },
     "blobContainerNames": {
-      "value": ["raw", "extracted-dmer"]
+      "value": ["raw", "extracted-dmer", "normalized-dmer", "rules"]
     },
     "allowSharedKeyAccess": { "value": true },
     "disableLocalAuthDocumentIntelligence": { "value": false },

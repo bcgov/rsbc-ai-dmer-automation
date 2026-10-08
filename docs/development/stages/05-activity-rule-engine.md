@@ -32,7 +32,7 @@ orchestrator — see [Alignment gaps](#alignment-gaps-vs-current-code).
 4. Persist **all** candidate outcomes, not just the winner, to `rule_evaluation`.
 5. Increment the driver's `completed_document_count` (the `driver_evaluation` row was created or
    attached earlier in the same orchestration by
-   [Resolve Driver](03-document-orchestration.md#activity-resolve-driver)).
+   [Driver Lookup](03-document-orchestration.md#activity-driver-lookup)).
 6. Signal the driver by publishing to `driver-decision` (this happens at the orchestrator level, at
    the end of the whole document orchestration — see
    [Document Orchestration](03-document-orchestration.md#orchestration-flow)).
@@ -47,15 +47,20 @@ that question unanswerable after the fact.
 
 | Table | Operation | Fields |
 |---|---|---|
-| `rule_evaluation` | `INSERT` (one row **per evaluation**, not per document — a re-run creates a new row) | `document_id`, `rules_version`, `all_outcomes` (jsonb — every candidate with its inputs), `selected_outcome_code`, `selected_reason`, `priority_rank`, `evaluated_at`. |
-| `rules_version` | `INSERT` (only when a new `rules.json` is published) | `version`, `blob_url`, `checksum`, `activated_at`, `activated_by`. |
-| `dmer_document` | `UPDATE` | `pipeline_status = RULES_APPLIED`, then `AWAITING_DRIVER_COMPLETION` once the driver is signalled; `current_stage = DECISION`, `updated_at`. |
-| `driver_evaluation` | `UPDATE` | `completed_document_count` incremented — this counter and `expected_document_count` are what make the wait observable. |
-| `dmer_stage_run` | `INSERT` then `UPDATE` | `stage = RULES`, `status`, `attempt_no`, timings, `rules_version`. |
+| `rule_evaluation` | `INSERT` (one row **per evaluation**, not per document — a re-run creates a new row) | `document_id`, `rules_version`, `all_outcomes` (jsonb — `{"rule_engine_outcome_code": ..., "candidates": [...]}`: every candidate with its inputs, and the engine's own outcome), `selected_outcome_code`, `selected_reason`, `priority_rank`, `evaluated_at`. When a clean pass needs the driving-record check, `selected_outcome_code` is `IN` while `rule_engine_outcome_code` keeps the engine's `CP`, and `selected_reason` says why. |
+| `rules_version` | `INSERT` (only when a new `rules.json` is published) | `version`, `blob_url`, `checksum`, `activated_at`, `activated_by`. The activity finds the active ruleset's row by its `checksum` (sha256). Until a publishing process exists, a ruleset nobody registered is recorded by the activity itself as `sha256-<first 12 hex>` with `activated_by = 'rule-engine-activity (unregistered active ruleset)'` — never evaluated against without a version row. |
+| `dmer_document` | `UPDATE` | `pipeline_status = RULES_APPLIED`, then `AWAITING_DRIVER_COMPLETION` once the driver is signalled (not built yet — the driver-decision publish needs Driver Lookup); `current_stage = DECISION`, `updated_at`. |
+| `driver_evaluation` | `UPDATE` | `completed_document_count` incremented — this counter and `expected_document_count` are what make the wait observable. Only when a `driver_evaluation_document` marker row is newly inserted (see [Idempotency](#idempotency-requirements)); a document with no open evaluation is completed but not counted (logged as a warning). |
+| `driver_evaluation_document` | `INSERT ... ON CONFLICT DO NOTHING` (V0004) | `driver_evaluation_id`, `document_id`, `counted_at` — the once-per-document marker. |
+| `dmer_stage_run` | `INSERT` then `UPDATE` | `stage = RULES`, `status`, `attempt_no`, timings; the rules version goes in `model_version` (the stage's version column, as Normalize records its model there). |
+
+The evaluation row, stage run, document status and driver count are written in **one transaction**,
+on a connection holding a per-document advisory lock (`dmer_common.db.rule_engine`) — the same
+unit-of-work pattern as Normalize.
 
 ## Precedence: document_priority vs. rule engine
 
-Question I-3 (answered): **the rule engine decides PR/PU/PCM/CR entirely from medical content.**
+Question I-3 (answered): **the rule engine decides PR/PU/TCM/CR entirely from medical content.**
 `dmer_document.document_priority` (from Mercury) does not override the outcome selection.
 
 ## Failure handling
@@ -78,8 +83,8 @@ Document Orchestrator publishes to `driver-decision` for — see
 | Variable | Purpose |
 |---|---|
 | `RULES_CONTAINER` | Default `rules`. |
-| `RULES_ACTIVE_PATH` | Default `rules/active/rules.json`. |
-| `RULE_ENGINE_LIBRARY` | GoRules/Zen binding — confirm Python package name during Phase 3 build (not pinned in any `requirements.txt` yet). |
+| `RULES_ACTIVE_PATH` | Path **within** `RULES_CONTAINER`, default `active/rules.json` (i.e. `rules/active/rules.json`). |
+| `RULE_ENGINE_LIBRARY` | GoRules ZEN Python binding: `zen-engine` (imported as `zen`), pinned `>=0.51,<0.52` in `libs/dmer_common/pyproject.toml`. |
 
 ## Idempotency requirements
 
@@ -88,6 +93,10 @@ must only be incremented **once per document**, even if the activity is retried 
 increment via a `driver_evaluation_document` join/marker or an idempotent `UPSERT` keyed on
 `(driver_evaluation_id, document_id)`, not a bare `UPDATE ... SET completed_document_count = completed_document_count + 1`
 that would double-count on activity retry before the orchestrator's own dedup kicks in.
+**Implemented** with the marker table (V0004): the count is incremented only when the marker row
+is newly inserted, so a retry — or a later re-run of the rules for the same document — never
+counts it twice. A retried invocation after a committed success returns the committed evaluation
+without re-evaluating.
 
 ## Logging / auditing
 
@@ -97,11 +106,14 @@ DB row, not the log stream).
 
 ## Implementation considerations for Claude Code
 
-- No GoRules/Zen dependency is pinned in `services/rule-engine/requirements.txt` yet (placeholder
-  comment only) — confirm the Python binding package name before starting Phase 3.
-- `services/rule-engine/rules/README.md` already documents the intended local sample `rules.json`
-  convention (mirrors `rules/active/rules.json` in Blob Storage) — keep using it for local dev/test
-  fixtures regardless of where the evaluation code itself ends up living.
+- The evaluation library is `dmer_common.rules` (`Ruleset(content).evaluate(dmer, received_date=...)`
+  returns every candidate plus the selected outcome). `received_date` comes from
+  `dmer_document.received_date`, not the normalized document -- the monocular rules measure DMER
+  age from it. A clean pass that any Drugs, Alcohol and Driving row fired for is selected as `IN`
+  (the 5-year driving record needs a human check); the engine's own outcome is kept as
+  `rule_engine_outcome_code`. No rows fired at all selects `IN`.
+- The ruleset lives at `services/rule-engine/rules/rules.json` (mirrors `rules/active/rules.json`
+  in Blob Storage) and is exercised by `libs/dmer_common/tests/test_rules_engine.py`.
 - This activity's code should live alongside the Document Orchestrator — see
   `03-document-orchestration.md#implementation-considerations-for-claude-code` for the recommended
   module boundary (library code in `libs/`, thin activity trigger in `workflow-orchestrator`).

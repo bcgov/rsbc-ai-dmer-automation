@@ -104,3 +104,39 @@ def mercury_settings() -> MercurySettings:
         base_url=require("MERCURY_API_BASE_URL"),
         api_key=require("MERCURY_API_KEY"),
     )
+
+
+@dataclass(frozen=True)
+class MercuryDriverSettings:
+    """Mercury ``GET by driver_licence`` settings (Driver Lookup and the
+    Decision Gateway; see ``docs/development/stages/03-document-orchestration.md``).
+
+    ``base_url`` is the endpoint the licence number is appended to as a path
+    segment (``{base_url}/{licence_number}``). ``counted_document_types`` and
+    ``uncounted_document_statuses`` decide which of the driver's active
+    documents make up ``driver_evaluation.expected_document_count``.
+    ``api_key`` is shared with the batch API and must never be logged.
+    """
+
+    base_url: str
+    api_key: str
+    counted_document_types: frozenset[str]
+    uncounted_document_statuses: frozenset[str]
+
+
+def _csv(value: str | None) -> frozenset[str]:
+    return frozenset(
+        part.strip().lower() for part in (value or "").split(",") if part.strip()
+    )
+
+
+def mercury_driver_settings() -> MercuryDriverSettings:
+    """Load the Mercury driver-licence lookup settings from configuration."""
+    return MercuryDriverSettings(
+        base_url=require("MERCURY_DRIVER_LICENCE_API_BASE_URL").rstrip("/"),
+        api_key=require("MERCURY_API_KEY"),
+        counted_document_types=_csv(get("MERCURY_COUNTED_DOCUMENT_TYPES", "DMER")),
+        uncounted_document_statuses=_csv(
+            get("MERCURY_UNCOUNTED_DOCUMENT_STATUSES", "Rejected")
+        ),
+    )

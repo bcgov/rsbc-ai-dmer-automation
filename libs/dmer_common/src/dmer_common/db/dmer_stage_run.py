@@ -60,6 +60,7 @@ class StageRunStatus(str, enum.Enum):
 _stage_enum = PG_ENUM(
     "INGEST",
     "EXTRACT",
+    "DRIVER_LOOKUP",  # V0005
     "NORMALIZE",
     "RULES",
     "DECISION",
@@ -178,16 +179,30 @@ class DmerStageRunRepository:
         *,
         ended_at: datetime | None = None,
         output_blob_url: str | None = None,
+        model_version: str | None = None,
     ) -> None:
-        """Mark a run ``SUCCEEDED``."""
+        """Mark a run ``SUCCEEDED``.
+
+        ``model_version`` is optional (Ingest/Extract have no model to
+        record) -- Normalize sets it to the OpenAI deployment name *and*
+        the normalization schema version together (e.g.
+        ``"gpt-5.1@normalization-schema-v1"``), per
+        docs/development/stages/04-activity-normalize.md's Database writes
+        table: "model_version (deployment name and normalization schema
+        version)".
+        """
+        values: dict[str, object] = {
+            "status": StageRunStatus.SUCCEEDED.value,
+            "ended_at": ended_at if ended_at is not None else func.now(),
+            "output_blob_url": output_blob_url,
+        }
+        # Only when given: otherwise keep what start() recorded.
+        if model_version is not None:
+            values["model_version"] = model_version
         stmt = (
             dmer_stage_run.update()
             .where(dmer_stage_run.c.id == run_id)
-            .values(
-                status=StageRunStatus.SUCCEEDED.value,
-                ended_at=ended_at if ended_at is not None else func.now(),
-                output_blob_url=output_blob_url,
-            )
+            .values(**values)
         )
         async with self._engine.begin() as conn:
             await conn.execute(stmt)

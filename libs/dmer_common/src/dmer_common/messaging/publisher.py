@@ -28,16 +28,21 @@ class _Sender(Protocol):
     def send_messages(self, message: Any) -> None: ...
 
 
-def _default_message_factory(body: str, *, message_id: str, document_id: str) -> Any:
+def _default_message_factory(
+    body: str, *, message_id: str, document_id: str, session_id: str | None = None
+) -> Any:
     """Build an ``azure.servicebus.ServiceBusMessage`` (imported lazily).
 
     ``document_id`` is passed through as the SDK's own ``correlation_id``
     keyword -- a broker-level AMQP field, unrelated to our envelope's own
     field naming, which no longer has a ``correlation_id`` of its own.
+    ``session_id`` is set only for a session-enabled queue.
     """
     from azure.servicebus import ServiceBusMessage
 
-    return ServiceBusMessage(body, message_id=message_id, correlation_id=document_id)
+    return ServiceBusMessage(
+        body, message_id=message_id, correlation_id=document_id, session_id=session_id
+    )
 
 
 class ServiceBusPublisher:
@@ -52,14 +57,17 @@ class ServiceBusPublisher:
         self._sender = sender
         self._message_factory = message_factory
 
-    def publish(self, envelope: Envelope) -> None:
-        """Serialize and send an envelope DTO with broker ids set."""
+    def publish(self, envelope: Envelope, *, session_id: str | None = None) -> None:
+        """Serialize and send an envelope DTO with broker ids set.
+
+        ``session_id`` is required by a session-enabled queue (``driver-decision``:
+        ``SessionId = driver_key``) and must be omitted for the others.
+        """
         body = envelope.model_dump_json(by_alias=True)
-        message = self._message_factory(
-            body,
-            message_id=envelope.message_id,
-            document_id=envelope.document_id,
-        )
+        ids = {"message_id": envelope.message_id, "document_id": envelope.document_id}
+        if session_id is not None:
+            ids["session_id"] = session_id
+        message = self._message_factory(body, **ids)
         self._sender.send_messages(message)
         _log.info(
             "published message",

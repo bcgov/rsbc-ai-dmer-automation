@@ -8,8 +8,10 @@ two di-processor cares about."""
 from .envelope import Envelope
 from .messages import (
     DMER_EVENT_NAMESPACE,
+    DRIVER_DECISION_EVENT,
     EXTRACTED_EVENT,
     PIPELINE_SCHEMA_VERSION,
+    DriverDecisionMessage,
     ExtractedMessage,
     PipelineMessage,
     RawMessage,
@@ -18,8 +20,10 @@ from .messages import (
 
 __all__ = [
     "DMER_EVENT_NAMESPACE",
+    "DRIVER_DECISION_EVENT",
     "EXTRACTED_EVENT",
     "PIPELINE_SCHEMA_VERSION",
+    "DriverDecisionMessage",
     "Envelope",
     "ExtractedMessage",
     "PipelineMessage",

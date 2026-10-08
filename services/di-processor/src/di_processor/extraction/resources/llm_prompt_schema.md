@@ -69,21 +69,26 @@ When unsure whether they agree, they do NOT — use `"image"`/`"ocr"` with `conf
    `confidence: "low"`, and explain the issue in `notes`.
 4. **HbA1C** is a value with one decimal place, typically between 4.0 and 14.0 (e.g. 6.5). If read
    as "65"/"72" with no decimal point, insert the decimal before the last digit (→ 6.5 / 7.2).
-5. **Checkboxes / booleans:** for fields like `congestive_heart_failure_has_concerns`, return
-   `true`/`false` based on the checkbox mark in the IMAGE, or `null` if unclear.
-6. **Never invent content.** If neither source shows a handwritten value, return `""`.
-7. **Treat every `\n` in OCR `text` as a separate line/field** — do not merge one field's answer
+5. **Never invent content.** If neither source shows a handwritten value, return `""`.
+6. **Treat every `\n` in OCR `text` as a separate line/field** — do not merge one field's answer
    into another.
-7a. **Flag illegible handwriting.** If a handwritten entry is present but unclear, faint, smudged,
+6a. **Flag illegible handwriting.** If a handwritten entry is present but unclear, faint, smudged,
    or hard to read, still provide your best reading, set `confidence: "low"`, and explicitly note
    in `notes` that the handwriting was not clearly legible (e.g. "handwriting unclear/illegible —
    best guess").
-8. **Confidence is binary in practice: use "low" whenever the image and OCR do NOT both agree.**
+7. **Confidence is binary in practice: use "low" whenever the image and OCR do NOT both agree.**
    - `source: "both"` (image and OCR agree — see "When do the image and OCR agree?") → confidence
      `high`.
    - `source: "image"` or `"ocr"` (only one source has it, or they disagree) → confidence MUST be
      `low`. Do NOT use `medium`.
    - Set `source` accurately so this can be verified downstream.
+
+Every field key in this schema is a free-text/value field (a date, a score, a cause/details
+narrative, or similar) -- none of them are checkboxes. Checkbox/boolean fields come from the
+custom-trained Document Intelligence model (Stage A), not this handwritten-reconstruction path;
+if a future field addition to this schema is actually a checkbox, it belongs in the custom model's
+schema instead, not here -- `HandwrittenField.value` is typed as a plain string and does not accept
+a JSON boolean (see schemas.py).
 
 ## Output format
 
