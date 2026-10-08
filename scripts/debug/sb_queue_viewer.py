@@ -23,6 +23,15 @@ the jump box). It will NOT work from an arbitrary laptop with no route to
 the private endpoint.
 
 Peek is non-destructive (peek_messages() doesn't lock or remove anything).
+On a session-enabled queue (driver-decision -- SessionId = driver_key) a
+plain receiver is refused ("It is not possible for an entity that requires
+sessions to create a non-sessionful message receiver"), so Peek there
+accepts each available session in turn (NEXT_AVAILABLE_SESSION), peeks it,
+and releases them all at the end -- no session id needed. Accepting a
+session holds its session lock for those few seconds, not any message lock.
+Receive on a session-enabled queue isn't supported here (it would have to
+pick sessions to lock); use Peek.
+
 Receive mirrors the Azure Portal's own Service Bus Explorer "Receive
 messages" panel, including its Receive Mode choice:
 
@@ -73,23 +82,61 @@ from tkinter import messagebox, ttk
 
 from azure.identity import ManagedIdentityCredential
 from azure.servicebus import (
+    NEXT_AVAILABLE_SESSION,
     ServiceBusClient,
     ServiceBusReceiveMode,
     ServiceBusSubQueue,
 )
+from azure.servicebus.exceptions import OperationTimeoutError
 from azure.servicebus.management import ServiceBusAdministrationClient
 
 NAMESPACE_FQDN = "sb-rsbc-dmer-shared-dev-001.servicebus.windows.net"
 RECEIVE_MODES = ["Peek Lock", "Receive and Delete"]
+# How long to wait for one more session to become available before
+# concluding every session with messages has been peeked.
+SESSION_ACCEPT_WAIT_SECONDS = 5
 
 
-def _list_queue_names(credential) -> list[str]:
-    """Queue names as they exist on the namespace right now, sorted --
-    queried fresh every startup rather than hardcoded, so a rename/add on
-    the Bicep side is picked up here with no code change.
+def _list_queues(credential) -> dict[str, bool]:
+    """Queue name -> requires_session, as they exist on the namespace right
+    now -- queried fresh every startup rather than hardcoded, so a
+    rename/add on the Bicep side is picked up here with no code change.
     """
     with ServiceBusAdministrationClient(NAMESPACE_FQDN, credential) as admin_client:
-        return sorted(q.name for q in admin_client.list_queues())
+        return {q.name: bool(q.requires_session) for q in admin_client.list_queues()}
+
+
+def _peek_all_sessions(client, queue_name: str, max_count: int) -> list:
+    """Peek up to *max_count* messages across every session of a
+    session-enabled queue, without knowing the session ids.
+
+    Each NEXT_AVAILABLE_SESSION receiver accepts (locks) one session; they
+    stay open until the end so the next accept returns a different session,
+    then all are closed, releasing the session locks. Peeking itself takes
+    no message locks and doesn't count as a delivery.
+    """
+    receivers = []
+    messages: list = []
+    try:
+        while len(messages) < max_count:
+            receiver = client.get_queue_receiver(
+                queue_name,
+                session_id=NEXT_AVAILABLE_SESSION,
+                max_wait_time=SESSION_ACCEPT_WAIT_SECONDS,
+            )
+            try:
+                receiver.__enter__()  # accepts the session
+            except OperationTimeoutError:
+                break  # no further session has messages
+            receivers.append(receiver)
+            messages.extend(receiver.peek_messages(max_message_count=max_count - len(messages)))
+    finally:
+        for receiver in receivers:
+            try:
+                receiver.close()
+            except Exception:  # noqa: BLE001, S110 -- best-effort release
+                pass
+    return messages
 
 
 def _extract_body_bytes(body) -> bytes:
@@ -124,6 +171,8 @@ class QueueViewer(tk.Tk):
         # populated by a Peek Lock receive; lets Complete/Abandon/
         # Dead-letter act on the exact message the user selected.
         self._locked_rows: dict[str, object] = {}
+        # Queue name -> requires_session, refreshed with the dropdown.
+        self._requires_session: dict[str, bool] = {}
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
@@ -240,13 +289,13 @@ class QueueViewer(tk.Tk):
         what went wrong.
         """
         try:
-            names = _list_queue_names(self._credential)
+            self._requires_session = _list_queues(self._credential)
         except Exception as exc:  # noqa: BLE001 -- shown to the user, not swallowed
             messagebox.showerror("Could not list queues", str(exc))
-            if initial:
-                names = []
-            else:
+            if not initial:
                 return
+            self._requires_session = {}
+        names = sorted(self._requires_session)
         previous = self.queue_var.get()
         self.queue_combo["values"] = names
         if previous in names:
@@ -269,14 +318,21 @@ class QueueViewer(tk.Tk):
             queue_name = self.queue_var.get()
             max_count = int(self.count_var.get() or "50")
             sub_queue = ServiceBusSubQueue.DEAD_LETTER if self.dlq_var.get() else None
+            # The dead-letter sub-queue is never session-enabled, even on a
+            # session queue -- only the main queue needs the session path.
+            by_session = self._requires_session.get(queue_name, False) and sub_queue is None
 
-            with (
-                ServiceBusClient(NAMESPACE_FQDN, self._credential) as client,
-                client.get_queue_receiver(queue_name, sub_queue=sub_queue) as receiver,
-            ):
-                messages = receiver.peek_messages(max_message_count=max_count)
+            with ServiceBusClient(NAMESPACE_FQDN, self._credential) as client:
+                if by_session:
+                    messages = _peek_all_sessions(client, queue_name, max_count)
+                else:
+                    with client.get_queue_receiver(
+                        queue_name, sub_queue=sub_queue
+                    ) as receiver:
+                        messages = receiver.peek_messages(max_message_count=max_count)
 
-            self.after(0, self._populate, messages, "Peeked", False)
+            verb = "Peeked (all sessions)" if by_session else "Peeked"
+            self.after(0, self._populate, messages, verb, False)
         except Exception as exc:  # noqa: BLE001 -- shown to the user, not swallowed
             self.after(0, self._show_error, exc)
 
@@ -285,6 +341,13 @@ class QueueViewer(tk.Tk):
         target = "dead-letter sub-queue" if self.dlq_var.get() else "queue"
         max_count = self.count_var.get() or "50"
         mode = self.receive_mode_var.get()
+        if self._requires_session.get(queue_name, False) and not self.dlq_var.get():
+            messagebox.showinfo(
+                "Session-enabled queue",
+                f"'{queue_name}' requires sessions, which Receive here doesn't "
+                "support -- use Peek to see its messages.",
+            )
+            return
         if mode == "Receive and Delete" and not messagebox.askyesno(
             "Confirm delete",
             f"Receive and Delete mode will RECEIVE AND PERMANENTLY DELETE up "
