@@ -53,5 +53,9 @@ jobs:
       - name: Install pip-audit
         run: pip install pip-audit==2.7.3
 
+      - name: Build the dmer_common wheel requirements.txt points at
+        # Not committed (a derived artifact) -- built from libs/dmer_common.
+        run: pip wheel ../../libs/dmer_common --no-deps -w .
+
       - name: Audit intake-processor's dependencies
         run: pip-audit -r requirements.txt

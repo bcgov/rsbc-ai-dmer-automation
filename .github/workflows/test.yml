@@ -49,6 +49,10 @@ jobs:
         with:
           python-version: '3.12'
 
+      - name: Build the dmer_common wheel requirements.txt points at
+        # Not committed (a derived artifact) -- built from libs/dmer_common.
+        run: pip wheel ../../libs/dmer_common --no-deps -w .
+
       - name: Install service + test dependencies
         run: |
           pip install -r requirements.txt
@@ -77,6 +81,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Build the dmer_common wheel requirements.txt points at
+        # Not committed (a derived artifact) -- built from libs/dmer_common.
+        run: pip wheel ../../libs/dmer_common --no-deps -w .
+
       - name: Install runtime and test dependencies
         run: |
           pip install -r requirements.txt
