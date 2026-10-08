@@ -444,6 +444,18 @@ DNS"](https://developer.gov.bc.ca/docs/default/component/public-cloud-techdocs/a
   one private endpoint per resource (Document Intelligence, Storage blob)
   — keep it that way rather than adding a second private endpoint against
   either resource.
+- **Confirmed in DEV (2026-10-02), when moving private endpoints to another
+  subnet:** the policy overwrote the A-record with the new endpoint's IP
+  (~10 min after creation), and deleting the *old* endpoint then removed the
+  record outright — the hostname fell back to the public IP. We can't write
+  records in the hub zone ourselves (`privateDnsZones/join/action` is denied),
+  so the recovery is: delete the new endpoint's `deployedByPolicy` DNS zone
+  group, then update the endpoint (e.g. add a tag) — the policy re-registers
+  it in ~10 min. To move an endpoint, delete the old one *first*, then create
+  the new one: same ~10 min DNS gap, one policy cycle instead of two.
+  If the endpoint serves a Flex Consumption app's `AzureWebJobsStorage`, the
+  host shuts down during the gap (403 on its singleton-lock blob) and a
+  `restart` does not bring it back — `az functionapp stop` then `start` does.
 - To verify rather than take it on faith: resolve the resource's hostname
   from inside the VNet (e.g. from a Bastion-connected jump box) —
   `nslookup <resource>.privatelink.<suffix>` should return a private IP

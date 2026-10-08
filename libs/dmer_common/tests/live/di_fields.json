@@ -1,0 +1,1157 @@
+{
+	"$schema": "https://schema.cognitiveservices.azure.com/formrecognizer/2021-03-01/fields.json",
+	"fields": [
+		{
+			"fieldKey": "dl_number",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "reason_for_examination_and_class_present",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "physician_or_np_fax_present",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "current_license_class",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "medical_issued_date",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "date_of_birth",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "medical_examination_date",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "vision.acuity_loss",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "vision.acuity_loss_cause",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "vision.field_defect_cause",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "vision.field_defect",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "vision.monocular",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "vision.monocular_date",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "vision.other",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "hearing.hearing_aid",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "hearing.hearing_loss",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "hearing.no_hearing_aid",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "vestibular.drop_attacks",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "vestibular.drop_attack_date",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "vestibular.recurrent_vertigo",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "vestibular.vertigo_with_warnings",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "vestibular.vertigo_without_warnings",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "vestibular.vertigo_date",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "hearing.other",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "musculoskeletal.limb_amputation",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "musculoskeletal.limb_amputation_date",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "musculoskeletal.limb_amputation_cause",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "musculoskeletal.amputation_right_sided",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "musculoskeletal.amputation_left_sided",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "musculoskeletal.amputation_upper_limb",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "musculoskeletal.amputation_lower_limb",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "musculoskeletal.amputation_above_elbow",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "musculoskeletal.amputation_below_elbow",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "musculoskeletal.amputation_above_knee",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "musculoskeletal.amputation_below_knee",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "musculoskeletal.uses_prosthesis",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "musculoskeletal.without_prosthesis",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "musculoskeletal.vehicle_modifications",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "musculoskeletal.vehicle_modifications_details",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "musculoskeletal.weakness",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "musculoskeletal.range_of_motion_loss",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "musculoskeletal.weakness_details",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "musculoskeletal.range_of_motion_loss_details",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "musculoskeletal.other",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "cardiovascular.syncope",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "cardiovascular.syncope_date",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "cardiovascular.syncope_cause",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "cardiovascular.cad",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "cardiovascular.cad_date",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "cardiovascular.arrhythmia",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "cardiovascular.arrhythmia_type",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "cardiovascular.pacemaker",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "cardiovascular.pacemaker_date",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "cardiovascular.icd",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "cardiovascular.icd_primary",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "cardiovascular.icd_secondary",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "cardiovascular.icd_date",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "cardiovascular.icd_therapy",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "cardiovascular.icd_therapy_date",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "cardiovascular.congestive_heart_failure",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "cardiovascular.congestive_heart_failure_cause",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "cardiovascular.lvef",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "cardiovascular.nyha_class",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "pvd.aneurysm",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "pvd.aneurysm_site",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "pvd.aneurysm_size",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "pvd.peripheral_vascular_disease",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "pvd.peripheral_vascular_disease_site",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "cardiovascular.other",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "psychiatric.psychosis",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "psychiatric.psychosis_date",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "psychiatric.psych_diagnosis",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "psychiatric.compliant_with_treatment",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "psychiatric.non_compliant_with_treatment",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "psychiatric.impaired_judgement",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "psychiatric.stable_condition",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "psychiatric.unstable_condition",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "psychiatric.other",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "psychiatric.other_psych_diagnosis",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "cerebrovascular.cva",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "cerebrovascular.tia",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "cerebrovascular.cva_tia_date",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "cns.epilepsy",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "cns.provoked_seizure",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "cns.seizure_cause",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "cns.seizure_date",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "sleep.narcolepsy",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "sleep.narcolepsy_controlled",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "sleep.narcolepsy_uncontrolled",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "cns.non_progressive_stable",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "cns.progressive_deficit",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "cns.cognitiveimpairment",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "cns.moca_score",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "cns.trails_b_seconds",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "cns.dementia_details",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "cns.dementia",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "cns.significant_head_injury_date",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "cns.significant_head_injury",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "cns.intracranial_tumors",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "cns.intracranial_tumors_details",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "cns.intracranial_tumors_date",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "cns.other",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "psychotropic_drugs.alcohol_use",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "psychotropic_drugs.substance_use",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "psychotropic_drugs.alcohol_withdrawal_seizure",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "psychotropic_drugs.alcohol_withdrawal_seizure_date",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "psychotropic_drugs.perscribed_drugs",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "psychiatric.on_medications",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "psychotropic_drugs.psychoactive_drugs",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "psychotropic_drugs.psychoactive_drugs_details",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "psychotropic_drugs.narcotics",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "psychotropic_drugs.narcotics_details",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "psychotropic_drugs.perscribed_drugs_compliant",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "psychotropic_drugs.perscribed_drugs_non_compliant",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "psychotropic_drugs.other",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "respiratory.o2_continuous",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "respiratory.o2_intermittent",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "respiratory.o2_when_driving",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "sleep.obstructive_sleep_apnea",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "sleep.osa_mild",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "sleep.osa_mod",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "sleep.osa_severe",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "sleep.cpap",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "sleep.cpap_compliant",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "sleep.cpap_non_compliant",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "sleep.ahi",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "sleep.epworth_score",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "sleep.ahi_score",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "sleep.no_daytime_sleepiness",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "sleep.with_daytime_sleepiness",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "sleep.other",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "endocrine.diabetes",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "endocrine.diabetes.diet",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "endocrine.diabetes.oral_meds",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "endocrine.diabetes.insulin",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "endocrine.diabetes.insulin_secretagogues",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "endocrine.diabetes.compliant",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "endocrine.diabetes.non_compliant",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "endocrine.stable_bg_control",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "endocrine.HbA1C",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "endocrine.HbA1C_date",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "endocrine.severe_hypoglycemia_date",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "endocrine.hypoglycemic_unawareness_date",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "endocrine.severe_hypoglycemia",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "endocrine.hypoglycemic_unawareness",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "endocrine.persistent_hypoglycemic_unawareness",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "endocrine.other",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "general.general_debility",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "general.other",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "visual_field.meet_criteria_for_licence_class_yes",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "visual_field.normal",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "visual_field.abnormal",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "visual_acuity.uncorrected_right",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "visual_acuity.uncorrected_left",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "visual_acuity.uncorrected_both",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "visual_acuity.corrected_right",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "visual_acuity.corrected_left",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "visual_acuity.corrected_both",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "opinion.maybe_followup_years",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "opinion.maybe",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "opinion.yes",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "opinion.no",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "details_of_condition",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "recommendations.specialist_consult_type",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "recommendations.specialist_consult_enclosed_yes",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "recommendations.specialist_consult_enclosed_no",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "recommendations.specialist_consult_will_arrange_yes",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "recommendations.specialist_consult_will_arrange_no",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "recommendations.road_test_to_assess",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "recommendations.road_test_to_assess_details",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "recommendations.rationale_for_road_test",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "recommendations.restrictions_reason_and_type",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "recommendations.restrictions",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "relationship_with_patient.family_physician_years",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "relationship_with_patient.locum",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "relationship_with_patient.walk_in",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "relationship_with_patient.first_visit",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "relationship_with_patient.np",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "relationship_with_patient.specialist",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "relationship_with_patient.name_and_address",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "driver_consent.signature_date",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "first_name",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "last_name",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "scan_from_information",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "type",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "doctor_signature",
+			"fieldType": "signature",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "guide",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "applying_for_class_number",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "psychiatric.non_medical_therapy",
+			"fieldType": "selectionMark",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "restrictions",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "blood_pressure",
+			"fieldType": "string",
+			"fieldFormat": "not-specified",
+			"groupIndex": 0
+		},
+		{
+			"fieldKey": "form_version",
+			"fieldType": "string",
+			"fieldFormat": "not-specified"
+		}
+	],
+	"definitions": {}
+}

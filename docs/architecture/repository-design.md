@@ -323,7 +323,7 @@ docs/
 | `ai/document-intelligence.bicep`            | Document Intelligence (Cognitive Services) account: private endpoint, public network access disabled. Custom model training remains manual (§13).                                                                                                                           |
 | `compute/container-apps-environment.bicep`  | VNet-integrated Container Apps Environment, linked to the Log Analytics Workspace.                                                                                                                                                                                          |
 | `compute/container-app.bicep`               | Reusable Container App module: image, KEDA Service Bus scale rule, Managed Identity, ingress config — instantiated for `di-processor`, `normalizer-service`, `audit-service`.                                                                                               |
-| `compute/function-app.bicep`                | Reusable Function App module: Premium/Elastic Premium plan (required for VNet integration + no cold start on the orchestrator), Managed Identity, App Insights connection — instantiated for `intake-processor`, `workflow-orchestrator`, `rule-engine`, `post-processing`. |
+| `compute/function-app.bicep`                | Reusable Function App module: Flex Consumption plan (VNet integration; one app per plan), Managed Identity, App Insights connection — instantiated for `intake-processor`, `workflow-orchestrator`, `rule-engine`, `post-processing`. |
 | `shared/naming.bicep`                       | Naming-convention helper functions (generates a resource name from type/service/env/region/instance — see §12).                                                                                                                                                             |
 | `shared/tags.bicep`                         | Standard tag set helper (`environment`, `service`, `costCenter`, `owner`, `dataClassification`).                                                                                                                                                                            |
 
@@ -517,9 +517,11 @@ adjusted to make the repository production-ready:
 
 - Container Apps scale on Service Bus queue/subscription depth via KEDA scale rules (min replicas
 0–1 in dev, ≥1 in prod to avoid cold start on the pipeline's critical path).
-- Function Apps use a Premium/Elastic Premium plan (required for VNet integration and to avoid
-Consumption-plan cold starts on `workflow-orchestrator`, which is latency-sensitive as the
-pipeline's coordination point).
+- Function Apps use the Flex Consumption plan: VNet integration, scale to zero, one app per plan.
+Several Flex apps can share one integration subnet (the Document and Driver orchestrators share
+`snet-rsbc-dmer-orchestrator-<env>`); size it for ~1 IP per instance and cap
+`maximumInstanceCount`. If cold start on `workflow-orchestrator` becomes a problem, add Flex
+always-ready instances before considering Elastic Premium.
 - PostgreSQL Flexible Server sized per environment in `deployment/<env>/parameters.json`; enable
 read replicas only if `audit-service` read load later contends with the write path.
 - Service Bus Premium tier for predictable throughput and private endpoint support at scale.

@@ -12,10 +12,18 @@ from di_processor.extraction.sanitize import (
 from di_processor.extraction.schemas import validate_llm_output
 
 
-def test_load_field_keys_has_67_keys():
+def test_load_field_keys_has_65_keys():
+    # 67 originally; cardiovascular.congestive_heart_failure and
+    # ..._has_concerns were removed -- both are checkbox-shaped fields that
+    # belong to the custom DI model's schema (Stage A), not this
+    # free-text/handwritten-value list. See llm_prompt_schema.md's note on
+    # why no field here is a checkbox.
     keys = load_field_keys()
-    assert len(keys) == 67
+    assert len(keys) == 65
     assert "endocrine.HbA1C" in keys
+    assert "cardiovascular.congestive_heart_failure" not in keys
+    assert "cardiovascular.congestive_heart_failure_has_concerns" not in keys
+    assert "cardiovascular.congestive_heart_failure_cause" in keys
 
 
 def test_parse_llm_json_strips_markdown_fences():

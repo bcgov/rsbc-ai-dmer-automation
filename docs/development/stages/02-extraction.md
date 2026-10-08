@@ -87,7 +87,7 @@ duplicate comparison even when its outcome is superseded (see
 or attaching `driver_evaluation` and setting `expected_document_count`). This reverses the
 architecture document's placement of driver resolution in this stage.
 
-**Now owned by** [Document Orchestration's Resolve Driver activity](03-document-orchestration.md#activity-resolve-driver)
+**Now owned by** [Document Orchestration's Driver Lookup activity](03-document-orchestration.md#activity-driver-lookup)
 (the first activity, so it completes before `driver-decision`, which requires `driver_key`, is
 published).
 
@@ -242,7 +242,7 @@ a disputed extraction can be traced to the exact model/prompt combination that p
 ## Open Questions / Decisions Required
 
 - ~~Owner of driver resolution and document counting~~ — **resolved 2026-09-23**: Document
-  Orchestration's [Resolve Driver activity](03-document-orchestration.md#activity-resolve-driver).
+  Orchestration's [Driver Lookup activity](03-document-orchestration.md#activity-driver-lookup).
   I-12 (no/ambiguous licence match → human review) is handled there.
 - **M-9** — confirmed: no multi-DMER-per-PDF and no DMER-split-across-files cases. The one-document,
   one-decision assumption holds; no branch needed for either case.

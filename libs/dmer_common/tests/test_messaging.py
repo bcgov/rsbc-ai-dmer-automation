@@ -438,3 +438,41 @@ def test_consumer_uses_broker_message_id_when_body_has_none():
     assert seen["messageId"] == "guid-1"
     assert receiver.dead_lettered == []
     assert consumer.handle(_BrokerIdMessage(body, "guid-1"), seen.update) is False
+
+
+def test_publisher_sets_the_session_only_when_given():
+    # GIVEN a publisher whose factory records the broker ids it is given
+    sender = FakeSender()
+    calls = []
+
+    def factory(body, **ids):
+        calls.append(ids)
+        return {"body": body}
+
+    publisher = ServiceBusPublisher(sender, message_factory=factory)
+    msg = ExtractedMessage(
+        message_id="m-9",
+        document_id="doc-1",
+        document_guid="123e4567-e89b-12d3-a456-426614174000",
+        blob_url="https://example/extracted-dmer/doc-1/combined.json",
+        enqueued_at=datetime(2026, 8, 5, tzinfo=UTC),
+    )
+    # WHEN published to a plain queue and to a session-enabled one
+    publisher.publish(msg)
+    publisher.publish(msg, session_id="drv-1")
+    # THEN only the second carries a session id (driver-decision: SessionId = driver_key)
+    assert "session_id" not in calls[0]
+    assert calls[1]["session_id"] == "drv-1"
+
+
+def test_default_message_factory_sets_session_id():
+    from dmer_common.messaging.publisher import _default_message_factory
+
+    message = _default_message_factory(
+        "{}", message_id="m", document_id="d", session_id="drv-1"
+    )
+    assert message.session_id == "drv-1"
+    assert (
+        _default_message_factory("{}", message_id="m", document_id="d").session_id
+        is None
+    )

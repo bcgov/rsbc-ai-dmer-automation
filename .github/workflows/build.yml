@@ -51,6 +51,10 @@ jobs:
           # infrastructure/bicep/intake-processor.bicep — keep both in sync.
           python-version: '3.12'
 
+      - name: Build the dmer_common wheel requirements.txt points at
+        # Not committed (a derived artifact) -- built from libs/dmer_common.
+        run: pip wheel ../../libs/dmer_common --no-deps -w .
+
       - name: Install dependencies
         run: pip install -r requirements.txt
 

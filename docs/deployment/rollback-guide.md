@@ -75,9 +75,9 @@ anywhere in it. Concretely, it never touches:
 
 - The platform VNet itself (`f11861-<env>-vwan-spoke`), its peering, flow
   logs, or Network Watcher.
-- Any other subnet in that VNet — `AzureBastionSubnet`, or (in the DEV
-  history behind this repo) the old manually-created
-  `snet-rsbc-dmer-ai-optimization-private-endpoints`.
+- Any other subnet in that VNet — e.g. `AzureBastionSubnet`. (DEV's old
+  manually-created `snet-rsbc-dmer-ai-optimization-private-endpoints` no
+  longer exists; its contents now live in `snet-rsbc-dmer-pe-dev-001`.)
 - The old manually-created DEV resources this repo's Bicep deliberately
   never references either (`rsbc-dmer-ai-optimization-rg` and everything in
   it) — the script has no parameter that could even point at them.

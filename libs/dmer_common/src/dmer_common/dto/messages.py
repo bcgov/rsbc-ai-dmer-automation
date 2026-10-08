@@ -9,8 +9,10 @@ normalized content inline:
   by ``di-processor``).
 - :class:`ExtractedMessage` — ``dmer-extracted`` (produced by ``di-processor``,
   consumed by the document orchestrator).
+- :class:`DriverDecisionMessage` — ``driver-decision`` (produced by the document
+  orchestrator, consumed by the driver orchestrator; ``SessionId = driver_key``).
 
-Both are thin subclasses of :class:`PipelineMessage`: the queue a message belongs
+All are thin subclasses of :class:`PipelineMessage`: the queue a message belongs
 to is context, not shape. ``schema_version`` defaults to
 :data:`PIPELINE_SCHEMA_VERSION`.
 
@@ -38,6 +40,7 @@ DMER_EVENT_NAMESPACE: Final = uuid.UUID("663ae8ec-52ce-42fd-ba5f-70e4fb337824")
 
 # Event names (the queue each event is published to).
 EXTRACTED_EVENT: Final = "dmer-extracted"
+DRIVER_DECISION_EVENT: Final = "driver-decision"
 
 
 def event_message_id(event: str, key: str) -> str:
@@ -77,7 +80,7 @@ class RawMessage(PipelineMessage):
 
     ``blob_url`` points at the source PDF under the ``raw-dmer`` container.
     ``driver_key`` may be null: Ingest supplies it only when Mercury returned a
-    driver object; otherwise Document Orchestration's Resolve Driver activity
+    driver object; otherwise Document Orchestration's Driver Lookup activity
     resolves it (Extraction forwards it as received).
     """
 
@@ -89,3 +92,15 @@ class ExtractedMessage(PipelineMessage):
     ``extracted-dmer`` container; the document orchestrator reads it to start the
     per-document durable orchestration.
     """
+
+
+class DriverDecisionMessage(PipelineMessage):
+    """``driver-decision`` message — a document's rules are applied; its driver's
+    batch may be ready for a decision.
+
+    Published by the document orchestration with Service Bus
+    ``SessionId = driver_key`` (single writer per driver), so ``driver_key`` is
+    required. ``blob_url`` points at the normalized document.
+    """
+
+    driver_key: str

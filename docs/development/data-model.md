@@ -43,16 +43,18 @@ document's current position in the pipeline.
 | `document_guid` | uuid, **UNIQUE** | Mercury's identifier. See [`document_guid` is not a content key](#document_guid-is-not-a-content-key) below — this uniqueness guards against redelivery, not duplicate content. |
 | `document_name` | text | As received from Mercury. |
 | `mercury_document_status` | text | Mercury's own status field (`Uploaded`, `Rejected`, ...). Refreshed only by the driver orchestration's completeness call ([Decision Gateway](stages/07-decision-gateway.md)), never by the poller. |
-| `document_priority` | text | From Mercury. Per question I-3, does **not** override the rule engine's PR/PU/PCM/CR selection. |
+| `document_priority` | text | From Mercury. Per question I-3, does **not** override the rule engine's PR/PU/TCM/CR selection. |
 | `received_date` / `dps_date` | timestamptz | `dps_date` empty = "not yet triaged" (question I-9, confirmed reliable signal). Refreshed at decision time only. |
 | `queue` / `business_area` | text | DPS General / DPS Unknown, etc. |
 | `mercury_case_id` | text, nullable | Set when Mercury supplied a case. |
-| `driver_key` | uuid FK → `driver.driver_key`, nullable | Null until Mercury supplies a driver object at Ingest. When Mercury supplies none it stays null — it is resolved by [Document Orchestration's Resolve Driver activity](stages/03-document-orchestration.md#activity-resolve-driver), not by Extraction. |
+| `driver_key` | uuid FK → `driver.driver_key`, nullable | Null until Mercury supplies a driver object at Ingest. When Mercury supplies none it stays null — it is resolved by [Document Orchestration's Driver Lookup activity](stages/03-document-orchestration.md#activity-driver-lookup), not by Extraction. |
 | `document_url` | text, nullable | Mercury's pre-signed source URL, set by the Page Poller from the batch GET response. Not carried on the `dmer-ingest` message — the Ingest Function re-reads it from here (see [Ingest](stages/01-ingest.md)). Left populated after download, not nulled out, as a fallback for a DLQ replay/re-poll — pending question M-1's answer on presigned URL TTL and refresh. |
 | `raw_blob_url` | text | Set by Ingest once the source PDF lands in `raw-dmer`. |
 | `pipeline_status` | enum | Health/lifecycle state — see [Status modelling](#status-modelling). |
 | `current_stage` | enum | Position — see [Status modelling](#status-modelling). A stage that finishes sets the **next** stage (Ingest → `EXTRACT` with `DOWNLOADED`; Extraction → `NORMALIZE` with `EXTRACTED`). Status-only writes such as `MANUAL_REVIEW` leave it unchanged, so it still shows where the document stopped. |
 | `attempt_count` | int | Incremented on republish (sweeper) or stage retry. |
+| `driver_resolved_by` | text, nullable | V0005, set by Driver Lookup: `MERCURY_SUPPLIED` (Mercury's batch record named the driver) or `LICENCE_LOOKUP` (the page's licence matched exactly one Mercury driver — the Decision Gateway records it as `proposed_driver_key` / `MAP_DRIVER`, I-11). |
+| `licence_mismatch` | bool, nullable | V0005. The licence read off the page differs from the Mercury-supplied driver's; Mercury's driver is kept. |
 | `first_seen_at` / `updated_at` | timestamptz | `updated_at` is set on **every** write to this row, by every stage — it is what the reconciliation sweeper's stall-detection query scans. |
 
 `pipeline_status` changes are **atomic compare-and-set** writes (`UPDATE ... WHERE id = :id AND
@@ -73,7 +75,7 @@ repeated in each stage doc.
 |---|---|---|
 | `id` | bigserial PK | |
 | `document_id` | uuid FK → `dmer_document.id` | |
-| `stage` | enum | `INGEST`, `EXTRACT`, `NORMALIZE`, `RULES`, `DECISION`, `POST` (see stage docs for exact value per stage). |
+| `stage` | enum | `INGEST`, `EXTRACT`, `DRIVER_LOOKUP` (V0005), `NORMALIZE`, `RULES`, `DECISION`, `POST` (see stage docs for exact value per stage). |
 | `status` | enum | `RUNNING`, `SUCCEEDED`, `FAILED`. |
 | `attempt_no` | int | Previous attempts for the same `(document_id, stage)` + 1, computed by the writer — **not** the queue message's `attempt` (Service Bus redelivery doesn't change it). |
 | `started_at` / `ended_at` | timestamptz | |
@@ -101,8 +103,8 @@ Mercury returns no driver object.
 
 `INSERT ... ON CONFLICT (licence_number) DO UPDATE` — written by Ingest (when Mercury supplies
 a driver object). Extraction does **not** write it; it records `dmer_extraction.licence_number_read`
-only. Creating a row from a page-read licence belongs to [Document Orchestration's Resolve Driver
-activity](stages/03-document-orchestration.md#activity-resolve-driver).
+only. Creating a row from a page-read licence belongs to [Document Orchestration's Driver Lookup
+activity](stages/03-document-orchestration.md#activity-driver-lookup).
 
 ### `driver_evaluation`
 
@@ -113,7 +115,7 @@ The join unit — the row that makes "waiting on siblings" explicit and queryabl
 | `id` | uuid PK | |
 | `driver_key` | uuid FK → `driver.driver_key` | |
 | `status` | enum | `WAITING`, `STALE`, `READY`, `EVALUATING`, `DECIDED`, `POSTED` — see [Status modelling](#status-modelling). |
-| `expected_document_count` | int | Set from the Mercury `GET by driver_licence` call — by [Document Orchestration's Resolve Driver activity](stages/03-document-orchestration.md#activity-resolve-driver), **not** by Extraction; **re-verified** at decision time (question: a new document may have arrived mid-wait). |
+| `expected_document_count` | int | Set from the Mercury `GET by driver_licence` call — by [Document Orchestration's Driver Lookup activity](stages/03-document-orchestration.md#activity-driver-lookup), **not** by Extraction; **re-verified** at decision time (question: a new document may have arrived mid-wait). |
 | `completed_document_count` | int | Incremented by the rule-engine activity each time a sibling document reaches `RULES_APPLIED`. |
 | `last_mercury_check_at` | timestamptz | |
 | `evaluated_at` | timestamptz, nullable | |
@@ -148,11 +150,22 @@ One row **per evaluation, not per document** — a re-run creates a new row; not
 | `id` | bigserial PK | |
 | `document_id` | uuid FK → `dmer_document.id` | |
 | `rules_version` | text FK → `rules_version.version` | |
-| `all_outcomes` | jsonb | Every candidate outcome the engine returned, with its inputs — not just the winner. |
+| `all_outcomes` | jsonb | `{"rule_engine_outcome_code": ..., "candidates": [...]}` — every candidate outcome the engine returned, with its inputs (not just the winner), and the engine's own outcome. That differs from `selected_outcome_code` only when a clean pass needs the driving-record check (selected `IN`); `selected_reason` says why. |
 | `selected_outcome_code` | text | |
 | `selected_reason` | text | |
 | `priority_rank` | int | |
 | `evaluated_at` | timestamptz | |
+
+### `driver_evaluation_document`
+
+V0004. Marks a document as counted toward its driver's `completed_document_count`, so the count is
+incremented once per document however often the Rule Engine activity is retried or re-run.
+
+| Column | Type | Notes |
+|---|---|---|
+| `driver_evaluation_id` | uuid FK → `driver_evaluation.id` | PK with `document_id`. |
+| `document_id` | uuid FK → `dmer_document.id` | |
+| `counted_at` | timestamptz | |
 
 ### `rules_version`
 
@@ -175,7 +188,7 @@ The final per-document outcome. Written **once, atomically with the outbox row**
 | `id` | uuid PK | |
 | `document_id` | uuid FK → `dmer_document.id` | |
 | `driver_evaluation_id` | uuid FK → `driver_evaluation.id` | |
-| `outcome_code` | enum | `CP`, `IN`, `PR`, `PU`, `PCM`, `CR` — Mercury/business outcome codes. **Definitions are not in the architecture document**; source them from Intake/business-rules documentation before building the rule engine's outcome table. Flagged in [Open Questions](#open-questions--decisions-required). |
+| `outcome_code` | enum | `CP`, `IN`, `PR`, `PU`, `TCM`, `CR` — Mercury/business outcome codes. **Definitions are not in the architecture document**; source them from Intake/business-rules documentation before building the rule engine's outcome table. Flagged in [Open Questions](#open-questions--decisions-required). |
 | `is_duplicate` | bool | |
 | `duplicate_of_document_id` | uuid FK → `dmer_document.id`, nullable | Self-referencing via `dmer_decision`; see the `duplicate_of` edge on the ERD. |
 | `duplicate_reason` | text, nullable | Human-readable, for Intake to inspect when they disagree. |
@@ -223,7 +236,11 @@ as `dmer_decision`.
 ### `processing_error`
 
 The failure register — populated by the [DLQ Drain](stages/10-dlq-drain.md) and by handled errors
-(e.g. the reconciliation sweeper detecting a stall).
+(e.g. the reconciliation sweeper detecting a stall), and by the Document Orchestration whenever
+it routes a document to `MANUAL_REVIEW` (Driver Lookup's unresolvable licences as
+`PERMANENT_BUSINESS`; an activity's poison result as `PERMANENT_BUSINESS`; exhausted retries as
+`UNKNOWN`). `failure_category`, `reason_code` and `redrive_count` are added by V0006, which also
+makes the legacy `error_class` nullable (`UNKNOWN` has no legacy equivalent).
 
 | Column | Type | Notes |
 |---|---|---|
@@ -365,7 +382,7 @@ for the new `pipeline_status` and `driver_evaluation.status` state machines.
   on `status NOT IN ('DECIDED', 'POSTED')`?). Needs a decision before the migration is written.
   Related to question I-10 (a new DMER after a batch is posted is "treated separately" — implying a
   *new* `driver_evaluation` row per batch, not a reopened one).
-- **Outcome code definitions** (`CP`, `IN`, `PR`, `PU`, `PCM`, `CR`) are referenced throughout the
+- **Outcome code definitions** (`CP`, `IN`, `PR`, `PU`, `TCM`, `CR`) are referenced throughout the
   architecture document but never defined there. Source the business definitions from Intake before
   building the rule engine's outcome table and `dmer_decision.outcome_code` enum.
 - **Normalized clinical JSON in Postgres** (question I-17 answered "30–90 days" for blob retention,

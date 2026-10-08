@@ -187,11 +187,12 @@ var postgresServerName = resourceName('psql', 'shared', environment, instance)
 // output). The original architecture's raw-dmer-queue and
 // extracted-dmer-queue are retired: intake-processor publishes to dmer-raw,
 // and di-processor consumes dmer-raw and publishes to dmer-extracted.
-// driver-decision belongs to a later stage not built yet -- not declared
-// here until it is.
+// driver-decision is the Document Orchestration's output (its Signal Driver
+// activity), consumed by the Driver Orchestration.
 var dmerIngestQueueName = 'dmer-ingest'
 var dmerRawQueueName = 'dmer-raw'
 var dmerExtractedQueueName = 'dmer-extracted'
+var driverDecisionQueueName = 'driver-decision'
 // Container App names are limited to 32 characters: 'di-processor' would make
 // ca-rsbc-dmer-di-processor-<env>-<instance> 33+ characters, so it's
 // abbreviated here (and only here -- the identity and image keep the full name).
@@ -413,13 +414,12 @@ module diProcessorContainerApp 'modules/compute/container-app.bicep' = if (deplo
 // ---------------------------------------------------------------------------
 // 6. Service Bus
 //
-// One namespace, three queues so far, all from the revised architecture
+// One namespace, the revised architecture's four queues
 // (docs/development/message-contracts.md): dmer-ingest and dmer-raw (the
-// Ingest stage) and dmer-extracted (di-processor's output). The original
+// Ingest stage), dmer-extracted (di-processor's output) and driver-decision
+// (the Document Orchestration's output; sessions). The original
 // architecture's raw-dmer-queue and extracted-dmer-queue are retired — see
-// the note above dmerIngestQueueName's declaration. driver-decision (the
-// revised architecture's remaining queue) isn't declared yet — a later
-// stage, not built. No topics: PaddleOCR isn't
+// the note above dmerIngestQueueName's declaration. No topics: PaddleOCR isn't
 // a Service Bus consumer (it's a separately-deployed Container App,
 // `paddleocr-gpu-app` in this same resource group, called directly over
 // HTTP by di-processor rather than via pub/sub).
@@ -460,6 +460,21 @@ module dmerExtractedQueue 'modules/servicebus/queue.bicep' = {
     // dmer-extracted — no duplicate-detection window, so it's left disabled
     // rather than assuming a value. (di-processor's message_id is
     // deterministic per document, so enabling one later would be effective.)
+  }
+}
+
+module driverDecisionQueue 'modules/servicebus/queue.bicep' = {
+  name: '${deployment().name}-sb-driver-decision-queue'
+  params: {
+    namespaceName: serviceBusNamespace.outputs.name
+    name: driverDecisionQueueName
+    // message-contracts.md: "Sessions required; SessionId = driver_key.
+    // MaxDeliveryCount 5." -- sessions give single-writer-per-driver
+    // semantics for the Driver Orchestration. No duplicate-detection window is
+    // specified, so it's left disabled (the publisher's message_id is
+    // deterministic per document and the consumer is idempotent on it).
+    maxDeliveryCount: 5
+    requiresSession: true
   }
 }
 

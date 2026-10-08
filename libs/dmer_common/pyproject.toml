@@ -16,6 +16,10 @@ dependencies = [
     # import ("requires that the Python 'greenlet' library is installed").
     "SQLAlchemy[asyncio]>=2.0,<3",
     "asyncpg>=0.29",
+    "python-dateutil>=2.8,<3",
+    # GoRules ZEN. Pinned to a minor: rules.json was written and tested against
+    # 0.51's expression semantics (null comparisons, date units).
+    "zen-engine>=0.51,<0.52",
 ]
 
 [project.optional-dependencies]

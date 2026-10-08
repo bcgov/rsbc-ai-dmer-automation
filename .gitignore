@@ -45,6 +45,12 @@ build/
 # Local build/deploy artifacts
 *.zip
 
+# dmer_common wheel copies -- Oryx's remote build only sees each service's
+# own folder, so this gets rebuilt and copied in by hand for local/manual
+# deploys (see e.g. services/intake-processor/requirements.txt's comment);
+# it's a derived build artifact, not source, so it isn't committed.
+services/*/dmer_common-*.whl
+
 # Temporary POC staging (di-processor) - being ported into services/di-processor + libs/dmer_common
 services/diocr-poc/
 

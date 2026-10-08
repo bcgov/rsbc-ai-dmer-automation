@@ -23,6 +23,7 @@ pip install -e ../../libs/dmer_common
 | `config` | App Configuration / Key Vault reference loader |
 | `doc_intelligence` | Document Intelligence client (Managed Identity, private endpoint) |
 | `openai_client` | External Azure OpenAI client (public endpoint, Key Vault API key) |
+| `rules` | Rule Engine: evaluates a normalized DMER against `rules.json` (GoRules ZEN) and selects the outcome |
 
 No service should import the raw Azure SDKs directly for these concerns — always go
 through `dmer_common` so retry, auth, and telemetry behavior stay consistent.

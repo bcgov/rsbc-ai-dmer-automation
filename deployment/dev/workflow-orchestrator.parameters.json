@@ -1,0 +1,44 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "environment": { "value": "dev" },
+    "location": { "value": "canadacentral" },
+    "functionAppName": { "value": "func-rsbc-dmer-workflow-orchestrator-dev" },
+    "hostingPlanName": { "value": "asp-rsbc-dmer-workflow-orchestrator-dev-001" },
+    "virtualNetworkSubnetId": {
+      "value": "/subscriptions/e34c5ef8-e2f1-4a67-a94f-29cb158155c2/resourceGroups/f11861-dev-networking/providers/Microsoft.Network/virtualNetworks/f11861-dev-vwan-spoke/subnets/snet-rsbc-dmer-orchestrator-dev"
+    },
+    "privateEndpointSubnetId": {
+      "value": "/subscriptions/e34c5ef8-e2f1-4a67-a94f-29cb158155c2/resourceGroups/f11861-dev-networking/providers/Microsoft.Network/virtualNetworks/f11861-dev-vwan-spoke/subnets/snet-rsbc-dmer-pe-dev-001"
+    },
+    "runtimeStorageAccountName": { "value": "rsbcstorage" },
+    "deploymentPackageContainerName": {
+      "value": "app-package-func-rsbc-dmer-workflow-orchestrator-dev"
+    },
+    "logAnalyticsWorkspaceId": {
+      "value": "/subscriptions/e34c5ef8-e2f1-4a67-a94f-29cb158155c2/resourceGroups/DefaultResourceGroup-CCAN/providers/Microsoft.OperationalInsights/workspaces/DefaultWorkspace-e34c5ef8-e2f1-4a67-a94f-29cb158155c2-CCAN"
+    },
+    "pythonVersion": { "value": "3.12" },
+    "maximumInstanceCount": { "value": 10 },
+    "documentOrchestrationTriggerEnabled": { "value": false },
+    "serviceBusNamespaceFqdn": {
+      "value": "sb-rsbc-dmer-shared-dev-001.servicebus.windows.net"
+    },
+    "serviceBusResourceGroupName": { "value": "rg-rsbc-dmer-dev" },
+    "postgresHost": { "value": "psql-rsbc-dmer-shared-dev-001.postgres.database.azure.com" },
+    "postgresPort": { "value": "5432" },
+    "postgresDatabase": { "value": "dmer" },
+    "dataStorageAccountName": { "value": "stdmerdevcac001" },
+    "mercuryDriverLicenceApiBaseUrl": {
+      "value": "https://func-mock-mercury-api-dev.azurewebsites.net/api/mercury/drivers"
+    },
+    "azureOpenAiEndpoint": { "value": "https://test.aihub.gov.bc.ca/rsbc-dmer-ai-optimization" },
+    "azureOpenAiDeployment": { "value": "gpt-5.1" },
+    "azureOpenAiApiVersion": { "value": "2024-12-01-preview" },
+    "keyVaultName": { "value": "kv-rsbc-dmer-dev-001" },
+    "costCenter": { "value": "RSBC" },
+    "owner": { "value": "RSBC-DMER" },
+    "dataClassification": { "value": "protected-b" }
+  }
+}

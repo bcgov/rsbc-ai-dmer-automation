@@ -29,12 +29,24 @@ def test_map_di_fields_captures_checkbox_and_boolean():
             "valueSelectionMark": "selected",
             "confidence": 0.99,
         },
+        "vision.other_checkbox": {
+            "valueSelectionMark": "unselected",
+            "confidence": 0.99,
+        },
         "has_concerns": {"valueBoolean": True, "confidence": 0.95},
+        "no_concerns": {"valueBoolean": False, "confidence": 0.95},
     }
     mapped = map_di_fields(fields)
-    # THEN they are captured, not dropped
-    assert mapped["vision.corrective_lenses"].value == "selected"
-    assert mapped["has_concerns"].value == "True"
+    # THEN both checkbox representations (selectionMark and boolean) are
+    # captured and normalized to the same canonical "true"/"false" strings --
+    # not dropped, and not left as DI's raw "selected"/"unselected" or
+    # Python's capitalized str(bool) ("True"/"False"), which would otherwise
+    # give normalization two different encodings for the same concept
+    # depending on how a given field happened to be configured in DI.
+    assert mapped["vision.corrective_lenses"].value == "true"
+    assert mapped["vision.other_checkbox"].value == "false"
+    assert mapped["has_concerns"].value == "true"
+    assert mapped["no_concerns"].value == "false"
 
 
 class _FakeClient:

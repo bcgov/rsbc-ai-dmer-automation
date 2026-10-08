@@ -66,8 +66,8 @@ param pythonVersion string = '3.12'
 ])
 param instanceMemoryMB int = 512
 
-@description('Maximum scale-out instance count.')
-@minValue(40)
+@description('Maximum scale-out instance count. Each instance takes an IP in the integration subnet, so apps sharing a small subnet should keep this low.')
+@minValue(1)
 @maxValue(1000)
 param maximumInstanceCount int = 100
 
