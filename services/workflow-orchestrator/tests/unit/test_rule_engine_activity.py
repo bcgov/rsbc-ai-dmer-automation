@@ -13,6 +13,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+import workflow_orchestrator.activities.rule_engine as activity
 from dmer_common.db.rule_engine import (
     CompletedEvaluation,
     DriverCount,
@@ -20,8 +21,6 @@ from dmer_common.db.rule_engine import (
     RuleEngineRun,
     RuleEngineStateError,
 )
-
-import workflow_orchestrator.activities.rule_engine as activity
 
 DOC_ID = "123e4567-e89b-12d3-a456-426655440000"
 DRIVER_KEY = "74f5a6ce-575a-4689-a553-99f50c24ca15"

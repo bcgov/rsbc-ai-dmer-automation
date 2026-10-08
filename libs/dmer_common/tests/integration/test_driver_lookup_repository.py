@@ -13,10 +13,6 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import create_async_engine
-from sqlalchemy.pool import NullPool
-
 from dmer_common.db.driver_lookup import (
     DRIVER_NOT_FOUND,
     LICENCE_LOOKUP,
@@ -27,6 +23,9 @@ from dmer_common.db.driver_lookup import (
     MercuryDriver,
     driver_lookup_session,
 )
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.pool import NullPool
 
 pytestmark = pytest.mark.skipif(
     not os.getenv("NORMALIZATION_TEST_DSN"), reason="requires disposable PostgreSQL"

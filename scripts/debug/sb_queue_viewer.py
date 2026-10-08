@@ -129,7 +129,9 @@ def _peek_all_sessions(client, queue_name: str, max_count: int) -> list:
             except OperationTimeoutError:
                 break  # no further session has messages
             receivers.append(receiver)
-            messages.extend(receiver.peek_messages(max_message_count=max_count - len(messages)))
+            messages.extend(
+                receiver.peek_messages(max_message_count=max_count - len(messages))
+            )
     finally:
         for receiver in receivers:
             try:
@@ -320,7 +322,9 @@ class QueueViewer(tk.Tk):
             sub_queue = ServiceBusSubQueue.DEAD_LETTER if self.dlq_var.get() else None
             # The dead-letter sub-queue is never session-enabled, even on a
             # session queue -- only the main queue needs the session path.
-            by_session = self._requires_session.get(queue_name, False) and sub_queue is None
+            by_session = (
+                self._requires_session.get(queue_name, False) and sub_queue is None
+            )
 
             with ServiceBusClient(NAMESPACE_FQDN, self._credential) as client:
                 if by_session:

@@ -15,10 +15,6 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import create_async_engine
-from sqlalchemy.pool import NullPool
-
 from dmer_common.db.rule_engine import (
     UNREGISTERED_ACTIVATED_BY,
     RuleEngineBusyError,
@@ -27,6 +23,9 @@ from dmer_common.db.rule_engine import (
     rule_engine_session,
 )
 from dmer_common.rules import Outcome, select_outcome
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.pool import NullPool
 
 pytestmark = pytest.mark.skipif(
     not os.getenv("NORMALIZATION_TEST_DSN"), reason="requires disposable PostgreSQL"

@@ -7,11 +7,10 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+import workflow_orchestrator.function_app as fa
 from azure.durable_functions.models.OrchestrationRuntimeStatus import (
     OrchestrationRuntimeStatus,
 )
-
-import workflow_orchestrator.function_app as fa
 
 DOCUMENT_ID = "123e4567-e89b-12d3-a456-426655440000"
 DOCUMENT_GUID = "258a9a03-ee50-4363-8519-ae546fab4add"

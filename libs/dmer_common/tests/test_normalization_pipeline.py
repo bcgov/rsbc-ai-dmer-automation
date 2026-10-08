@@ -15,7 +15,6 @@ and the evidence checks).
 from __future__ import annotations
 
 import pytest
-
 from dmer_common.normalization.pipeline import (
     NormalizationValidationError,
     accept_analysis_output,

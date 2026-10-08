@@ -97,9 +97,11 @@ def _now() -> datetime:
 
 def test_normalization_session_busy_lock_raises_and_closes_connection():
     async def run():
-        conn = _ScriptedConn([
-            lambda stmt, params: _FakeResult(scalar=False),
-        ])
+        conn = _ScriptedConn(
+            [
+                lambda stmt, params: _FakeResult(scalar=False),
+            ]
+        )
         engine = _FakeEngine(conn)
 
         with pytest.raises(NormalizationBusyError):
@@ -120,7 +122,9 @@ def test_lost_database_session_cannot_reconnect_and_commit_without_lock():
         repo = NormalizationRepository(conn, document_id="doc-1")
         with pytest.raises(NormalizationBusyError):
             await repo.succeed(
-                1, ended_at=_now(), output_blob_url="https://blob/normalized",
+                1,
+                ended_at=_now(),
+                output_blob_url="https://blob/normalized",
                 model_version="model@v2",
             )
         assert conn.tx_begin_count == 0
@@ -131,10 +135,14 @@ def test_lost_database_session_cannot_reconnect_and_commit_without_lock():
 
 def test_start_or_resume_replays_persisted_success_for_later_status():
     async def run():
-        conn = _ScriptedConn([
-            lambda stmt, params: _FakeResult(rows=[("RULES_APPLIED",)]),
-            lambda stmt, params: _FakeResult(rows=[(99, 4, "normalized-dmer/doc-1.json")]),
-        ])
+        conn = _ScriptedConn(
+            [
+                lambda stmt, params: _FakeResult(rows=[("RULES_APPLIED",)]),
+                lambda stmt, params: _FakeResult(
+                    rows=[(99, 4, "normalized-dmer/doc-1.json")]
+                ),
+            ]
+        )
         repo = NormalizationRepository(conn, document_id="doc-1")
 
         run_info = await repo.start_or_resume(now=_now(), model_version="new-model@v2")
@@ -150,16 +158,20 @@ def test_start_or_resume_replays_persisted_success_for_later_status():
 
 def test_start_or_resume_extracted_starts_new_attempt_and_interrupts_old_running():
     async def run():
-        conn = _ScriptedConn([
-            lambda stmt, params: _FakeResult(rows=[("EXTRACTED",)]),
-            lambda stmt, params: _FakeResult(),
-            lambda stmt, params: _FakeResult(scalar=2),
-            lambda stmt, params: _FakeResult(rows=[("doc-1",)]),
-            lambda stmt, params: _FakeResult(rows=[(123,)]),
-        ])
+        conn = _ScriptedConn(
+            [
+                lambda stmt, params: _FakeResult(rows=[("EXTRACTED",)]),
+                lambda stmt, params: _FakeResult(),
+                lambda stmt, params: _FakeResult(scalar=2),
+                lambda stmt, params: _FakeResult(rows=[("doc-1",)]),
+                lambda stmt, params: _FakeResult(rows=[(123,)]),
+            ]
+        )
         repo = NormalizationRepository(conn, document_id="doc-1")
 
-        run_info = await repo.start_or_resume(now=_now(), model_version="gpt-5.1@schema-v1")
+        run_info = await repo.start_or_resume(
+            now=_now(), model_version="gpt-5.1@schema-v1"
+        )
 
         conn.assert_consumed()
         assert run_info.run_id == 123
@@ -174,9 +186,11 @@ def test_start_or_resume_extracted_starts_new_attempt_and_interrupts_old_running
 
 def test_start_or_resume_not_ready_raises_without_extra_writes():
     async def run():
-        conn = _ScriptedConn([
-            lambda stmt, params: _FakeResult(rows=[("EXTRACTING",)]),
-        ])
+        conn = _ScriptedConn(
+            [
+                lambda stmt, params: _FakeResult(rows=[("EXTRACTING",)]),
+            ]
+        )
         repo = NormalizationRepository(conn, document_id="doc-1")
 
         with pytest.raises(NormalizationNotReadyError):
@@ -190,10 +204,12 @@ def test_start_or_resume_not_ready_raises_without_extra_writes():
 
 def test_succeed_rollback_when_document_update_condition_fails():
     async def run():
-        conn = _ScriptedConn([
-            lambda stmt, params: _FakeResult(rows=[(777,)]),
-            lambda stmt, params: _FakeResult(rows=[]),
-        ])
+        conn = _ScriptedConn(
+            [
+                lambda stmt, params: _FakeResult(rows=[(777,)]),
+                lambda stmt, params: _FakeResult(rows=[]),
+            ]
+        )
         repo = NormalizationRepository(conn, document_id="doc-1")
 
         with pytest.raises(NormalizationStateError):

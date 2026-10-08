@@ -10,11 +10,10 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from dmer_common.db.document_routing import DocumentSignalState
-from dmer_common.dto import DRIVER_DECISION_EVENT, event_message_id
-
 import workflow_orchestrator.activities.manual_review as review
 import workflow_orchestrator.activities.signal_driver as signal
+from dmer_common.db.document_routing import DocumentSignalState
+from dmer_common.dto import DRIVER_DECISION_EVENT, event_message_id
 from workflow_orchestrator.activities._runtime import poison_as_result
 
 DOC_ID = "123e4567-e89b-12d3-a456-426655440000"

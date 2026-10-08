@@ -128,8 +128,10 @@ def _driver_group(blob_name: str) -> str | None:
 
 def _licence(group: str) -> str:
     # A top-level blob keeps the licence the original mock gave it.
-    seed = _guid(group) if _is_single_blob(group) else str(
-        uuid.uuid5(uuid.NAMESPACE_URL, f"mock-mercury-driver/{group}")
+    seed = (
+        _guid(group)
+        if _is_single_blob(group)
+        else str(uuid.uuid5(uuid.NAMESPACE_URL, f"mock-mercury-driver/{group}"))
     )
     return str(int(seed.replace("-", "")[:12], 16) % 10_000_000).zfill(7)
 
@@ -197,14 +199,18 @@ def _batch_record(blob, document_url: str, group_documents: list[dict]) -> dict:
         # The batch shape's driver documents keep their own key name and dps_date.
         documents = [{"dps_date": "", **d} for d in group_documents]
         driver = {**_driver_identity(group), "documents": documents}
-    case = _case(group) if group is not None else {
-        "case_id": f"C{guid[:8].upper()}",
-        "case_title": f"{_stem(blob.name)} - RSBC - 1",
-        "case_type": "RSBC",
-        "case_priority": "Regular",
-        "case_owner": "Team - Intake",
-        "case_status": "Open Pending Submission",
-    }
+    case = (
+        _case(group)
+        if group is not None
+        else {
+            "case_id": f"C{guid[:8].upper()}",
+            "case_title": f"{_stem(blob.name)} - RSBC - 1",
+            "case_type": "RSBC",
+            "case_priority": "Regular",
+            "case_owner": "Team - Intake",
+            "case_status": "Open Pending Submission",
+        }
+    )
     return {
         "dps_queue": "General",
         "document_guid": guid,
@@ -233,10 +239,14 @@ def _documents_by_group(service: BlobServiceClient, blobs: list, now: datetime):
     return urls, groups
 
 
-@app.route(route="mercury/documents", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
+@app.route(
+    route="mercury/documents", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS
+)
 def mercury_documents(req: func.HttpRequest) -> func.HttpResponse:
     queue = req.params.get("queue", "BOTH")
-    page_size = max(1, min(_int_param(req, "page_size", _DEFAULT_PAGE_SIZE), _MAX_PAGE_SIZE))
+    page_size = max(
+        1, min(_int_param(req, "page_size", _DEFAULT_PAGE_SIZE), _MAX_PAGE_SIZE)
+    )
     # A non-numeric cursor (e.g. "page2" from the previous static mock, still
     # sitting in a poll_checkpoint row) restarts from the first page.
     offset = max(0, _int_param(req, "cursor", 0))
@@ -254,7 +264,9 @@ def mercury_documents(req: func.HttpRequest) -> func.HttpResponse:
     next_link = None
     if next_offset < len(dmers):
         base_url = req.url.split("/api/")[0]
-        query = urlencode({"queue": queue, "page_size": page_size, "cursor": next_offset})
+        query = urlencode(
+            {"queue": queue, "page_size": page_size, "cursor": next_offset}
+        )
         next_link = f"{base_url}/api/mercury/documents?{query}"
 
     return func.HttpResponse(

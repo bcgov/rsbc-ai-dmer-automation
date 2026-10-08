@@ -6,7 +6,6 @@ worker itself uses to run an orchestrator)."""
 import json
 
 import pytest
-
 import workflow_orchestrator.orchestrators.document_orchestration as orch
 
 INPUT = {

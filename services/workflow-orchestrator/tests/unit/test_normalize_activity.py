@@ -26,12 +26,17 @@ INPUT = {"document_id": DOC_ID, "extracted_blob_url": "https://blob/extracted/do
 def dependencies(monkeypatch):
     repository = SimpleNamespace(
         start_or_resume=AsyncMock(return_value=NormalizationRun(42, 2, None)),
-        succeed=AsyncMock(), fail=AsyncMock(),
+        succeed=AsyncMock(),
+        fail=AsyncMock(),
     )
     engine = SimpleNamespace(dispose=AsyncMock())
     blob = Mock()
-    blob.download.return_value = json.dumps({"fields": {"vision.cataracts": "true"}}).encode()
-    blob.upload_json.side_effect = lambda container, path, obj: f"https://blob/{container}/{path}"
+    blob.download.return_value = json.dumps(
+        {"fields": {"vision.cataracts": "true"}}
+    ).encode()
+    blob.upload_json.side_effect = (
+        lambda container, path, obj: f"https://blob/{container}/{path}"
+    )
     normalize = Mock(return_value={"vision.cataracts": True})
     client_factory = Mock(return_value=object())
 
@@ -43,14 +48,21 @@ def dependencies(monkeypatch):
 
     monkeypatch.setattr(activity, "normalization_session", session)
     monkeypatch.setattr(activity, "_get_async_engine", AsyncMock(return_value=engine))
-    monkeypatch.setattr(activity, "openai_settings", lambda: SimpleNamespace(deployment="test-model"))
+    monkeypatch.setattr(
+        activity, "openai_settings", lambda: SimpleNamespace(deployment="test-model")
+    )
     monkeypatch.setattr(activity, "BlobClient", lambda _: blob)
     monkeypatch.setattr(activity, "OpenAIClient", client_factory)
     monkeypatch.setattr(activity, "normalize_document", normalize)
     monkeypatch.setenv("BLOB_ACCOUNT_URL", "https://blob")
     monkeypatch.setenv("NORMALIZED_DMER_CONTAINER", "normalized-dmer")
-    return SimpleNamespace(repo=repository, engine=engine, blob=blob,
-                           normalize=normalize, client_factory=client_factory)
+    return SimpleNamespace(
+        repo=repository,
+        engine=engine,
+        blob=blob,
+        normalize=normalize,
+        client_factory=client_factory,
+    )
 
 
 def test_success_persists_versioned_artifact_before_atomic_completion(dependencies):
@@ -75,7 +87,9 @@ def test_completed_retry_returns_original_url_without_model_or_blob_io(dependenc
     d = dependencies
     old_url = "https://blob/normalized-dmer/previous-version.json"
     d.repo.start_or_resume.return_value = NormalizationRun(20, 1, old_url)
-    assert asyncio.run(activity.normalize_dmer_activity(INPUT)) == {"normalized_blob_url": old_url}
+    assert asyncio.run(activity.normalize_dmer_activity(INPUT)) == {
+        "normalized_blob_url": old_url
+    }
     d.client_factory.assert_not_called()
     d.blob.download.assert_not_called()
     d.blob.upload_json.assert_not_called()
@@ -102,12 +116,16 @@ def test_concurrent_attempt_is_reported_as_busy_without_processing(dependencies)
 def test_named_section_extraction_layout_reaches_normalization(dependencies):
     d = dependencies
     fields = {"details_of_condition": "synthetic narrative"}
-    d.blob.download.return_value = json.dumps({"top_level": {}, "combined": {"fields": fields}}).encode()
+    d.blob.download.return_value = json.dumps(
+        {"top_level": {}, "combined": {"fields": fields}}
+    ).encode()
     asyncio.run(activity.normalize_dmer_activity(INPUT))
     assert d.normalize.call_args.args[1] == fields
 
 
-def test_invalid_extraction_records_terminal_failure_before_model_or_upload(dependencies):
+def test_invalid_extraction_records_terminal_failure_before_model_or_upload(
+    dependencies,
+):
     d = dependencies
     d.blob.download.return_value = b'{"fields": ["not a mapping"]}'
     with pytest.raises(NormalizationValidationError):
@@ -129,7 +147,9 @@ def test_validation_error_is_recorded_without_clinical_text_or_masking(dependenc
     d.repo.succeed.assert_not_awaited()
 
 
-def test_uncertain_commit_can_resume_persisted_success_without_reprocessing(dependencies):
+def test_uncertain_commit_can_resume_persisted_success_without_reprocessing(
+    dependencies,
+):
     d = dependencies
     url = f"https://blob/normalized-dmer/{DOC_ID}/runs/42/normalized.json"
 
@@ -141,7 +161,9 @@ def test_uncertain_commit_can_resume_persisted_success_without_reprocessing(depe
     with pytest.raises(activity.NormalizationActivityError) as error:
         asyncio.run(activity.normalize_dmer_activity(INPUT))
     assert "private SQL parameters" not in str(error.value)
-    assert asyncio.run(activity.normalize_dmer_activity(INPUT)) == {"normalized_blob_url": url}
+    assert asyncio.run(activity.normalize_dmer_activity(INPUT)) == {
+        "normalized_blob_url": url
+    }
     assert d.normalize.call_count == 1
     assert d.blob.upload_json.call_count == 1
 
@@ -154,4 +176,7 @@ def test_functions_host_registers_activity_by_its_orchestration_name():
     functions = app.get_functions()
     assert [function.get_function_name() for function in functions] == ["NormalizeDmer"]
     bindings = json.loads(functions[0].get_function_json())["bindings"]
-    assert any(binding["type"] == "activityTrigger" and binding["name"] == "payload" for binding in bindings)
+    assert any(
+        binding["type"] == "activityTrigger" and binding["name"] == "payload"
+        for binding in bindings
+    )

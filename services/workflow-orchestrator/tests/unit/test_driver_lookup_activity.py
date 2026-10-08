@@ -11,6 +11,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+import workflow_orchestrator.activities.driver_lookup as activity
 from dmer_common.config import MercuryDriverSettings
 from dmer_common.db.driver_lookup import (
     DRIVER_AMBIGUOUS,
@@ -22,8 +23,6 @@ from dmer_common.db.driver_lookup import (
     DriverLookupOutcome,
     DriverLookupRun,
 )
-
-import workflow_orchestrator.activities.driver_lookup as activity
 
 DOC_ID = "123e4567-e89b-12d3-a456-426655440000"
 DRIVER_KEY = "74f5a6ce-575a-4689-a553-99f50c24ca15"

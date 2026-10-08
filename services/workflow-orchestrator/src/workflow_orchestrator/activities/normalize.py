@@ -52,12 +52,22 @@ def _input(payload: dict) -> tuple[str, str]:
             raise TypeError
         document_id = str(UUID(document_id))
     except (ValueError, TypeError):
-        raise NormalizationValidationError("Normalize input requires a document UUID") from None
+        raise NormalizationValidationError(
+            "Normalize input requires a document UUID"
+        ) from None
     if not isinstance(blob_url, str):
-        raise NormalizationValidationError("Normalize input requires an extracted blob URL")
+        raise NormalizationValidationError(
+            "Normalize input requires an extracted blob URL"
+        )
     parsed = urlparse(blob_url)
-    if parsed.scheme not in ("https", "http") or not parsed.netloc or not parsed.path.strip("/"):
-        raise NormalizationValidationError("Normalize input requires an extracted blob URL")
+    if (
+        parsed.scheme not in ("https", "http")
+        or not parsed.netloc
+        or not parsed.path.strip("/")
+    ):
+        raise NormalizationValidationError(
+            "Normalize input requires an extracted blob URL"
+        )
     return document_id, blob_url
 
 
@@ -68,11 +78,15 @@ def _extracted_fields(content: bytes) -> dict:
         if not isinstance(extraction, dict):
             raise TypeError
         combined = extraction.get("combined", extraction)
-        if not isinstance(combined, dict) or not isinstance(combined.get("fields"), dict):
+        if not isinstance(combined, dict) or not isinstance(
+            combined.get("fields"), dict
+        ):
             raise TypeError
         return combined["fields"]
     except (ValueError, UnicodeError, TypeError):
-        raise NormalizationValidationError("Invalid combined extraction artifact") from None
+        raise NormalizationValidationError(
+            "Invalid combined extraction artifact"
+        ) from None
 
 
 async def normalize_dmer_activity(payload: dict) -> dict:
@@ -111,33 +125,47 @@ async def normalize_dmer_activity(payload: dict) -> dict:
                         normalized,
                     )
                     await repository.succeed(
-                        run.run_id, ended_at=datetime.now(UTC),
-                        output_blob_url=output_url, model_version=model_version,
+                        run.run_id,
+                        ended_at=datetime.now(UTC),
+                        output_blob_url=output_url,
+                        model_version=model_version,
                     )
                     _log.info("normalize: succeeded", extra={"run_id": run.run_id})
                     return {"normalized_blob_url": output_url}
                 except Exception as exc:
                     try:
                         await repository.fail(
-                            run.run_id, ended_at=datetime.now(UTC),
+                            run.run_id,
+                            ended_at=datetime.now(UTC),
                             error_code=type(exc).__name__,
                             error_detail="Normalization attempt failed; see error_code.",
                         )
-                    except Exception:  # noqa: BLE001 - preserve original failure without logging payloads
+                    except Exception:  # noqa: BLE001 - keep the original failure
                         _log.error("normalize: unable to record failed attempt")
                     raise
         except NormalizationValidationError:
-            raise NormalizationValidationError("Normalization input or output failed validation") from None
-        except (NormalizationBusyError, NormalizationNotReadyError, NormalizationStateError):
+            raise NormalizationValidationError(
+                "Normalization input or output failed validation"
+            ) from None
+        except (
+            NormalizationBusyError,
+            NormalizationNotReadyError,
+            NormalizationStateError,
+        ):
             raise
-        except Exception as exc:  # noqa: BLE001 - sanitize dependency errors before Durable serialization
-            _log.error("normalize: operational failure", extra={"error_code": type(exc).__name__})
-            raise NormalizationActivityError("Normalization dependency or persistence failure") from None
+        except Exception as exc:  # noqa: BLE001 - sanitize before Durable serialization
+            _log.error(
+                "normalize: operational failure",
+                extra={"error_code": type(exc).__name__},
+            )
+            raise NormalizationActivityError(
+                "Normalization dependency or persistence failure"
+            ) from None
         finally:
             if engine is not None:
                 try:
                     await engine.dispose()
-                except Exception:  # noqa: BLE001 - cleanup must not replace an activity result/error
+                except Exception:  # noqa: BLE001 - cleanup must not replace a result
                     _log.error("normalize: unable to dispose database engine")
 
 
