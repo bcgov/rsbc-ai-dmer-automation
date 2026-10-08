@@ -58,6 +58,7 @@ from .prompts import (
     CATEGORY_SYSTEM_PROMPT,
     build_analysis_prompt,
 )
+from .rules_input import PASSTHROUGH_FIELD_TYPES
 from .schema import (
     ALWAYS_ANALYZE_CATEGORIES,
     CATEGORY_CONDITIONS,
@@ -135,6 +136,22 @@ def _to_bool(value: object) -> bool:
     return False
 
 
+def _passthrough_checkbox(name: str, value: object) -> bool:
+    """A pass-through checkbox as the bool the rules expect. DI writes a
+    selection mark it didn't locate as "" -- read as unticked."""
+    if isinstance(value, str):
+        checkbox = _CHECKBOX_STRINGS.get(value.strip().lower())
+        if checkbox is not None:
+            return checkbox
+        if _is_blank(value):
+            _log.info("unlocated checkbox read as unticked", extra={"field": name})
+            return False
+        _log.warning(
+            "unrecognized checkbox value read with _to_bool", extra={"field": name}
+        )
+    return _to_bool(value)
+
+
 def adapt_combined_fields(fields: dict[str, object]) -> dict:
     """Turn di-processor's extraction output into the ``{"dmer": {...}}``
     shape the rest of this pipeline works on. Deterministic; never rejects
@@ -150,12 +167,16 @@ def adapt_combined_fields(fields: dict[str, object]) -> dict:
       analysis model can still read e.g. "approx 35-40%";
       :func:`standardize_field_types` converts them after analysis.
     - Missing text fields become "".
+    - Fields outside this schema that the rules read as-is
+      (:data:`~.rules_input.PASSTHROUGH_FIELD_TYPES`) become the type the
+      rules' input schema expects -- a checkbox DI didn't locate ("") is an
+      unticked one, False; a missing text value is "".
 
-    A field this schema doesn't recognize is passed through unchanged --
-    permissive, matching ``TopLevelExtraction``'s own "kept permissive so a
-    model revision that adds fields does not break parsing" design -- except
-    that a checkbox value ("selected"/"unselected"/"true"/"false") still
-    becomes a bool.
+    Any other field this schema doesn't recognize is passed through
+    unchanged -- permissive, matching ``TopLevelExtraction``'s own "kept
+    permissive so a model revision that adds fields does not break parsing"
+    design -- except that a checkbox value ("selected"/"unselected"/"true"/
+    "false") still becomes a bool.
     """
     dmer: dict[str, object] = {}
     for key, value in fields.items():
@@ -163,7 +184,12 @@ def adapt_combined_fields(fields: dict[str, object]) -> dict:
         if name != key and _is_blank(value) and not _is_blank(dmer.get(name)):
             continue  # a blank alias never overwrites a real value
         cfg = CONDITIONS.get(name)
-        if cfg is None:
+        passthrough = PASSTHROUGH_FIELD_TYPES.get(name) if cfg is None else None
+        if passthrough == "bool":
+            dmer[name] = _passthrough_checkbox(name, value)
+        elif passthrough == "str":
+            dmer[name] = "" if value is None else str(value)
+        elif cfg is None:
             # Not a schema field, but a DI checkbox is still a checkbox.
             checkbox = (
                 _CHECKBOX_STRINGS.get(value.strip().lower())
@@ -1933,6 +1959,9 @@ def apply_rule_engine_input_formats(dmer_result: dict) -> dict:
       without a guide number has the key removed rather than blanked.
     - ``type`` and ``current_licence_class``: see :func:`normalize_dmer_type`
       and :func:`normalize_licence_class`.
+
+    Fields passed straight through from DI were already given the rules'
+    types by :func:`adapt_combined_fields` (``rules_input.py``).
 
     Must run after every step that reads the raw guide text
     (check_guide_matching, check_diabetes_guide_9_1).

@@ -76,6 +76,33 @@ def test_adapt_combined_fields_accepts_real_bool_too():
     assert adapted["dmer"]["vision.cataracts"] is True
 
 
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("", False),  # DI didn't locate the mark -- the 2026-10-05 failures
+        (None, False),
+        ("selected", True),
+        ("unselected", False),
+        ("true", True),
+        ("false", False),
+        (True, True),
+    ],
+)
+def test_adapt_combined_fields_types_passthrough_checkboxes_for_the_rules(
+    raw, expected
+):
+    # GIVEN a checkbox the rules read but the normalization schema doesn't list
+    dmer = adapt_combined_fields({"hearing.no_hearing_aid": raw})["dmer"]
+    # THEN it is the bool the rules' input schema requires
+    assert dmer["hearing.no_hearing_aid"] is expected
+
+
+def test_adapt_combined_fields_types_passthrough_text_for_the_rules():
+    dmer = adapt_combined_fields({"dob": None, "general.other": "text"})["dmer"]
+    assert dmer["dob"] == ""
+    assert dmer["general.other"] == "text"
+
+
 # ---------------------------------------------------------------------------
 # NYHA class
 # ---------------------------------------------------------------------------
