@@ -11,7 +11,7 @@ dependencies = [
     "azure-ai-documentintelligence>=1.0,<2",
     "openai>=1.40",
     "tenacity>=8,<10",
-    "SQLAlchemy>=2.0,<3",
+    "SQLAlchemy[asyncio]>=2.0,<2.1",
     "asyncpg>=0.29",
     "python-dateutil>=2.8,<3",
     # GoRules ZEN. Pinned to a minor: rules.json was written and tested against

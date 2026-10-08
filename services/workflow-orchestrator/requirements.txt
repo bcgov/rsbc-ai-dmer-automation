@@ -1,7 +1,7 @@
 # Runtime dependencies for this Function App
 azure-functions
 azure-functions-durable
-sqlalchemy
+sqlalchemy[asyncio]>=2.0,<2.1
 asyncpg
 azure-identity
 # dmer_common has no PyPI/registry presence (private, unpublished) -- Azure's
