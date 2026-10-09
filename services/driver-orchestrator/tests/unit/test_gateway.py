@@ -250,3 +250,34 @@ def test_summary_has_no_clinical_text():
     batch = decide([_doc("a", outcome="PU"), _doc("b", day=2, outcome="PU")])
     assert "FAKE reason" not in repr(batch.summary)
     assert batch.summary["outcome_counts"] == {"PU": 2}
+
+
+# --- driver mapping (I-11) ------------------------------------------------------
+
+
+def _with_driver(doc, resolved_by):
+    return DocumentFacts(
+        **{**doc.__dict__, "driver_key": "driver-1", "driver_resolved_by": resolved_by}
+    )
+
+
+def test_driver_matched_from_licence_is_proposed_for_mapping():
+    (d,) = decide([_with_driver(_doc("a"), "LICENCE_LOOKUP")]).decisions
+    assert (d.driver_mapped, d.proposed_driver_key) == (False, "driver-1")
+    assert any("mapping to the driver's file proposed" in n for n in d.reason["notes"])
+
+
+def test_mercury_supplied_driver_is_already_mapped():
+    (d,) = decide([_with_driver(_doc("a"), "MERCURY_SUPPLIED")]).decisions
+    assert (d.driver_mapped, d.proposed_driver_key) == (True, None)
+
+
+def test_mapping_is_proposed_on_every_path():
+    batch = decide(
+        [
+            _with_driver(_doc("old", day=1), "LICENCE_LOOKUP"),
+            _with_driver(_doc("new", day=2), "LICENCE_LOOKUP"),
+        ]
+    )
+    assert {d.proposed_driver_key for d in batch.decisions} == {"driver-1"}
+    assert batch.summary["driver_mapping_proposed_count"] == 2

@@ -51,6 +51,10 @@ class DocumentFacts:
     comparison_hash: str | None
     comparison_fields: dict[str, Any] | None
     rule: RuleOutcome | None
+    driver_key: str | None = None
+    # How Driver Lookup found the driver: MERCURY_SUPPLIED (Mercury named
+    # them) or LICENCE_LOOKUP (matched from the licence read off the page).
+    driver_resolved_by: str | None = None
 
 
 @dataclass(frozen=True)
@@ -63,6 +67,11 @@ class DocumentDecision:
     is_duplicate: bool = False  # True only when the copy is to be rejected in Mercury
     duplicate_of_document_id: str | None = None
     superseded_by_cutoff_rule: bool = False
+    # True when Mercury already links the DMER to the driver. When the driver
+    # was matched from the page's licence, False with proposed_driver_key set,
+    # so Post-Processing maps the driver in Mercury (I-11).
+    driver_mapped: bool = False
+    proposed_driver_key: str | None = None
     reason: dict[str, Any] = field(default_factory=dict)  # -> decision_reason (jsonb)
 
 

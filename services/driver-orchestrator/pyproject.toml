@@ -3,7 +3,9 @@ name = "driver-orchestrator"
 version = "0.1.0"
 description = "Stage 4 per-driver join: Decision Gateway + Post-Processing. See docs/development/stages/06-driver-orchestration.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "dmer-common",
+]
 
 [project.optional-dependencies]
 dev = [

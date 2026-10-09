@@ -20,6 +20,9 @@ Rules follow the Intake business sign-off (Sep 29, 2026; architecture v2.1
    other, every copy is IN, with the fields that differ in the reason.
 5. **Single document.** The rule engine outcome is kept.
 
+On every decision, a driver matched from the page's licence (Driver Lookup's
+``LICENCE_LOOKUP``) is proposed for mapping in Mercury (I-11).
+
 Where the sign-off is silent or an answer is pending, the safe default is IN
 (open questions I-19 to I-21 in the architecture document).
 
@@ -48,6 +51,12 @@ NOTE_ALL_CUT_OFF = (
 )
 NOTE_NO_RULE_OUTCOME = "No rule engine outcome recorded: sent for manual review."
 NOTE_DIFFERING = "Waiting DMERs for this driver differ: sent for manual review."
+NOTE_DRIVER_PROPOSED = (
+    "Driver matched from the licence on the DMER; mapping to the driver's "
+    "file proposed."
+)
+MERCURY_SUPPLIED = "MERCURY_SUPPLIED"
+LICENCE_LOOKUP = "LICENCE_LOOKUP"
 NOTE_COPIES_DISAGREE = (
     "Duplicate copies received different rule engine outcomes; the "
     "highest-priority outcome was applied and no copy was rejected."
@@ -237,6 +246,10 @@ def _decision(
     superseded: bool = False,
     **extra: Any,
 ) -> DocumentDecision:
+    driver_mapped = doc.driver_resolved_by == MERCURY_SUPPLIED
+    proposed = doc.driver_key if doc.driver_resolved_by == LICENCE_LOOKUP else None
+    if proposed:
+        notes = (*notes, NOTE_DRIVER_PROPOSED)
     reason: dict[str, Any] = {"path": path.value, "notes": list(notes)}
     if doc.rule is not None:
         reason["rule_outcome"] = doc.rule.outcome_code
@@ -250,6 +263,8 @@ def _decision(
         is_duplicate=is_duplicate,
         duplicate_of_document_id=duplicate_of,
         superseded_by_cutoff_rule=superseded,
+        driver_mapped=driver_mapped,
+        proposed_driver_key=proposed,
         reason=reason,
     )
 
@@ -262,6 +277,9 @@ def _summary(decisions: Sequence[DocumentDecision]) -> dict[str, Any]:
         "rejected_count": sum(d.is_duplicate for d in decisions),
         "cut_off_count": paths[Path.ALL_CUT_OFF] + paths[Path.CUT_OFF_SUPERSEDED],
         "attached_report_count": paths[Path.ATTACHED_REPORT],
+        "driver_mapping_proposed_count": sum(
+            d.proposed_driver_key is not None for d in decisions
+        ),
         "outcome_counts": dict(Counter(d.outcome_code for d in decisions)),
         "paths": dict(paths),
         "retained_document_ids": [
