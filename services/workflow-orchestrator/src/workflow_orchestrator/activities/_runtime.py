@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import functools
 import os
 from collections.abc import Awaitable
@@ -23,9 +24,17 @@ async def run_sync(fn, *args: Any, **kwargs: Any) -> Any:
     Functions app; unlike di-processor's dedicated-consumer Container App,
     where a blocking call in an async method doesn't carry the same
     other-invocations-blocked risk).
+
+    Runs in a copy of the caller's context (as ``asyncio.to_thread`` does;
+    ``run_in_executor`` alone doesn't), so the bound ``document_id`` reaches
+    the logs the blocking call writes -- e.g. the whole normalization
+    pipeline.
     """
     loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(None, functools.partial(fn, *args, **kwargs))
+    context = contextvars.copy_context()
+    return await loop.run_in_executor(
+        None, functools.partial(context.run, fn, *args, **kwargs)
+    )
 
 
 async def get_async_engine() -> AsyncEngine:

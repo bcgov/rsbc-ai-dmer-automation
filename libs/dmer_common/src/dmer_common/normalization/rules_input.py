@@ -60,6 +60,7 @@ PASSTHROUGH_FIELD_TYPES: Final[dict[str, str]] = {
 # which writes an ISO date or "".
 DERIVED_FIELDS: Final[frozenset[str]] = frozenset(
     {
+        "cns.cognitiveimpairment_s7_15_suspected",
         "diabetes_guide_9_1",
         "endocrine.diabetes_treatment_not_indicated",
         "guide",

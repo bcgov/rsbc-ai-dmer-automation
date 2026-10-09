@@ -7,7 +7,7 @@ from collections.abc import Callable, Collection
 
 from ..openai_client import OpenAIClient
 from ..telemetry import get_logger
-from .unmask import restore_masked, source_strings
+from .unmask import restore_masked, source_fields, source_strings
 
 _log = get_logger(__name__)
 
@@ -61,6 +61,7 @@ def call_model[T](
     names it may return) -- see :mod:`.unmask`.
     """
     texts = source_strings(source)
+    fields = source_fields(source)
     for attempt in range(1, MODEL_ATTEMPTS + 1):
         raw = openai.complete(
             messages=messages,
@@ -68,7 +69,9 @@ def call_model[T](
             temperature=temperature,
         )
         try:
-            response = restore_masked(model_object(raw), texts, known_keys, step=step)
+            response = restore_masked(
+                model_object(raw), texts, known_keys, step=step, fields=fields
+            )
             return accept(response)
         except (NormalizationValidationError, InvalidModelOutput) as exc:
             _log.warning(

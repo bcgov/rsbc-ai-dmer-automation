@@ -22,13 +22,15 @@ outcomes only -- never the masked or restored text (architecture §9.2).
 """
 
 import re
-from collections.abc import Collection, Iterable
+from collections.abc import Collection, Iterable, Mapping
 
 from ..telemetry import get_logger
 
 _log = get_logger(__name__)
 
-MASK_RE = re.compile(r"\*{3,}")
+# Two or more: the deployment masks short spans too ("**/16**" for "20/16-2").
+# A single "*" is left alone -- it is common in real text ("CP*").
+MASK_RE = re.compile(r"\*{2,}")
 # Neighbouring words used as literal context around a masked run.
 CONTEXT_WORDS = 3
 # Quote marks and "field_name:" labels separate an evidence string into parts
@@ -190,6 +192,34 @@ def _restore_key(
     return restored or key
 
 
+def source_fields(source: object) -> dict[str, str]:
+    """Field name -> non-blank string value of every field in *source* (a
+    DMER dict, ``{"dmer": {...}}``, or a list holding them)."""
+    if isinstance(source, (list, tuple)):
+        merged: dict[str, str] = {}
+        for item in source:
+            merged.update(source_fields(item))
+        return merged
+    if not isinstance(source, dict):
+        return {}
+    if isinstance(source.get("dmer"), dict):
+        return source_fields(source["dmer"])
+    return {k: v for k, v in source.items() if isinstance(v, str) and v.strip()}
+
+
+# "field.name:" labels inside an evidence string ('a.b: "quote"; c.d: true').
+_EVIDENCE_LABEL_RE = re.compile(r"(?:^|(?<=[\s;]))([A-Za-z_][\w./]*):(?=\s|$)")
+
+
+def _field_texts(name: str, value: str, fields: Mapping[str, str]) -> list[str]:
+    """The input text a value most likely came from: the field's own input
+    value, or -- for an evidence string -- the fields its labels name."""
+    if name.endswith("_evidence"):
+        labels = _EVIDENCE_LABEL_RE.findall(value)
+        return [fields[label] for label in labels if label in fields]
+    return [fields[name]] if name in fields else []
+
+
 def restore_masked(
     response: object,
     texts: Iterable[str],
@@ -197,11 +227,21 @@ def restore_masked(
     *,
     step: str,
     field: str = "",
+    fields: Mapping[str, str] | None = None,
 ) -> object:
     """Return *response* with masked keys and values restored where the
     call's input (*texts*) or its allowed field names (*known_keys*)
-    identify exactly one original."""
+    identify exactly one original.
+
+    With *fields* (the input's field -> value), a masked value is first
+    matched against the same field's input value only -- a short value like
+    ``"20***"`` with no words around it is ambiguous across the whole input
+    but exact against its own field ("20/25"). Field names are restored
+    first (rarely masked), so the field is known by then. Only if that
+    leaves a mask does the whole-input search run.
+    """
     texts = list(texts)
+    fields = fields or {}
     if isinstance(response, dict):
         restored = {}
         for key, value in response.items():
@@ -211,14 +251,19 @@ def restore_masked(
                 if name != key and name in response:
                     name = key  # the real key is already there; keep both apart
             restored[name] = restore_masked(
-                value, texts, known_keys, step=step, field=str(name)
+                value, texts, known_keys, step=step, field=str(name), fields=fields
             )
         return restored
     if isinstance(response, list):
         return [
-            restore_masked(item, texts, known_keys, step=step, field=field)
+            restore_masked(
+                item, texts, known_keys, step=step, field=field, fields=fields
+            )
             for item in response
         ]
     if isinstance(response, str):
+        own = _field_texts(field, response, fields) if has_mask(response) else []
+        if own:
+            response = _restore_text(response, own, step, field)
         return _restore_text(response, texts, step, field)
     return response

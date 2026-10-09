@@ -155,6 +155,7 @@ One row **per evaluation, not per document** — a re-run creates a new row; not
 | `selected_reason` | text | |
 | `priority_rank` | int | |
 | `evaluated_at` | timestamptz | |
+| `fit_letter` | bool, nullable | V0007. A FIT letter applies to the outcome: true when any candidate at the engine's winning action has `fit_letter` (the per-candidate flags are in `all_outcomes`). Null on evaluations recorded before V0007. |
 
 ### `driver_evaluation_document`
 
@@ -171,9 +172,23 @@ incremented once per document however often the Rule Engine activity is retried 
 
 One row per published `rules.json`, so a past decision can be reproduced exactly.
 
+**Written only by maintenance** — a person or agent publishing or correcting `rules.json` — never by
+the pipeline. The Rule Engine activity looks up the active ruleset's row by `checksum` and refuses to
+evaluate (`RulesetUnavailableError`, logged at ERROR with the checksum) when none matches.
+
+- **`version` naming:** the date of the procedures the rules implement, ISO format —
+  `2026-06-12` for the Triage Sort Procedures of 12 Jun 2026. A later published file for the same
+  procedures adds a revision: `2026-06-12.2`, `2026-06-12.3`, … Unique per file, sorts as text,
+  one spelling; display it as "Jun 12 2026" where a human reads it. V0008 enforces the format
+  (`ck_rules_version_version`) and folded the activity's earlier `sha256-…` registrations into `2026-06-12`.
+- **During development** corrections to the JSON keep the same version: maintenance uploads the
+  file and updates that row's `checksum` (and `blob_url`) — no new row. The exact file behind
+  an older dev evaluation is therefore not kept.
+- **In production** every change to the file in Blob Storage gets a new version row.
+
 | Column | Type | Notes |
 |---|---|---|
-| `version` | text PK | |
+| `version` | text PK | ISO procedures date, plus `.N` for a later file of the same procedures — e.g. `2026-06-12`, `2026-06-12.2`. |
 | `blob_url` | text | Points into the `rules` container (see `azure-blob-storage.md`). |
 | `checksum` | char(64) | |
 | `activated_at` / `activated_by` | timestamptz, text | |

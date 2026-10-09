@@ -473,7 +473,7 @@ ROWS = [  # (label, table, row, licence, fields, expected)
     (
         "HbA1C 12.5 (decimal), no concerns",
         "Diabetes",
-        10,
+        14,
         N,
         {"endocrine.HbA1C": 12.5},
         True,
@@ -481,7 +481,7 @@ ROWS = [  # (label, table, row, licence, fields, expected)
     (
         "diabetes insipidus",
         "Diabetes",
-        9,
+        13,
         N,
         {"endocrine.diabetes_insipidus": True},
         True,
@@ -489,7 +489,7 @@ ROWS = [  # (label, table, row, licence, fields, expected)
     (
         "glucose tolerance",
         "Diabetes",
-        9,
+        13,
         N,
         {"endocrine.glucose_tolerance": True},
         True,
@@ -716,6 +716,38 @@ ROWS = [  # (label, table, row, licence, fields, expected)
         True,
     ),
     (
+        "road test recommended, MoCA 29 but Simard 50 (DMER21)",
+        "CognitiveImpairment",
+        13,
+        N,
+        {
+            "recommendations.road_test_to_assess": True,
+            "cns.moca_score": 29,
+            "cns.simard_score": 50,
+        },
+        False,
+    ),
+    (
+        "road test recommended, no scores",
+        "CognitiveImpairment",
+        13,
+        N,
+        {"recommendations.road_test_to_assess": True},
+        False,
+    ),
+    (
+        "road test recommended, MoCA 28, dementia diagnosed",
+        "CognitiveImpairment",
+        13,
+        N,
+        {
+            "recommendations.road_test_to_assess": True,
+            "cns.moca_score": 28,
+            "cns.dementia": True,
+        },
+        True,
+    ),
+    (
         "CVA, no date, with concern",
         "Cerebrovascular",
         13,
@@ -785,9 +817,9 @@ ROWS = [  # (label, table, row, licence, fields, expected)
         True,
     ),
     (
-        "diabetes on insulin, non-AGE DMER -> R8 fallback",
+        "diabetes on insulin, non-AGE DMER -> R10 IN (insulin, NORMAL)",
         "Diabetes",
-        8,
+        10,
         N,
         {
             "endocrine.diabetes": True,
@@ -810,15 +842,15 @@ ROWS = [  # (label, table, row, licence, fields, expected)
         True,
     ),
     (
-        "guide 9.1A, HIGH -> fallback IN",
+        "guide 9.1A, HIGH -> R9 IN (no treatment / 9.1, HIGH)",
         "Diabetes",
-        8,
+        9,
         H,
         {"guide": "9.1A", "type": "age"},
         True,
     ),
     (
-        "guide 9.1, AGE, NORMAL, stable -> R8 does not also fire",
+        "guide 9.1, AGE, NORMAL, stable -> R8 IN does not also fire",
         "Diabetes",
         8,
         N,
@@ -826,9 +858,9 @@ ROWS = [  # (label, table, row, licence, fields, expected)
         False,
     ),
     (
-        "D4: HIGH, insulin, AGE, no R22 -> fallback",
+        "D4: HIGH, insulin, AGE, no R22 -> R11 IN (insulin, HIGH)",
         "Diabetes",
-        8,
+        11,
         H,
         {
             "endocrine.diabetes": True,
@@ -839,9 +871,9 @@ ROWS = [  # (label, table, row, licence, fields, expected)
         True,
     ),
     (
-        "D6: NORMAL, insulin, AGE, non-compliant -> fallback",
+        "D6: NORMAL, insulin, AGE, non-compliant -> R10 IN (insulin, NORMAL)",
         "Diabetes",
-        8,
+        10,
         N,
         {
             "endocrine.diabetes": True,
@@ -853,9 +885,9 @@ ROWS = [  # (label, table, row, licence, fields, expected)
         True,
     ),
     (
-        "D2: HIGH, oral meds, non-AGE, no concerns -> R8 does not fire",
+        "D2: HIGH, oral meds, non-AGE, no concerns -> R9 IN does not fire",
         "Diabetes",
-        8,
+        9,
         H,
         {
             "endocrine.diabetes": True,
@@ -878,9 +910,9 @@ ROWS = [  # (label, table, row, licence, fields, expected)
         True,
     ),
     (
-        "HIGH, AGE, oral meds + insulin, no R22, no concerns -> fallback IN",
+        "HIGH, AGE, oral meds + insulin, no R22, no concerns -> R11 IN (insulin, HIGH)",
         "Diabetes",
-        8,
+        11,
         H,
         {
             "endocrine.diabetes": True,
@@ -1287,9 +1319,9 @@ ROWS = [  # (label, table, row, licence, fields, expected)
         True,
     ),
     (
-        "DB1 HIGH HbA1C 13 -> R11 (now IN)",
+        "DB1 HIGH HbA1C 13 -> R15 (now IN)",
         "Diabetes",
-        11,
+        15,
         H,
         {"endocrine.HbA1C": 13},
         True,
@@ -1514,7 +1546,32 @@ ROWS = [  # (label, table, row, licence, fields, expected)
         True,
     ),
     (
-        "13 vertigo with warnings, no concerns -> R8 CP",
+        "13 vertigo with warnings, dated, no concerns -> R8 CP",
+        "Vestibular Disorders",
+        8,
+        N,
+        {
+            "vestibular.recurrent_vertigo": True,
+            "vestibular.vertigo_with_warnings": True,
+            "vestibular.vertigo_date": ago(months=8),
+        },
+        True,
+    ),
+    (
+        # The procedures: "No information or under 6 months or has concerns"
+        # -> PR; no date is no information.
+        "vertigo with warnings, no date -> R9 PR",
+        "Vestibular Disorders",
+        9,
+        N,
+        {
+            "vestibular.recurrent_vertigo": True,
+            "vestibular.vertigo_with_warnings": True,
+        },
+        True,
+    ),
+    (
+        "vertigo with warnings, no date -> not R8 CP",
         "Vestibular Disorders",
         8,
         N,
@@ -1522,7 +1579,7 @@ ROWS = [  # (label, table, row, licence, fields, expected)
             "vestibular.recurrent_vertigo": True,
             "vestibular.vertigo_with_warnings": True,
         },
-        True,
+        False,
     ),
     (
         "13 vertigo with warnings, 2 months ago -> R9 PR",
@@ -1721,12 +1778,70 @@ ROWS = [  # (label, table, row, licence, fields, expected)
         True,
     ),
     (
-        "syncope, no date, no concerns -> catch-all IN",
+        # Syncope with no date errs on the side of a concern -- the procedures
+        # don't say what to do without one (dev document c819d07e).
+        "syncope, no date, no concerns -> R71 PR",
+        "Cardiovascular",
+        71,
+        N,
+        {"cardiovascular.syncope": True},
+        True,
+    ),
+    (
+        "syncope, no date, no concerns -> catch-all doesn't fire",
         "Priority",
         11,
         N,
         {"cardiovascular.syncope": True},
+        False,
+    ),
+    (
+        # The procedures pass a repaired aneurysm only once it's past the
+        # post-surgery period; with no surgery date that can't be shown.
+        "repaired aneurysm, no surgery date, N -> R5 PR",
+        "Cerebrovascular",
+        5,
+        N,
+        {
+            "cerebrovascular.cerebral_aneurysm": True,
+            "cerebrovascular.cerebral_aneurysm_repaired": True,
+        },
         True,
+    ),
+    (
+        "repaired aneurysm, no surgery date, N -> not R7 CP",
+        "Cerebrovascular",
+        7,
+        N,
+        {
+            "cerebrovascular.cerebral_aneurysm": True,
+            "cerebrovascular.cerebral_aneurysm_repaired": True,
+        },
+        False,
+    ),
+    (
+        # The procedures pass a repaired aneurysm only once it's past the
+        # post-surgery period; with no surgery date that can't be shown.
+        "repaired aneurysm, no surgery date, H -> R6 PR",
+        "Cerebrovascular",
+        6,
+        H,
+        {
+            "cerebrovascular.cerebral_aneurysm": True,
+            "cerebrovascular.cerebral_aneurysm_repaired": True,
+        },
+        True,
+    ),
+    (
+        "repaired aneurysm, no surgery date, H -> not R8 CP",
+        "Cerebrovascular",
+        8,
+        H,
+        {
+            "cerebrovascular.cerebral_aneurysm": True,
+            "cerebrovascular.cerebral_aneurysm_repaired": True,
+        },
+        False,
     ),
     (
         "non-AAA aneurysm -> catch-all IN",
@@ -1756,7 +1871,7 @@ ROWS = [  # (label, table, row, licence, fields, expected)
     (
         "persistent hypo unawareness, NORMAL, no date -> TCM",
         "Diabetes",
-        17,
+        21,
         N,
         {"endocrine.persistent_hypoglycemic_unawareness": True},
         True,
@@ -1764,7 +1879,7 @@ ROWS = [  # (label, table, row, licence, fields, expected)
     (
         "persistent hypo unawareness, NORMAL, 2 months ago -> CR",
         "Diabetes",
-        18,
+        22,
         N,
         {
             "endocrine.persistent_hypoglycemic_unawareness": True,
@@ -1775,7 +1890,7 @@ ROWS = [  # (label, table, row, licence, fields, expected)
     (
         "persistent hypo unawareness, NORMAL, 1 year ago -> no TCM",
         "Diabetes",
-        17,
+        21,
         N,
         {
             "endocrine.persistent_hypoglycemic_unawareness": True,
@@ -1786,7 +1901,7 @@ ROWS = [  # (label, table, row, licence, fields, expected)
     (
         "persistent hypo unawareness, NORMAL, 1 year ago -> no CR",
         "Diabetes",
-        18,
+        22,
         N,
         {
             "endocrine.persistent_hypoglycemic_unawareness": True,
@@ -1797,15 +1912,15 @@ ROWS = [  # (label, table, row, licence, fields, expected)
     (
         "persistent hypo unawareness, HIGH -> CR",
         "Diabetes",
-        19,
+        23,
         H,
         {"endocrine.persistent_hypoglycemic_unawareness": True},
         True,
     ),
     (
-        "diabetes on insulin, AGE DMER -> R8 does not fire",
+        "diabetes on insulin, AGE DMER, stable -> R10 IN does not fire",
         "Diabetes",
-        8,
+        10,
         N,
         {
             "endocrine.diabetes": True,
@@ -1818,7 +1933,7 @@ ROWS = [  # (label, table, row, licence, fields, expected)
     (
         "diabetes + HbA1C 13 + severe hypo 1 month ago: CR row also collected",
         "Diabetes",
-        16,
+        20,
         N,
         {
             "endocrine.diabetes": True,
@@ -2198,17 +2313,17 @@ EDGE_ROWS = [  # (label, table, row, licence, fields, expected)
         False,
     ),
     (
-        "D5: HIGH, AGE, no treatment ticked -> R8 fallback",
+        "D5: HIGH, AGE, no treatment ticked -> R9 IN (no treatment / 9.1, HIGH)",
         "Diabetes",
-        8,
+        9,
         H,
         {"endocrine.diabetes": True, "endocrine.stable_bg_control": True},
         True,
     ),
     (
-        "D7: NORMAL, AGE, treatment only in text -> R8 fallback",
+        "D7: NORMAL, AGE, treatment only in text -> R12 IN (treatment kind not given)",
         "Diabetes",
-        8,
+        12,
         N,
         {
             "endocrine.diabetes": True,
@@ -2230,9 +2345,9 @@ EDGE_ROWS = [  # (label, table, row, licence, fields, expected)
         True,
     ),
     (
-        "both ticked, NORMAL, AGE, unstable -> R8 IN also fires",
+        "both ticked, NORMAL, AGE, unstable -> R10 IN also fires",
         "Diabetes",
-        8,
+        10,
         N,
         {
             "endocrine.diabetes": True,

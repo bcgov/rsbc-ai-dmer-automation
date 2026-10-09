@@ -70,6 +70,7 @@ from .schema import (
     TYPE_DEFAULTS,
     ConditionCategory,
 )
+from .unmask import has_mask
 
 _log = get_logger(__name__)
 
@@ -1341,8 +1342,57 @@ def analyze_conditions(openai: OpenAIClient, dmer_json: dict) -> dict:
     return updates
 
 
+def _usable_model_value(field: str, value: object) -> bool:
+    """Whether a model value for a non-bool field carries information: not
+    blank, not still masked by the deployment (unmask.py couldn't restore
+    it), and for a date, readable as one (a year or a month at least)."""
+    if _is_empty_value(value) or (isinstance(value, str) and _is_blank(value)):
+        return False
+    if isinstance(value, str) and has_mask(value):
+        return False
+    if "date" in field.lower():
+        parts = _parse_date_parts(value) if isinstance(value, str) else None
+        return parts is not None and (parts[0] is not None or parts[1] is not None)
+    return True
+
+
+def drop_model_removals(source: dict, updates: dict) -> list[dict]:
+    """The model may add or correct a value, never remove one DI extracted.
+
+    Drops from *updates* (in place) every model value that would: a checkbox
+    DI read as ticked set to anything but true, or a filled text, number or
+    date field set to a blank or unreadable value (a date the date pass
+    couldn't read would otherwise be blanked). The DI value then stands --
+    downstream sees no model value for the field, so its source is ``di``.
+    Returns one ``source_kept`` flag per field, so reviewers can see where
+    the model and the form disagreed.
+    """
+    flags = []
+    for field in list(updates):
+        cfg = CONDITIONS.get(field)
+        if cfg is None or field == "details_of_condition":
+            continue
+        kept, proposed = source.get(field), updates[field]
+        if cfg["type"] == "bool":
+            removes = kept is True and proposed is not True
+        else:
+            removes = not _is_blank(kept) and not _usable_model_value(field, proposed)
+        if removes:
+            del updates[field]
+            updates.pop(f"{field}_evidence", None)
+            flags.append(
+                {
+                    "field": field,
+                    "check": "source_kept",
+                    "reason": "model value would remove the extracted value",
+                }
+            )
+    return flags
+
+
 def apply_updates(dmer_data: dict, updates: dict) -> dict:
-    """Merge LLM updates back into the original DMER JSON."""
+    """Merge LLM updates back into the original DMER JSON. Call
+    :func:`drop_model_removals` first: this merge overwrites."""
     updated = deepcopy(dmer_data)
 
     if "dmer" not in updated:
@@ -1662,6 +1712,15 @@ def flag_progressive_eye_condition(dmer_result: dict) -> dict:
     return dmer_result
 
 
+def _evidence_value(value: object) -> str:
+    """A field value as an evidence string shows it: true / "text" / 42."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, str):
+        return json.dumps(value, ensure_ascii=False)
+    return json.dumps(value, ensure_ascii=False, default=str)
+
+
 def check_no_other_conditions(dmer_result: dict) -> dict:
     """Sets no_other_conditions = True when nothing was checked and nothing
     was written: every CONDITIONS boolean is false, every CONDITIONS value
@@ -1680,7 +1739,9 @@ def check_no_other_conditions(dmer_result: dict) -> dict:
     DMER but no chapter rule matched it -> IN") needs this, since the vision
     table fires on acuity alone and a vision-only DMER must not trigger it.
     Section D text alone doesn't count -- the conditions it names are
-    extracted into their own fields.
+    extracted into their own fields. When true,
+    non_vision_condition_indicated_evidence lists the fields that made it
+    so ("sleep.other: \"U\"; cns.epilepsy: true").
     """
     dmer = dmer_result.get("dmer", dmer_result)
     details = dmer.get("details_of_condition")
@@ -1696,9 +1757,16 @@ def check_no_other_conditions(dmer_result: dict) -> dict:
             active_fields.append(field_name)
 
     dmer["no_other_conditions"] = not active_fields and _is_empty_value(details)
-    dmer["non_vision_condition_indicated"] = any(
-        not f.startswith("vision.") for f in active_fields
-    )
+    non_vision = [f for f in active_fields if not f.startswith("vision.")]
+    dmer["non_vision_condition_indicated"] = bool(non_vision)
+    # Why it's true: every non-vision field that counted, as source: value --
+    # the same evidence format the other deterministic rules use.
+    if non_vision:
+        dmer["non_vision_condition_indicated_evidence"] = "; ".join(
+            f"{f}: {_evidence_value(dmer[f])}" for f in non_vision
+        )
+    else:
+        dmer.pop("non_vision_condition_indicated_evidence", None)
 
     if "dmer" in dmer_result:
         dmer_result["dmer"] = dmer
@@ -1862,6 +1930,21 @@ def check_diabetes_guide_9_1(dmer_result: dict) -> dict:
     return dmer_result
 
 
+def check_guide_7_15(dmer_result: dict) -> dict:
+    """Sets cns.cognitiveimpairment_s7_15_suspected: True when the DMER was
+    programmed or issued under BC Guide section 7 or 15 -- the cognitive
+    impairment rows' "issued under s.7 and/or s.15" clause. Guide 15 (Aging
+    Driver) is retired in favour of 7, so both count."""
+    dmer = dmer_result.get("dmer", dmer_result)
+    dmer["cns.cognitiveimpairment_s7_15_suspected"] = parse_guide_section(
+        dmer.get("guide")
+    ) in (7, 15)
+
+    if "dmer" in dmer_result:
+        dmer_result["dmer"] = dmer
+    return dmer_result
+
+
 _DIABETES_TREATMENT_CHECKBOX_FIELDS = (
     "endocrine.diabetes.diet",
     "endocrine.diabetes.oral_meds",
@@ -1950,6 +2033,23 @@ def normalize_licence_class(raw: object) -> str:
     return result
 
 
+_BP_NUMBER_RE = re.compile(r"\d+(?:\.\d+)?")
+
+
+def normalize_blood_pressure(raw: object) -> str:
+    """Blood pressure as "systolic/diastolic" -- the rule engine reads it with
+    ``split(blood_pressure, '/')`` and ``number()``, which fails on anything
+    else (a handwritten "140" over "90" comes back from DI with a newline between them).
+    The first two numbers are used; one number -> "140"; none -> ""."""
+    if raw is None or isinstance(raw, bool):
+        return ""
+    numbers = _BP_NUMBER_RE.findall(str(raw))[:2]
+    result = "/".join(numbers)
+    if result != str(raw).strip():
+        _log.info("blood pressure standardized", extra={"numbers": len(numbers)})
+    return result
+
+
 def apply_rule_engine_input_formats(dmer_result: dict) -> dict:
     """Final shape fixes so the output passes the rule engine's input schema.
 
@@ -1959,12 +2059,13 @@ def apply_rule_engine_input_formats(dmer_result: dict) -> dict:
       without a guide number has the key removed rather than blanked.
     - ``type`` and ``current_licence_class``: see :func:`normalize_dmer_type`
       and :func:`normalize_licence_class`.
+    - ``blood_pressure``: see :func:`normalize_blood_pressure`.
 
     Fields passed straight through from DI were already given the rules'
     types by :func:`adapt_combined_fields` (``rules_input.py``).
 
     Must run after every step that reads the raw guide text
-    (check_guide_matching, check_diabetes_guide_9_1).
+    (check_guide_matching, check_diabetes_guide_9_1, check_guide_7_15).
     """
     dmer = dmer_result.get("dmer", dmer_result)
     dmer["restrictions"] = normalize_restrictions(dmer.get("restrictions"))
@@ -1973,6 +2074,8 @@ def apply_rule_engine_input_formats(dmer_result: dict) -> dict:
         dmer["current_licence_class"] = normalize_licence_class(
             dmer["current_licence_class"]
         )
+    if "blood_pressure" in dmer:
+        dmer["blood_pressure"] = normalize_blood_pressure(dmer["blood_pressure"])
     guide = parse_guide_number(dmer.get("guide"))
     if guide is None:
         dmer.pop("guide", None)
@@ -1987,6 +2090,69 @@ def apply_rule_engine_input_formats(dmer_result: dict) -> dict:
 # ---------------------------------------------------------------------------
 # Output validation
 # ---------------------------------------------------------------------------
+
+
+# Concern flags Section C "Yes" doesn't set: priority.has_concerns is a written
+# concern about driving (Section C alone is Priority's own fallback row), and
+# the dwarfism concern stands for vehicle modifications / limb deficiency.
+_SECTION_C_EXCLUDED = frozenset(
+    {"priority.has_concerns", "musculoskeletal.dwarfism_has_concerns"}
+)
+# Concern flags without a single parent condition field.
+_SECTION_C_PARENTS: dict[str, tuple[str, ...]] = {
+    "cerebrovascular.cva_tia_has_concern": (
+        "cerebrovascular.cva",
+        "cerebrovascular.tia",
+    ),
+    "respiratory.has_concerns": tuple(
+        f
+        for f, cfg in CONDITIONS.items()
+        if f.startswith("respiratory.")
+        and cfg["type"] == "bool"
+        and not _is_concern_field(f)
+    ),
+}
+
+
+def apply_section_c_concerns(dmer: dict, source: dict) -> list[dict]:
+    """Section C "Yes" is a concern for every condition on the DMER.
+
+    The procedures (Triage Sort Procedures, p.1): "With concerns: May be
+    written in section D or they could be the box checked in section C."
+    The analysis prompt asks the model for this, but the evidence check can
+    revert it -- so when extraction read ``opinion.yes`` as ticked, every
+    condition present gets its concern flag set here, deterministically and
+    after the evidence check. Returns one ``section_c`` flag per concern set.
+    """
+    if source.get("opinion.yes") is not True:
+        return []
+    flags = []
+    known = set(CONDITIONS)
+    for field, cfg in CONDITIONS.items():
+        if (
+            cfg["type"] != "bool"
+            or not _is_concern_field(field)
+            or field in _SECTION_C_EXCLUDED
+            or dmer.get(field) is True
+        ):
+            continue
+        parents = _SECTION_C_PARENTS.get(field)
+        if parents is None:
+            parent = _find_parent_field(field, known)
+            parents = (parent,) if parent else ()
+        if not any(dmer.get(p) is True for p in parents):
+            continue
+        dmer[field] = True
+        dmer[f"{field}_evidence"] = "opinion.yes: true"
+        flags.append(
+            {
+                "field": field,
+                "check": "section_c",
+                "reason": "Section C 'Yes' is a concern for each condition present",
+                "action": "applied",
+            }
+        )
+    return flags
 
 
 def revert_unsupported_concerns(
@@ -2205,15 +2371,19 @@ def field_sources(
     - ``text_fallback``: set from the source text because the model returned
       nothing for it (:func:`apply_text_fallbacks`).
     - ``rule``: a deterministic rule set or changed it (e.g. an alcohol
-      withdrawal seizure -> provoked seizure, no_other_conditions).
+      withdrawal seizure -> provoked seizure, no_other_conditions, a
+      Section C "Yes" concern -- :func:`apply_section_c_concerns`).
     - ``default``: nothing set it; the schema default.
     """
     fallback = {f["field"] for f in flags if f["check"] == "text_fallback"}
     reverted = {f["field"] for f in flags if f.get("action") == "reverted"}
+    section_c = {f["field"] for f in flags if f["check"] == "section_c"}
     sources = {}
     for field, cfg in CONDITIONS.items():
         value, is_bool = dmer.get(field), cfg["type"] == "bool"
-        if field in fallback:
+        if field in section_c:
+            origin = "rule"
+        elif field in fallback:
             origin = "text_fallback"
         elif field in reverted:
             origin = "model_reverted"
@@ -2293,6 +2463,7 @@ def normalize_document(
     """
     dmer_input = flag_monocular_from_bad_eye(adapt_combined_fields(extracted_fields))
     updates = analyze_conditions(openai, dmer_input)
+    source_kept_flags = drop_model_removals(dmer_input["dmer"], updates["dmer"])
     result = apply_updates(dmer_input, updates)
     fallback_flags = apply_text_fallbacks(
         result["dmer"], dmer_input["dmer"], updates["dmer"]
@@ -2307,6 +2478,7 @@ def normalize_document(
     result = check_no_other_conditions(result)
     result = check_guide_matching(result)
     result = check_diabetes_guide_9_1(result)
+    result = check_guide_7_15(result)
     result = check_diabetes_treatment_not_indicated(result)
     result = apply_rule_engine_input_formats(result)
     result = normalize_dates(result)
@@ -2331,8 +2503,11 @@ def normalize_document(
         for field in missing_evidence(dmer)
     ]
     flags += fallback_flags
+    flags += source_kept_flags
     flags += check_evidence(openai, dmer_input["dmer"], updates["dmer"], dmer)
     revert_unsupported_concerns(dmer, dmer_input["dmer"], updates["dmer"], flags)
+    # After the evidence check, so a Section C concern can't be reverted.
+    flags += apply_section_c_concerns(dmer, dmer_input["dmer"])
     dmer["evidence_flags"] = flags
     dmer["field_sources"] = field_sources(
         dmer_input["dmer"], updates["dmer"], dmer, flags

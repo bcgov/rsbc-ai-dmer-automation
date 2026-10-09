@@ -23,10 +23,12 @@ from dmer_common.normalization.pipeline import (
     apply_visual_acuity_thresholds,
     check_diabetes_guide_9_1,
     check_diabetes_treatment_not_indicated,
+    check_guide_7_15,
     check_guide_matching,
     check_no_other_conditions,
     derive_other_psych_diagnosis,
     missing_evidence,
+    normalize_blood_pressure,
     normalize_dates,
     normalize_restrictions,
     parse_aneurysm_size_cm,
@@ -290,6 +292,41 @@ def test_non_vision_condition_indicated_true_for_a_non_vision_condition():
         {"dmer": {"psychiatric.bipolar": True, "details_of_condition": ""}}
     )
     assert result["dmer"]["non_vision_condition_indicated"] is True
+    assert (
+        result["dmer"]["non_vision_condition_indicated_evidence"]
+        == "psychiatric.bipolar: true"
+    )
+
+
+def test_non_vision_condition_indicated_evidence_names_every_field_that_counted():
+    # Dev DMER19 (2026-10-08): a stray "U" in sleep.other set the flag, and
+    # nothing said so.
+    result = check_no_other_conditions(
+        {
+            "dmer": {
+                "sleep.other": "U",
+                "cns.epilepsy": True,
+                "vision.color_blindness": True,
+                "details_of_condition": "",
+            }
+        }
+    )
+    evidence = result["dmer"]["non_vision_condition_indicated_evidence"]
+    assert set(evidence.split("; ")) == {'sleep.other: "U"', "cns.epilepsy: true"}
+
+
+def test_non_vision_condition_indicated_has_no_evidence_when_false():
+    result = check_no_other_conditions(
+        {
+            "dmer": {
+                "vision.color_blindness": True,
+                "non_vision_condition_indicated_evidence": "stale",
+                "details_of_condition": "",
+            }
+        }
+    )
+    assert result["dmer"]["non_vision_condition_indicated"] is False
+    assert "non_vision_condition_indicated_evidence" not in result["dmer"]
 
 
 def test_non_vision_condition_indicated_false_for_vision_only_or_section_d_only():
@@ -464,6 +501,31 @@ def test_diabetes_guide_9_1_false_when_absent():
     assert result["dmer"]["diabetes_guide_9_1"] is False
 
 
+@pytest.mark.parametrize(
+    "guide, expected",
+    [
+        ("BC GUIDE 7 NEUROLOGICAL", True),
+        ("7.2", True),
+        ("BC GUIDE 15 AGING DRIVER", True),  # retired in favour of 7; still counts
+        (15, True),
+        ("BC GUIDE 9.1 DIABETES", False),
+        ("BC GUIDE 17 GENERAL DEBILITY", False),
+        ("", False),
+        (None, False),
+    ],
+)
+def test_guide_7_15_sets_s7_15_suspected(guide, expected):
+    result = check_guide_7_15({"dmer": {"guide": guide}})
+    assert result["dmer"]["cns.cognitiveimpairment_s7_15_suspected"] is expected
+
+
+def test_s7_15_suspected_is_not_a_model_field():
+    from dmer_common.normalization.schema import CONDITIONS
+
+    # Derived from the guide number only -- the analysis model never sets it.
+    assert "cns.cognitiveimpairment_s7_15_suspected" not in CONDITIONS
+
+
 # ---------------------------------------------------------------------------
 # rule-engine input formats (guide number, integer restrictions)
 # ---------------------------------------------------------------------------
@@ -513,6 +575,31 @@ def test_rule_engine_formats_make_restrictions_integer_list():
         ]
         == []
     )
+
+
+@pytest.mark.parametrize(
+    "raw, expected",
+    [
+        ("140/90", "140/90"),
+        ("140\n90", "140/90"),  # DMER25: written over two lines
+        ("140 / 90 mmHg", "140/90"),
+        ("140 over 90", "140/90"),
+        ("140-90", "140/90"),
+        ("140", "140"),
+        ("", ""),
+        ("n/a", ""),
+        (None, ""),
+    ],
+)
+def test_normalize_blood_pressure(raw, expected):
+    assert normalize_blood_pressure(raw) == expected
+
+
+def test_rule_engine_formats_standardize_blood_pressure():
+    dmer = apply_rule_engine_input_formats({"dmer": {"blood_pressure": "140\n90"}})[
+        "dmer"
+    ]
+    assert dmer["blood_pressure"] == "140/90"
 
 
 def test_diabetes_guide_9_1_still_sees_letter_suffix_before_guide_becomes_a_number():
@@ -1463,6 +1550,60 @@ def test_masked_value_that_cant_be_pinned_down_is_left_masked(masked):
     assert restore_masked({"x": masked}, source, step="test") == {"x": masked}
 
 
+# Dev DMER23 (2026-10-08): acuity values came back masked and, with no words
+# around them, matched several input strings -- left masked, then they
+# replaced the extracted values. Matched against their own field, each is exact.
+_ACUITY_SOURCE = {
+    "visual_acuity.corrected_left": "20/25-1",
+    "visual_acuity.corrected_right": "20/25",
+    "visual_acuity.corrected_both": "20/16-2",
+    "medical_examination_date": "2024/06/03",
+    "details_of_condition": "Seizure 2023.",
+}
+
+
+@pytest.mark.parametrize(
+    "field,masked,expected",
+    [
+        ("visual_acuity.corrected_left", "*******", "20/25-1"),
+        ("visual_acuity.corrected_right", "20***", "20/25"),
+        ("visual_acuity.corrected_both", "**/16**", "20/16-2"),
+    ],
+)
+def test_masked_value_is_restored_from_its_own_field(field, masked, expected):
+    from dmer_common.normalization.unmask import restore_masked, source_strings
+
+    texts = source_strings(_ACUITY_SOURCE)
+    out = restore_masked({field: masked}, texts, step="test", fields=_ACUITY_SOURCE)
+    assert out == {field: expected}
+
+
+def test_masked_evidence_quote_is_restored_from_the_field_it_names():
+    from dmer_common.normalization.unmask import restore_masked, source_strings
+
+    evidence = 'visual_acuity.corrected_both: "**/16**"'
+    out = restore_masked(
+        {"visual_acuity.vision_20/20_or_better_evidence": evidence},
+        source_strings(_ACUITY_SOURCE),
+        step="test",
+        fields=_ACUITY_SOURCE,
+    )
+    assert out == {
+        "visual_acuity.vision_20/20_or_better_evidence": 'visual_acuity.corrected_both: "20/16-2"'
+    }
+
+
+def test_a_still_masked_model_value_never_replaces_an_extracted_one():
+    from dmer_common.normalization import pipeline
+
+    updates = {"visual_acuity.corrected_left": "*******"}
+    flags = pipeline.drop_model_removals(
+        {"visual_acuity.corrected_left": "20/25-1"}, updates
+    )
+    assert "visual_acuity.corrected_left" not in updates
+    assert [f["check"] for f in flags] == ["source_kept"]
+
+
 def test_asterisks_that_are_really_in_the_source_are_left_alone():
     from dmer_common.normalization.unmask import restore_masked
 
@@ -2155,3 +2296,151 @@ def test_monocular_from_acuity_reaches_the_concerns_analysis(monkeypatch):
     assert seen["vision.monocular"] is True
     assert result["vision.monocular"] is True
     assert result["visual_acuity.bad_eye_20/100_or_worse"] is True
+
+
+# ---------------------------------------------------------------------------
+# drop_model_removals -- the model may add or correct, never remove
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "field,source,proposed,removes",
+    [
+        # Checkboxes: a ticked one can't be unticked; an unticked one can be set.
+        ("cardiovascular.syncope", True, False, True),
+        ("cardiovascular.syncope", True, None, True),
+        ("cardiovascular.syncope", False, True, False),
+        ("cardiovascular.syncope", True, True, False),
+        # Dates: a readable correction is allowed; blank or unreadable is not.
+        ("cardiovascular.syncope_date", "11/2024", "2024-11-15", False),
+        ("cardiovascular.syncope_date", "11/2024", "", True),
+        ("cardiovascular.syncope_date", "11/2024", "last fall, approx", True),
+        ("cardiovascular.syncope_date", "", "2024-11", False),
+        # Text: a correction is allowed; blanking (incl. "n/a") is not.
+        ("cardiovascular.syncope_cause", "vasovagal", "vasovagal syncope", False),
+        ("cardiovascular.syncope_cause", "vasovagal", "", True),
+        ("cardiovascular.syncope_cause", "vasovagal", "n/a", True),
+        ("cardiovascular.syncope_cause", "", "", False),
+    ],
+)
+def test_drop_model_removals(field, source, proposed, removes):
+    from dmer_common.normalization import pipeline
+
+    updates = {field: proposed, f"{field}_evidence": "x"}
+    flags = pipeline.drop_model_removals({field: source}, updates)
+    assert (field not in updates) is removes
+    assert (f"{field}_evidence" not in updates) is removes
+    assert [f["field"] for f in flags] == ([field] if removes else [])
+    assert all(f["check"] == "source_kept" for f in flags)
+
+
+def test_unreadable_model_date_keeps_the_extracted_date(monkeypatch):
+    # Dev document c819d07e (2026-10-05): DI read the syncope date as
+    # month/year; the model replaced it with a value the date pass couldn't
+    # read, which was then blanked -- and no syncope rule could fire.
+    import json
+    from unittest.mock import Mock
+
+    from dmer_common.normalization import pipeline
+
+    fields = {
+        "cardiovascular.syncope": "true",
+        "cardiovascular.syncope_date": "11/2024",
+        "medical_examination_date": "2025-01-10",
+    }
+    updates = {
+        "cardiovascular.syncope": True,
+        "cardiovascular.syncope_evidence": "cardiovascular.syncope: true",
+        "cardiovascular.syncope_date": "last fall, approx",
+    }
+    monkeypatch.setattr(pipeline, "analyze_conditions", lambda *_: {"dmer": updates})
+    client = Mock()
+    client.complete.side_effect = lambda **kw: json.dumps(
+        {
+            "supported": {
+                name: True
+                for name in json.loads(kw["messages"][1]["content"])["candidates"]
+            }
+        }
+    )
+    result = pipeline.normalize_document(client, fields)
+    assert result["cardiovascular.syncope"] is True
+    assert result["cardiovascular.syncope_date"] == "2024-11-30"
+    assert result["field_sources"]["cardiovascular.syncope_date"] == "di"
+    assert {
+        "field": "cardiovascular.syncope_date",
+        "check": "source_kept",
+        "reason": "model value would remove the extracted value",
+        "action": "kept",
+    } in result["evidence_flags"]
+
+
+# ---------------------------------------------------------------------------
+# apply_section_c_concerns -- Section C "Yes" is a concern for every condition
+# ---------------------------------------------------------------------------
+
+
+def test_section_c_yes_sets_the_concern_of_every_condition_present():
+    from dmer_common.normalization import pipeline
+
+    dmer = {
+        "cardiovascular.cad": True,
+        "cardiovascular.cad_has_concerns": False,
+        "psychiatric.bipolar": True,
+        "cerebrovascular.tia": True,
+        "respiratory.copd": True,
+        "hearing.hearing_loss": False,  # not present: concern stays false
+    }
+    flags = pipeline.apply_section_c_concerns(dmer, {"opinion.yes": True})
+    assert dmer["cardiovascular.cad_has_concerns"] is True
+    assert dmer["cardiovascular.cad_has_concerns_evidence"] == "opinion.yes: true"
+    assert dmer["psychiatric.bipolar_has_concerns"] is True
+    assert dmer["cerebrovascular.cva_tia_has_concern"] is True  # TIA is a parent
+    assert dmer["respiratory.has_concerns"] is True  # category-level
+    assert dmer.get("hearing.hearing_loss_has_concerns") is not True
+    assert {f["check"] for f in flags} == {"section_c"}
+
+
+def test_section_c_excludes_priority_and_dwarfism_and_needs_yes():
+    from dmer_common.normalization import pipeline
+
+    dmer = {"musculoskeletal.dwarfism": True, "cardiovascular.cad": True}
+    pipeline.apply_section_c_concerns(dmer, {"opinion.yes": True})
+    assert dmer.get("musculoskeletal.dwarfism_has_concerns") is not True
+    assert dmer.get("priority.has_concerns") is not True
+    not_yes = {"cardiovascular.cad": True}
+    assert pipeline.apply_section_c_concerns(not_yes, {"opinion.no": True}) == []
+    assert not_yes.get("cardiovascular.cad_has_concerns") is not True
+
+
+def test_section_c_concern_survives_the_evidence_check(monkeypatch):
+    # Dev batch 2026-10-08: with Section C "Yes", the evidence check reverted
+    # 14 concerns the model had set from it (e.g. DMER8's CAD).
+    import json
+    from unittest.mock import Mock
+
+    from dmer_common.normalization import pipeline
+
+    fields = {"cardiovascular.cad": "true", "opinion.yes": "true"}
+    updates = {
+        "cardiovascular.cad": True,
+        "cardiovascular.cad_evidence": "cardiovascular.cad: true",
+        "cardiovascular.cad_has_concerns": True,
+        "cardiovascular.cad_has_concerns_evidence": "opinion.yes: true",
+    }
+    monkeypatch.setattr(pipeline, "analyze_conditions", lambda *_: {"dmer": updates})
+    client = Mock()
+
+    def verdicts(**kw):
+        candidates = json.loads(kw["messages"][1]["content"])["candidates"]
+        # The checker rejects the concern, as it did in dev.
+        return json.dumps(
+            {"supported": {f: not f.endswith("_has_concerns") for f in candidates}}
+        )
+
+    client.complete.side_effect = verdicts
+    result = pipeline.normalize_document(client, fields)
+    assert result["cardiovascular.cad_has_concerns"] is True
+    assert result["field_sources"]["cardiovascular.cad_has_concerns"] == "rule"
+    checks = {(f["field"], f["check"]) for f in result["evidence_flags"]}
+    assert ("cardiovascular.cad_has_concerns", "section_c") in checks

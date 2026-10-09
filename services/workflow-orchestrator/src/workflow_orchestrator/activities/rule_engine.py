@@ -41,8 +41,9 @@ class RuleEngineValidationError(ValueError):
 
 
 class RulesetUnavailableError(RuntimeError):
-    """The active rules.json is missing or invalid -- poison for every document
-    in flight, not just this one. Logged at ERROR for alerting."""
+    """The active rules.json is missing, invalid, or not registered in
+    rules_version -- affects every document in flight, not just this one.
+    Logged at ERROR for alerting."""
 
 
 class RuleEngineActivityError(RuntimeError):
@@ -143,11 +144,19 @@ async def run_rule_engine_activity(payload: dict) -> dict:
                             "Active rules.json could not be read"
                         ) from None
                     ruleset = _ruleset(rules_content)
-                    version = await repository.register_rules_version(
-                        checksum=ruleset.checksum,
-                        blob_url=rules_url,
-                        now=datetime.now(UTC),
+                    # rules_version is written by maintenance, never here.
+                    version = await repository.find_rules_version(
+                        checksum=ruleset.checksum
                     )
+                    if version is None:
+                        _log.error(
+                            "rule engine: active rules.json has no registered "
+                            "rules_version",
+                            extra={"checksum": ruleset.checksum},
+                        )
+                        raise RulesetUnavailableError(
+                            "Active rules.json is not registered in rules_version"
+                        )
                     content = await _run_sync(blob.download, normalized_blob_url)
                     dmer = _normalized_document(content)
                     try:

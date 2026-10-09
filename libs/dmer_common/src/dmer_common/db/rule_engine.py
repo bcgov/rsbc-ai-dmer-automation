@@ -70,6 +70,7 @@ rule_evaluation = Table(
     Column("selected_reason", Text),
     Column("priority_rank", Integer),
     Column("evaluated_at", DateTime(timezone=True)),
+    Column("fit_letter", Boolean),  # V0007
 )
 
 
@@ -169,10 +170,6 @@ _REPLAY_ALLOWED = {
     "POSTING",
     "COMPLETED",
 }
-
-# A rules.json the publishing process hasn't registered gets this version name.
-_UNREGISTERED_PREFIX = "sha256-"
-UNREGISTERED_ACTIVATED_BY = "rule-engine-activity (unregistered active ruleset)"
 
 
 class RuleEngineRepository:
@@ -303,19 +300,17 @@ class RuleEngineRepository:
             return None
         return run[0], run[1], CompletedEvaluation(*evaluation)
 
-    async def register_rules_version(
-        self, *, checksum: str, blob_url: str, now: datetime
-    ) -> str:
-        """The ``rules_version.version`` of the ruleset with *checksum*.
+    async def find_rules_version(self, *, checksum: str) -> str | None:
+        """The ``rules_version.version`` registered for the ruleset with
+        *checksum*, or None when none is.
 
-        The publishing process (not built yet) records each version it
-        publishes. A ruleset nobody registered is recorded here under a
-        checksum-derived name, so every evaluation still references the exact
-        rules it used -- never silently, see ``UNREGISTERED_ACTIVATED_BY``.
+        Read-only: ``rules_version`` rows are written by maintenance (a person
+        or agent publishing or correcting ``rules.json``), never by the
+        pipeline -- see data-model.md ``rules_version``.
         """
         self._check_session()
         async with self._conn.begin():
-            existing = (
+            row = (
                 await self._conn.execute(
                     select(rules_version.c.version)
                     .where(rules_version.c.checksum == checksum)
@@ -323,21 +318,7 @@ class RuleEngineRepository:
                     .limit(1)
                 )
             ).first()
-            if existing is not None:
-                return existing[0]
-            version = f"{_UNREGISTERED_PREFIX}{checksum[:12]}"
-            await self._conn.execute(
-                pg_insert(rules_version)
-                .values(
-                    version=version,
-                    blob_url=blob_url,
-                    checksum=checksum,
-                    activated_at=now,
-                    activated_by=UNREGISTERED_ACTIVATED_BY,
-                )
-                .on_conflict_do_nothing(index_elements=["version"])
-            )
-            return version
+        return None if row is None else row[0]
 
     async def succeed(
         self,
@@ -382,6 +363,7 @@ class RuleEngineRepository:
                         selected_reason=evaluation.selected_reason,
                         priority_rank=evaluation.priority_rank,
                         evaluated_at=ended_at,
+                        fit_letter=evaluation.fit_letter,
                     )
                     .returning(rule_evaluation.c.id)
                 )
