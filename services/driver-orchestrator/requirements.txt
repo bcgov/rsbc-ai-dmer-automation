@@ -1,0 +1,7 @@
+# Function App deployment dependencies (the Functions host installs these).
+# dmer_common is bundled as a wheel by CI, as for workflow-orchestrator.
+azure-functions
+sqlalchemy[asyncio]>=2.0,<2.1
+asyncpg
+azure-identity
+./dmer_common-0.1.0-py3-none-any.whl

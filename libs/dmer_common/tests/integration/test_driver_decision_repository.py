@@ -337,3 +337,36 @@ def test_no_open_evaluation_returns_none():
             assert await repo.open_evaluation() is None
 
     asyncio.run(run())
+
+
+def test_record_decided_rejects_a_decision_outside_the_batch():
+    from dmer_common.db.driver_decision import DecisionRecord
+
+    async def run():
+        async with (
+            database() as (engine, driver_key, evaluation_id, docs),
+            driver_decision_session(engine, driver_key) as repo,
+        ):
+            await repo.move_evaluation(
+                evaluation_id, expected=_E.WAITING, target=_E.READY, now=NOW
+            )
+            runs = await repo.start_decision(evaluation_id, docs, now=NOW)
+            stray = DecisionRecord(document_id=str(uuid4()), outcome_code="IN")
+            with pytest.raises(DriverDecisionStateError):
+                await repo.record_decided(
+                    evaluation_id, runs, summary={}, now=NOW, decisions=(stray,)
+                )
+            assert (await repo.open_evaluation()).status is _E.EVALUATING
+
+    asyncio.run(run())
+
+
+def test_driver_licence_for_the_mercury_lookup():
+    async def run():
+        async with (
+            database() as (engine, driver_key, _evaluation_id, _docs),
+            driver_decision_session(engine, driver_key) as repo,
+        ):
+            assert await repo.driver_licence() == "01234567"
+
+    asyncio.run(run())

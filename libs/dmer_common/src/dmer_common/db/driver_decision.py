@@ -18,6 +18,9 @@ The evaluation's status moves WAITING -> READY -> EVALUATING -> DECIDED
 :func:`validated_evaluation_status`. Deciding a batch, in one transaction:
 
 - ``driver_evaluation``: status DECIDED, ``evaluated_at``, ``decision_summary``;
+- one ``dmer_decision`` row per decided document (``decided_by = AI``), so
+  Post-Processing reads the outcomes from the database -- they never travel
+  in a message (decision_reason carries clinical content, section 9.2);
 - each document: ``AWAITING_DRIVER_COMPLETION`` -> ``DECIDED`` (stage POST);
 - each document's ``DECISION`` stage run: SUCCEEDED.
 
@@ -54,6 +57,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 from ._advisory import advisory_lock_session
 from .dmer_document import _pipeline_status_enum, _stage_enum
 from .dmer_stage_run import dmer_stage_run
+from .driver import driver
 
 metadata = MetaData()
 
@@ -141,6 +145,35 @@ _document = Table(
     Column("driver_resolved_by", Text),
 )
 
+_outcome_enum = PG_ENUM(
+    "CP", "IN", "PR", "PU", "TCM", "CR", name="dmer_outcome_code", create_type=False
+)
+_decided_by_enum = PG_ENUM(
+    "AI", "FALLBACK", "MANUAL", name="dmer_decided_by", create_type=False
+)
+dmer_decision = Table(
+    "dmer_decision",
+    metadata,
+    Column(
+        "id",
+        PG_UUID(as_uuid=False),
+        primary_key=True,
+        server_default="gen_random_uuid()",
+    ),
+    Column("document_id", PG_UUID(as_uuid=False), nullable=False),
+    Column("driver_evaluation_id", PG_UUID(as_uuid=False), nullable=False),
+    Column("outcome_code", _outcome_enum, nullable=False),
+    Column("is_duplicate", Boolean, nullable=False),
+    Column("duplicate_of_document_id", PG_UUID(as_uuid=False)),
+    Column("duplicate_reason", Text),
+    Column("superseded_by_cutoff_rule", Boolean, nullable=False),
+    Column("driver_mapped", Boolean, nullable=False),
+    Column("proposed_driver_key", PG_UUID(as_uuid=False)),
+    Column("decision_reason", JSONB),
+    Column("decided_by", _decided_by_enum, nullable=False),
+    Column("decided_at", DateTime(timezone=True), nullable=False),
+)
+
 _DECISION_STAGE = "DECISION"
 _POST_STAGE = "POST"
 _AWAITING = "AWAITING_DRIVER_COMPLETION"
@@ -182,6 +215,21 @@ class DriverEvaluationState:
     expected_document_count: int | None
     completed_document_count: int
     decision_summary: dict[str, Any] | None
+
+
+@dataclass(frozen=True)
+class DecisionRecord:
+    """One document's decided outcome -- a ``dmer_decision`` row."""
+
+    document_id: str
+    outcome_code: str
+    is_duplicate: bool = False
+    duplicate_of_document_id: str | None = None
+    duplicate_reason: str | None = None
+    superseded_by_cutoff_rule: bool = False
+    driver_mapped: bool = False
+    proposed_driver_key: str | None = None
+    decision_reason: dict[str, Any] | None = None  # clinical: never log
 
 
 @dataclass(frozen=True)
@@ -244,6 +292,19 @@ class DriverDecisionRepository:
             completed_document_count=row.completed_document_count,
             decision_summary=row.decision_summary,
         )
+
+    async def driver_licence(self) -> str | None:
+        """The driver's canonical licence, for Mercury's ``GET by
+        driver_licence``. PII: never log or return it further than the call."""
+        self._check_session()
+        async with self._conn.begin():
+            return (
+                await self._conn.execute(
+                    select(driver.c.licence_number).where(
+                        driver.c.driver_key == self._driver_key
+                    )
+                )
+            ).scalar_one_or_none()
 
     async def load_batch(self, evaluation_id: str) -> list[BatchDocument]:
         """Every document counted into *evaluation_id*, oldest first, joined
@@ -425,13 +486,18 @@ class DriverDecisionRepository:
         *,
         summary: dict[str, Any],
         now: datetime,
+        decisions: tuple[DecisionRecord, ...] = (),
     ) -> None:
-        """EVALUATING -> DECIDED, every document -> DECIDED, runs SUCCEEDED.
+        """EVALUATING -> DECIDED, every document -> DECIDED, runs SUCCEEDED,
+        and one ``dmer_decision`` row per entry in *decisions*.
 
         One transaction. Raises :class:`DriverDecisionStateError` (and changes
-        nothing) if the evaluation is no longer EVALUATING or any document is
-        no longer awaiting its driver.
+        nothing) if the evaluation is no longer EVALUATING, any document is no
+        longer awaiting its driver, or a decision is for a document outside
+        *runs*.
         """
+        if not {d.document_id for d in decisions} <= set(runs):
+            raise DriverDecisionStateError()
         self._check_session()
         async with self._conn.begin():
             moved = await self._conn.execute(
@@ -465,6 +531,27 @@ class DriverDecisionRepository:
             )
             if len(decided.all()) != len(runs):
                 raise DriverDecisionStateError()  # rolls the transaction back
+            if decisions:
+                await self._conn.execute(
+                    dmer_decision.insert(),
+                    [
+                        {
+                            "document_id": d.document_id,
+                            "driver_evaluation_id": evaluation_id,
+                            "outcome_code": d.outcome_code,
+                            "is_duplicate": d.is_duplicate,
+                            "duplicate_of_document_id": d.duplicate_of_document_id,
+                            "duplicate_reason": d.duplicate_reason,
+                            "superseded_by_cutoff_rule": d.superseded_by_cutoff_rule,
+                            "driver_mapped": d.driver_mapped,
+                            "proposed_driver_key": d.proposed_driver_key,
+                            "decision_reason": d.decision_reason,
+                            "decided_by": "AI",
+                            "decided_at": now,
+                        }
+                        for d in decisions
+                    ],
+                )
             await self._finish_runs(runs, status=_SUCCEEDED, now=now)
 
     async def fail_decision(

@@ -1,0 +1,19 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "FUNCTIONS_WORKER_RUNTIME": "python",
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "ServiceBusConnection__fullyQualifiedNamespace": "",
+    "DRIVER_DECISION_QUEUE": "driver-decision",
+    "POSTGRES_HOST": "",
+    "POSTGRES_PORT": "5432",
+    "POSTGRES_DATABASE": "dmer",
+    "POSTGRES_USER": "",
+    "POSTGRES_PASSWORD": "",
+    "POSTGRES_SSLMODE": "require",
+    "MERCURY_DRIVER_LICENCE_API_BASE_URL": "https://func-mock-mercury-api-dev.azurewebsites.net/api/mercury/drivers",
+    "MERCURY_API_KEY": "",
+    "MERCURY_COUNTED_DOCUMENT_TYPES": "DMER",
+    "MERCURY_UNCOUNTED_DOCUMENT_STATUSES": "Rejected"
+  }
+}
