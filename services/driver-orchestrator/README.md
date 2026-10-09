@@ -37,7 +37,38 @@ Each signal runs `evaluate.evaluate_driver`:
 | `function_app.py` | The `DriverDecision` session-triggered function |
 | `dmer_common.db.driver_decision` | The database unit of work (lock, batch, status, decisions) |
 
-Not built yet: Bicep and CI wiring; the hand-off to Post-Processing.
+Not built yet: the hand-off to Post-Processing.
+
+## Deploy
+
+Infrastructure is `infrastructure/bicep/driver-orchestrator.bicep` with
+`deployment/<env>/driver-orchestrator.parameters.json`, deployed into the resource group
+holding the pipeline's data resources (`rg-rsbc-dmer-dev` in DEV). Prerequisites it references
+but doesn't create:
+
+- the shared orchestrator subnet (`snet-rsbc-dmer-orchestrator-<env>`), the same one the
+  Document Orchestration app uses;
+- the session-enabled `driver-decision` queue (`main.bicep`);
+- the deployment package container on the runtime storage account
+  (`app-package-func-rsbc-dmer-driver-orchestrator-dev` in DEV). Not a Durable Functions app, so
+  no queue or table state is kept there.
+
+The `DriverDecision` trigger deploys **disabled** (`driverDecisionTriggerEnabled = false`), so
+signals wait on `driver-decision` until it is switched on.
+
+```bash
+az deployment group create -g rg-rsbc-dmer-dev   -f infrastructure/bicep/driver-orchestrator.bicep   -p @deployment/dev/driver-orchestrator.parameters.json   -p runtimeStorageConnectionString="$(az storage account show-connection-string -n rsbcstorage -g rsbc-dmer-ai-optimization-rg --query connectionString -o tsv)"
+```
+
+Then the Postgres role (once per environment): run `services/intake-processor/create-principal.sql`
+against `postgres` and `roles.sql` against `dmer` with `function_app_name` set to this app's name
+(`SET ROLE rsbc_dmer_admin` first, so the grants and default privileges cover the tables that
+role owns). The app reads `driver`, `dmer_document`, `dmer_extraction`, `rule_evaluation` and
+`driver_evaluation_document`, and writes `driver_evaluation`, `dmer_document`, `dmer_stage_run`
+and `dmer_decision`.
+
+Code: rebuild `dmer_common-0.1.0-py3-none-any.whl` from `libs/dmer_common` into this directory,
+then `func azure functionapp publish <app> --python` (remote build).
 
 ## Local run
 
