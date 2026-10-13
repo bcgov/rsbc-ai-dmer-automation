@@ -257,16 +257,63 @@ def test_mercury_down_waits_and_never_decides():
 
 
 def test_a_late_signal_for_a_decided_batch_changes_nothing():
+    # The batch is closed when decided, so a late signal finds no open batch.
     async def run():
         async with database() as (engine, driver_key, _, _docs):
             first = await _evaluate(engine, driver_key, _mercury(waiting=2))
             second = await _evaluate(engine, driver_key, _mercury(waiting=2))
             assert (first.result, second.result) == (
                 Result.DECIDED,
-                Result.ALREADY_DECIDED,
+                Result.NO_OPEN_EVALUATION,
             )
             async with engine.connect() as conn:
                 assert await _scalar(conn, "SELECT count(*) FROM dmer_decision") == 2
+
+    asyncio.run(run())
+
+
+def test_a_dmer_after_the_decision_gets_its_own_batch_and_decision():
+    async def run():
+        async with database() as (engine, driver_key, first_batch, _docs):
+            assert (
+                await _evaluate(engine, driver_key, _mercury(waiting=2))
+            ).result is Result.DECIDED
+            # A third DMER arrives later: Driver Lookup / the Rule Engine open
+            # the driver's next batch (the decided one is closed) and count it.
+            async with engine.begin() as conn:
+                second_batch = str(
+                    await _scalar(
+                        conn,
+                        "INSERT INTO driver_evaluation (driver_key, "
+                        "completed_document_count) VALUES (:k, 1) RETURNING id",
+                        k=driver_key,
+                    )
+                )
+                late = await _add_document(
+                    conn, driver_key, second_batch, day=20, outcome="PU", hash_="h9"
+                )
+            result = await _evaluate(engine, driver_key, _mercury(waiting=1))
+            assert (result.result, result.evaluation_id) == (
+                Result.DECIDED,
+                second_batch,
+            )
+            async with engine.connect() as conn:
+                rows = (
+                    await conn.execute(
+                        text(
+                            "SELECT driver_evaluation_id::text, count(*) "
+                            "FROM dmer_decision GROUP BY 1"
+                        )
+                    )
+                ).all()
+                late_outcome = await _scalar(
+                    conn,
+                    "SELECT outcome_code FROM dmer_decision WHERE document_id = :d",
+                    d=late,
+                )
+            # decided on its own: 2 decisions in the first batch, 1 in the new one
+            assert dict(rows) == {first_batch: 2, second_batch: 1}
+            assert late_outcome == "PU"
 
     asyncio.run(run())
 

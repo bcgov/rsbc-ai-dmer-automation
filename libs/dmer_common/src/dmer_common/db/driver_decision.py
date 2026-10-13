@@ -17,7 +17,9 @@ The evaluation's status moves WAITING -> READY -> EVALUATING -> DECIDED
 (-> POSTED, by Post-Processing), each move a compare-and-set validated by
 :func:`validated_evaluation_status`. Deciding a batch, in one transaction:
 
-- ``driver_evaluation``: status DECIDED, ``evaluated_at``, ``decision_summary``;
+- ``driver_evaluation``: status DECIDED, ``evaluated_at``, ``decision_summary``,
+  and **closed** (``open = false``), so the driver's next DMER starts a new
+  batch (I-10; V0006 allows any number of closed batches per driver);
 - one ``dmer_decision`` row per decided document (``decided_by = AI``), so
   Post-Processing reads the outcomes from the database -- they never travel
   in a message (decision_reason carries clinical content, section 9.2);
@@ -30,6 +32,7 @@ clinical content and are never written here or logged.
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime
@@ -191,6 +194,12 @@ class DriverDecisionBusyError(RuntimeError):
 class DriverDecisionStateError(RuntimeError):
     """The evaluation or a document is not in the state this step requires --
     another worker moved it on, or the data is inconsistent."""
+
+
+class BatchChangedError(DriverDecisionStateError):
+    """A document was counted into the batch after it was loaded (the Rule
+    Engine finished another of the driver's documents meanwhile). Nothing was
+    written; evaluate the batch again."""
 
 
 class InvalidEvaluationTransition(ValueError):
@@ -486,15 +495,21 @@ class DriverDecisionRepository:
         *,
         summary: dict[str, Any],
         now: datetime,
+        batch_document_ids: Collection[str],
         decisions: tuple[DecisionRecord, ...] = (),
     ) -> None:
-        """EVALUATING -> DECIDED, every document -> DECIDED, runs SUCCEEDED,
-        and one ``dmer_decision`` row per entry in *decisions*.
+        """EVALUATING -> DECIDED and closed, every decided document -> DECIDED,
+        runs SUCCEEDED, and one ``dmer_decision`` row per entry in *decisions*.
+
+        *batch_document_ids* is every document of the batch as loaded
+        (including ones not decided here, e.g. in MANUAL_REVIEW). With the
+        evaluation row locked, the documents counted into it must still be
+        exactly those; otherwise :class:`BatchChangedError`.
 
         One transaction. Raises :class:`DriverDecisionStateError` (and changes
         nothing) if the evaluation is no longer EVALUATING, any document is no
-        longer awaiting its driver, or a decision is for a document outside
-        *runs*.
+        longer awaiting its driver, a decision is for a document outside
+        *runs*, or the batch changed.
         """
         if not {d.document_id for d in decisions} <= set(runs):
             raise DriverDecisionStateError()
@@ -509,6 +524,7 @@ class DriverDecisionRepository:
                 )
                 .values(
                     status=_E.DECIDED.value,
+                    open=False,
                     evaluated_at=now,
                     decision_summary=summary,
                 )
@@ -516,6 +532,19 @@ class DriverDecisionRepository:
             )
             if moved.first() is None:
                 raise DriverDecisionStateError()
+            # The row is now locked: the Rule Engine locks it before counting,
+            # so the counted set can't change under us from here on.
+            counted = set(
+                (
+                    await self._conn.execute(
+                        select(_counted.c.document_id).where(
+                            _counted.c.driver_evaluation_id == evaluation_id
+                        )
+                    )
+                ).scalars()
+            )
+            if counted != {str(d) for d in batch_document_ids}:
+                raise BatchChangedError()  # rolls the transaction back
             decided = await self._conn.execute(
                 _document.update()
                 .where(

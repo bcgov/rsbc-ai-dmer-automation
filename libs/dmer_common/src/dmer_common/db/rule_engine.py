@@ -14,7 +14,8 @@ On success, one transaction:
   rules version, the stage's version record, as Normalize records its model);
 - moves the document to ``RULES_APPLIED`` / ``DECISION``;
 - counts the document toward its driver's open ``driver_evaluation`` -- once
-  only, via a ``driver_evaluation_document`` marker row.
+  only, via a ``driver_evaluation_document`` marker row; if the driver's
+  batch was decided and closed meanwhile, it opens the driver's next one.
 """
 
 from __future__ import annotations
@@ -409,20 +410,45 @@ class RuleEngineRepository:
     async def _count_toward_driver(
         self, driver_key: str | None, now: datetime
     ) -> DriverCount:
-        """Increment the open evaluation's count, once per document."""
+        """Increment the open evaluation's count, once per document.
+
+        The open evaluation's row is locked first, so counting cannot
+        interleave with the Decision Gateway deciding and closing that batch:
+        either this document is counted before the gateway locks the row
+        (the gateway then sees an extra document and re-evaluates), or the
+        gateway closes the batch first and this document starts the driver's
+        next batch -- never counted into a batch that was already decided.
+        """
         if not driver_key:
             return DriverCount(counted=False, driver_evaluation_id=None)
         open_evaluation = (
             await self._conn.execute(
-                select(driver_evaluation.c.id).where(
+                select(driver_evaluation.c.id)
+                .where(
                     driver_evaluation.c.driver_key == driver_key,
                     driver_evaluation.c.open.is_(True),
                 )
+                .with_for_update()
             )
         ).first()
         if open_evaluation is None:
-            return DriverCount(counted=False, driver_evaluation_id=None)
-        evaluation_id = open_evaluation[0]
+            # The driver's previous batch was decided and closed after Driver
+            # Lookup attached this document (V0006): open the next batch. Its
+            # expected count stays unset; the gateway re-checks Mercury.
+            evaluation_id = (
+                await self._conn.execute(
+                    pg_insert(driver_evaluation)
+                    .values(driver_key=driver_key, open=True)  # status: WAITING
+                    .on_conflict_do_update(
+                        index_elements=["driver_key"],
+                        index_where=driver_evaluation.c.open,
+                        set_={"driver_key": driver_key},  # no-op; returns the id
+                    )
+                    .returning(driver_evaluation.c.id)
+                )
+            ).scalar_one()
+        else:
+            evaluation_id = open_evaluation[0]
         marked = (
             await self._conn.execute(
                 pg_insert(driver_evaluation_document)

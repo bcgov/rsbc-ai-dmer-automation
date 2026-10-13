@@ -10,9 +10,10 @@ Service Bus session), under the driver's advisory lock (the second guard):
    and refreshed count) and stop; the next document's signal, or the
    Reconciliation Sweeper, evaluates it again.
 5. Ready -> READY -> EVALUATING (a ``DECISION`` stage run per document),
-   ``decide()``, then DECIDED + one ``dmer_decision`` row per document in one
-   transaction. A failure after EVALUATING goes back to WAITING and is
-   re-raised so the signal is retried.
+   ``decide()``, then DECIDED + closed + one ``dmer_decision`` row per document
+   in one transaction. A failure after EVALUATING -- including a document
+   counted into the batch meanwhile (``BatchChangedError``) -- goes back to
+   WAITING and is re-raised so the signal is retried.
 
 Design-neutral: the session-triggered function calls this directly; a
 Durable design would call it as an activity. Logs counts, statuses and ids
@@ -113,7 +114,9 @@ async def evaluate_driver(
     async with session(engine, driver_key) as repo:
         evaluation = await repo.open_evaluation()
         if evaluation is None:
-            _log.warning("decision gateway: driver has no open evaluation")
+            # Normal once a batch is decided and closed: another document's
+            # signal for the same batch arrives after the decision.
+            _log.info("decision gateway: driver has no open evaluation")
             return Evaluation(Result.NO_OPEN_EVALUATION)
         if evaluation.status not in _RE_EVALUABLE:
             # DECIDED/POSTED: a late signal for a batch already decided.
@@ -186,7 +189,12 @@ async def evaluate_driver(
                 "not_decided_document_count": len(batch) - len(to_decide),
             }
             await repo.record_decided(
-                evaluation.id, runs, summary=summary, now=clock(), decisions=records
+                evaluation.id,
+                runs,
+                summary=summary,
+                now=clock(),
+                batch_document_ids=[d.document_id for d in batch],
+                decisions=records,
             )
         except Exception as exc:
             try:

@@ -170,7 +170,11 @@ def test_full_decision_moves_evaluation_documents_and_stage_runs():
                 runs = await repo.start_decision(evaluation_id, docs, now=NOW)
                 assert set(runs) == set(docs)
                 await repo.record_decided(
-                    evaluation_id, runs, summary={"document_count": 2}, now=NOW
+                    evaluation_id,
+                    runs,
+                    summary={"document_count": 2},
+                    now=NOW,
+                    batch_document_ids=docs,
                 )
             async with engine.connect() as conn:
                 status, summary, checked = (
@@ -220,7 +224,9 @@ def test_retried_decision_closes_the_interrupted_attempt():
                 await repo.start_decision(evaluation_id, docs, now=NOW)
                 # crash, then a retry re-enters from EVALUATING
                 runs = await repo.start_decision(evaluation_id, docs, now=NOW)
-                await repo.record_decided(evaluation_id, runs, summary={}, now=NOW)
+                await repo.record_decided(
+                    evaluation_id, runs, summary={}, now=NOW, batch_document_ids=docs
+                )
             async with engine.connect() as conn:
                 stages = (
                     await conn.execute(
@@ -285,7 +291,13 @@ def test_record_decided_changes_nothing_if_a_document_moved_on():
                         {"d": docs[0]},
                     )
                 with pytest.raises(DriverDecisionStateError):
-                    await repo.record_decided(evaluation_id, runs, summary={}, now=NOW)
+                    await repo.record_decided(
+                        evaluation_id,
+                        runs,
+                        summary={},
+                        now=NOW,
+                        batch_document_ids=docs,
+                    )
                 # rolled back: still EVALUATING, the other document untouched
                 assert (await repo.open_evaluation()).status is _E.EVALUATING
             async with engine.connect() as conn:
@@ -354,7 +366,12 @@ def test_record_decided_rejects_a_decision_outside_the_batch():
             stray = DecisionRecord(document_id=str(uuid4()), outcome_code="IN")
             with pytest.raises(DriverDecisionStateError):
                 await repo.record_decided(
-                    evaluation_id, runs, summary={}, now=NOW, decisions=(stray,)
+                    evaluation_id,
+                    runs,
+                    summary={},
+                    now=NOW,
+                    batch_document_ids=docs,
+                    decisions=(stray,),
                 )
             assert (await repo.open_evaluation()).status is _E.EVALUATING
 
@@ -368,5 +385,71 @@ def test_driver_licence_for_the_mercury_lookup():
             driver_decision_session(engine, driver_key) as repo,
         ):
             assert await repo.driver_licence() == "01234567"
+
+    asyncio.run(run())
+
+
+def test_deciding_closes_the_batch():
+    async def run():
+        async with database() as (engine, driver_key, evaluation_id, docs):
+            async with driver_decision_session(engine, driver_key) as repo:
+                await repo.move_evaluation(
+                    evaluation_id, expected=_E.WAITING, target=_E.READY, now=NOW
+                )
+                runs = await repo.start_decision(evaluation_id, docs, now=NOW)
+                await repo.record_decided(
+                    evaluation_id, runs, summary={}, now=NOW, batch_document_ids=docs
+                )
+                # the driver's next DMER starts a new batch
+                assert await repo.open_evaluation() is None
+            async with engine.connect() as conn:
+                row = (
+                    await conn.execute(
+                        text(
+                            "SELECT status, open FROM driver_evaluation WHERE id = :e"
+                        ),
+                        {"e": evaluation_id},
+                    )
+                ).one()
+            assert tuple(row) == ("DECIDED", False)
+
+    asyncio.run(run())
+
+
+def test_a_document_counted_meanwhile_rolls_the_decision_back():
+    from dmer_common.db.driver_decision import BatchChangedError
+
+    async def run():
+        async with database() as (engine, driver_key, evaluation_id, docs):
+            async with driver_decision_session(engine, driver_key) as repo:
+                await repo.move_evaluation(
+                    evaluation_id, expected=_E.WAITING, target=_E.READY, now=NOW
+                )
+                runs = await repo.start_decision(evaluation_id, docs, now=NOW)
+                # the Rule Engine finishes another of the driver's DMERs now
+                async with engine.begin() as other:
+                    await _add_document(other, driver_key, evaluation_id, day=7)
+                with pytest.raises(BatchChangedError):
+                    await repo.record_decided(
+                        evaluation_id,
+                        runs,
+                        summary={},
+                        now=NOW,
+                        batch_document_ids=docs,
+                    )
+                evaluation = await repo.open_evaluation()
+            # nothing written: still open and EVALUATING, documents untouched
+            assert evaluation.status is _E.EVALUATING
+            async with engine.connect() as conn:
+                statuses = (
+                    (
+                        await conn.execute(
+                            text("SELECT DISTINCT pipeline_status FROM dmer_document")
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+            assert statuses == ["AWAITING_DRIVER_COMPLETION"]
 
     asyncio.run(run())

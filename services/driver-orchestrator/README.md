@@ -21,7 +21,10 @@ Each signal runs `evaluate.evaluate_driver`:
 4. Not complete: record `WAITING` (reason, Mercury check time, refreshed
    count) and stop.
 5. Complete: `decision.decide()`, then `DECIDED` + one `dmer_decision` row per
-   document, in one transaction.
+   document, in one transaction, and the batch is **closed** -- the driver's
+   next DMER starts a new batch (I-10; migration V0006). If the Rule Engine
+   counted another DMER in meanwhile, nothing is written and the signal is
+   retried with the full batch.
 
 > **Pending architect approval:** the architecture describes a Durable
 > orchestration per driver. This app uses a session-triggered function
