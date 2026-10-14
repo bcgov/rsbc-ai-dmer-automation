@@ -10,7 +10,7 @@
 // The app runs one Service Bus trigger, DriverDecision, on the session-enabled
 // driver-decision queue (SessionId = driver_key), which evaluates each
 // driver's batch -- see services/driver-orchestrator/README.md. It is not a
-// Durable Functions app (pending architect approval; see that README), so the
+// Durable Functions app (ADR-0003; see that README), so the
 // runtime storage account needs no queue/table access for Durable state.
 //
 // Not created here, referenced as already existing:
@@ -142,6 +142,7 @@ param dataClassification string = 'protected-b'
 var serviceTags = buildTags(environment, 'driver-orchestrator', costCenter, owner, dataClassification)
 var serviceBusNamespaceName = split(serviceBusNamespaceFqdn, '.')[0]
 var serviceBusDataReceiverRoleId = '4f6d3b9b-027b-4f4c-9142-0e5a2a2247e0'
+var serviceBusDataSenderRoleId = '69a216fc-b8fb-44d8-bc22-1f3c2cd27a39'
 
 // ---------------------------------------------------------------------------
 // 1. Application Insights
@@ -168,8 +169,10 @@ var appSettings = {
   DEPLOYMENT_STORAGE_CONNECTION_STRING: runtimeStorageConnectionString
   APPLICATIONINSIGHTS_CONNECTION_STRING: appInsights.outputs.connectionString
   'AzureWebJobs.DriverDecision.Disabled': driverDecisionTriggerEnabled ? 'false' : 'true'
-  // Trigger binding's identity-based connection (resolved by the host).
+  // Trigger binding's identity-based connection (resolved by the host) vs.
+  // the FQDN the app's own client uses to schedule re-checks.
   ServiceBusConnection__fullyQualifiedNamespace: serviceBusNamespaceFqdn
+  SERVICE_BUS_NAMESPACE_FQDN: serviceBusNamespaceFqdn
   DRIVER_DECISION_QUEUE: driverDecisionQueueName
   POSTGRES_HOST: postgresHost
   POSTGRES_PORT: postgresPort
@@ -220,7 +223,9 @@ module privateEndpoint 'modules/networking/private-endpoint.bicep' = {
 }
 
 // ---------------------------------------------------------------------------
-// 4. Service Bus RBAC (queue-scoped): receive driver-decision (the trigger).
+// 4. Service Bus RBAC (queue-scoped): receive driver-decision (the trigger)
+//    and send to it (the self-scheduled re-check of a driver Mercury could
+//    not verify -- see services/driver-orchestrator/src/driver_orchestrator/recheck.py).
 // ---------------------------------------------------------------------------
 module driverDecisionReceiverRoleAssignment 'modules/servicebus/data-plane-role-assignment.bicep' = {
   name: '${deployment().name}-sb-role-driver-decision-receive'
@@ -230,6 +235,17 @@ module driverDecisionReceiverRoleAssignment 'modules/servicebus/data-plane-role-
     queueName: driverDecisionQueueName
     principalId: functionApp.outputs.principalId
     roleDefinitionId: serviceBusDataReceiverRoleId
+  }
+}
+
+module driverDecisionSenderRoleAssignment 'modules/servicebus/data-plane-role-assignment.bicep' = {
+  name: '${deployment().name}-sb-role-driver-decision-send'
+  scope: resourceGroup(serviceBusResourceGroupName)
+  params: {
+    serviceBusNamespaceName: serviceBusNamespaceName
+    queueName: driverDecisionQueueName
+    principalId: functionApp.outputs.principalId
+    roleDefinitionId: serviceBusDataSenderRoleId
   }
 }
 

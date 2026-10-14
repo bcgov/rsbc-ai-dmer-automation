@@ -398,3 +398,74 @@ def test_a_failed_dmer_counted_by_manual_review_does_not_hold_the_batch():
             assert failed_status == "MANUAL_REVIEW"
 
     asyncio.run(run())
+
+
+def test_final_attempt_with_mercury_still_down_goes_to_manual_review():
+    async def run():
+        async with database() as (engine, driver_key, evaluation_id, docs):
+            result = await evaluate_driver(
+                engine,
+                driver_key,
+                mercury_lookup=_mercury_down,
+                counted_types=TYPES,
+                uncounted_statuses=STATUSES,
+                final_attempt=True,
+            )
+            assert result.result is Result.MANUAL_REVIEW
+            assert result.wait_reason is WaitReason.MERCURY_UNVERIFIED
+            async with engine.connect() as conn:
+                status, is_open, summary = (
+                    await conn.execute(
+                        text(
+                            "SELECT status, open, decision_summary "
+                            "FROM driver_evaluation WHERE id = :e"
+                        ),
+                        {"e": evaluation_id},
+                    )
+                ).one()
+                decisions = (
+                    await conn.execute(
+                        text(
+                            "SELECT outcome_code, decided_by, decision_reason "
+                            "FROM dmer_decision"
+                        )
+                    )
+                ).all()
+                statuses = (
+                    (
+                        await conn.execute(
+                            text("SELECT DISTINCT pipeline_status FROM dmer_document")
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+            assert (status, is_open) == ("DECIDED", False)
+            assert summary["manual_review_count"] == len(docs)
+            assert statuses == ["MANUAL_REVIEW"]
+            assert len(decisions) == len(docs)
+            assert {(d.outcome_code, d.decided_by) for d in decisions} == {
+                ("IN", "FALLBACK")
+            }
+            note = decisions[0].decision_reason["notes"][0]
+            assert "could not confirm with Mercury" in note
+
+    asyncio.run(run())
+
+
+def test_a_non_final_attempt_with_mercury_down_still_waits():
+    async def run():
+        async with database() as (engine, driver_key, _evaluation_id, _docs):
+            result = await evaluate_driver(
+                engine,
+                driver_key,
+                mercury_lookup=_mercury_down,
+                counted_types=TYPES,
+                uncounted_statuses=STATUSES,
+                final_attempt=False,
+            )
+            assert result.result is Result.WAITING
+            async with engine.connect() as conn:
+                assert await _scalar(conn, "SELECT count(*) FROM dmer_decision") == 0
+
+    asyncio.run(run())

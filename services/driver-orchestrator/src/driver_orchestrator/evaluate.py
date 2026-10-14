@@ -49,6 +49,9 @@ from .decision import (
 _log = get_logger(__name__)
 _E = EvaluationStatus
 
+# Batch documents not decided yet (the ones a fallback sends to manual review).
+_UNDECIDED = frozenset({"AWAITING_DRIVER_COMPLETION", "RULES_APPLIED"})
+
 # Statuses that can still be evaluated.
 _RE_EVALUABLE = frozenset({_E.WAITING, _E.STALE, _E.READY, _E.EVALUATING})
 
@@ -58,6 +61,7 @@ class Result(StrEnum):
 
     DECIDED = "decided"
     WAITING = "waiting"
+    MANUAL_REVIEW = "manual_review"  # gave up: unverifiable after the last re-check
     NO_OPEN_EVALUATION = "no_open_evaluation"
     ALREADY_DECIDED = "already_decided"
 
@@ -73,6 +77,16 @@ class Evaluation:
     done: int = 0
     decided_count: int = 0
 
+
+# Sent for manual review when Mercury still can't verify the batch on the
+# final re-check. Codes and fixed text only -- never document content.
+UNVERIFIED_REASON_CODE = "DecisionGateway:MERCURY_UNVERIFIED"
+UNVERIFIED_MESSAGE = "Mercury could not verify the driver's DMERs after every re-check."
+UNVERIFIED_NOTE = (
+    "The AI could not confirm with Mercury whether all of this driver's DMERs "
+    "have been received -- Mercury was unavailable or could not identify the "
+    "driver, checked 6 times over about 8 hours. Sent for manual review."
+)
 
 # Mercury GET by driver_licence: licence -> list of driver records ([] = none).
 MercuryLookup = Callable[[str], list[dict[str, Any]]]
@@ -103,10 +117,16 @@ async def evaluate_driver(
     mercury_lookup: MercuryLookup,
     counted_types: frozenset[str],
     uncounted_statuses: frozenset[str],
+    final_attempt: bool = False,
     session=driver_decision_session,
     clock: Callable[[], datetime] = lambda: datetime.now(UTC),
 ) -> Evaluation:
     """Run the Decision Gateway for *driver_key* once (see the module docstring).
+
+    *final_attempt*: this is the last re-check of a driver Mercury could not
+    verify. If Mercury still can't verify the batch, its undecided documents
+    go to MANUAL_REVIEW with a fallback IN outcome and a note, instead of
+    waiting with no further re-check (``Result.MANUAL_REVIEW``).
 
     ``session`` is injectable for unit tests. Raises ``DriverDecisionBusyError``
     if another worker holds the driver's lock (retry later).
@@ -142,6 +162,40 @@ async def evaluate_driver(
                 expected_document_count=expected,
                 mercury_checked=True,
             )
+            if (
+                final_attempt
+                and completeness.wait_reason is WaitReason.MERCURY_UNVERIFIED
+            ):
+                routed = await repo.route_batch_to_manual_review(
+                    evaluation.id,
+                    reason_code=UNVERIFIED_REASON_CODE,
+                    message=UNVERIFIED_MESSAGE,
+                    note=UNVERIFIED_NOTE,
+                    summary={
+                        "path": "fallback",
+                        "reason_code": UNVERIFIED_REASON_CODE,
+                        "document_count": len(batch),
+                        "manual_review_count": sum(
+                            d.pipeline_status in _UNDECIDED for d in batch
+                        ),
+                    },
+                    now=clock(),
+                )
+                _log.error(
+                    "decision gateway: Mercury still unverified; batch sent to "
+                    "manual review",
+                    extra={
+                        "driver_evaluation_id": evaluation.id,
+                        "manual_review_count": len(routed),
+                    },
+                )
+                return Evaluation(
+                    Result.MANUAL_REVIEW,
+                    evaluation.id,
+                    completeness.wait_reason,
+                    expected,
+                    completeness.done,
+                )
             _log.info(
                 "decision gateway: waiting",
                 extra={

@@ -19,14 +19,21 @@ Each signal runs `evaluate.evaluate_driver`:
    latest rule evaluation.
 3. Re-check Mercury `GET by driver_licence`; check completeness.
 4. Not complete: record `WAITING` (reason, Mercury check time, refreshed
-   count) and stop.
+   count) and stop. If the reason is that **Mercury couldn't verify** the
+   batch (down, timing out, no driver or several), the function schedules its
+   own re-check of the driver on `driver-decision` (15 min, 30 min, 1 h, 2 h,
+   4 h) -- see `recheck.py`. If Mercury still can't verify the batch on the
+   last re-check, its undecided DMERs go to **MANUAL_REVIEW** with a fallback
+   IN outcome (`decided_by = FALLBACK`) and a note explaining that Mercury
+   could not confirm the driver's DMERs. Other waits end when the driver's
+   remaining DMERs signal.
 5. Complete: `decision.decide()`, then `DECIDED` + one `dmer_decision` row per
    document, in one transaction, and the batch is **closed** -- the driver's
    next DMER starts a new batch (I-10; migrations V0009 and V0010). If the Rule Engine
    counted another DMER in meanwhile, nothing is written and the signal is
    retried with the full batch.
 
-> **Pending architect approval:** the architecture describes a Durable
+> **Design decision ([ADR-0003](../../docs/architecture/decision-records/0003-driver-orchestration-as-a-session-triggered-function.md), approved):** the architecture describes a Durable
 > orchestration per driver. This app uses a session-triggered function
 > instead (a Durable starter holds the session lock only while starting the
 > orchestration, so a second signal for the same driver could be lost).
@@ -38,6 +45,7 @@ Each signal runs `evaluate.evaluate_driver`:
 | `batch.py` | Database rows → `decide()` input |
 | `evaluate.py` | One evaluation of one driver (database + Mercury + decision) |
 | `function_app.py` | The `DriverDecision` session-triggered function |
+| `recheck.py` | Backoff and message for the self-scheduled re-check |
 | `dmer_common.db.driver_decision` | The database unit of work (lock, batch, status, decisions) |
 
 Not built yet: the hand-off to Post-Processing.

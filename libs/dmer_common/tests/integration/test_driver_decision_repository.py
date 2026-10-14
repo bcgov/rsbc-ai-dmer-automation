@@ -453,3 +453,107 @@ def test_a_document_counted_meanwhile_rolls_the_decision_back():
             assert statuses == ["AWAITING_DRIVER_COMPLETION"]
 
     asyncio.run(run())
+
+
+def test_route_batch_to_manual_review_gives_every_undecided_document_a_fallback():
+    async def run():
+        async with database() as (engine, driver_key, evaluation_id, docs):
+            awaiting, not_signalled = docs
+            async with engine.begin() as conn:
+                await conn.execute(
+                    text(
+                        "UPDATE dmer_document SET pipeline_status = 'RULES_APPLIED' "
+                        "WHERE id = :d"
+                    ),
+                    {"d": not_signalled},
+                )
+                # an already-failed batch document keeps its own record
+                failed = await _add_document(conn, driver_key, evaluation_id, day=7)
+                await conn.execute(
+                    text(
+                        "UPDATE dmer_document SET pipeline_status = 'MANUAL_REVIEW' "
+                        "WHERE id = :d"
+                    ),
+                    {"d": failed},
+                )
+            async with driver_decision_session(engine, driver_key) as repo:
+                routed = await repo.route_batch_to_manual_review(
+                    evaluation_id,
+                    reason_code="DecisionGateway:MERCURY_UNVERIFIED",
+                    message="fixed description",
+                    note="FAKE note for Intake",
+                    summary={"path": "fallback"},
+                    now=NOW,
+                )
+                assert await repo.open_evaluation() is None  # closed
+            assert sorted(routed) == sorted([awaiting, not_signalled])
+            async with engine.connect() as conn:
+                evaluation = (
+                    await conn.execute(
+                        text(
+                            "SELECT status, open, decision_summary "
+                            "FROM driver_evaluation WHERE id = :e"
+                        ),
+                        {"e": evaluation_id},
+                    )
+                ).one()
+                statuses = dict(
+                    (
+                        await conn.execute(
+                            text("SELECT id::text, pipeline_status FROM dmer_document")
+                        )
+                    ).all()
+                )
+                errors = (
+                    await conn.execute(
+                        text(
+                            "SELECT document_id::text, stage::text, "
+                            "failure_category::text, reason_code FROM processing_error"
+                        )
+                    )
+                ).all()
+                decisions = (
+                    await conn.execute(
+                        text(
+                            "SELECT document_id::text, outcome_code, decided_by, "
+                            "decision_reason FROM dmer_decision"
+                        )
+                    )
+                ).all()
+            assert tuple(evaluation) == ("DECIDED", False, {"path": "fallback"})
+            assert statuses[awaiting] == statuses[not_signalled] == "MANUAL_REVIEW"
+            assert {e.document_id for e in errors} == {awaiting, not_signalled}
+            assert {(e.stage, e.failure_category, e.reason_code) for e in errors} == {
+                ("DECISION", "PROCESSING", "DecisionGateway:MERCURY_UNVERIFIED")
+            }
+            assert {d.document_id for d in decisions} == {awaiting, not_signalled}
+            assert {(d.outcome_code, d.decided_by) for d in decisions} == {
+                ("IN", "FALLBACK")
+            }
+            assert decisions[0].decision_reason["notes"] == ["FAKE note for Intake"]
+
+    asyncio.run(run())
+
+
+def test_route_batch_to_manual_review_only_from_waiting():
+    async def run():
+        async with (
+            database() as (engine, driver_key, evaluation_id, docs),
+            driver_decision_session(engine, driver_key) as repo,
+        ):
+            await repo.move_evaluation(
+                evaluation_id, expected=_E.WAITING, target=_E.READY, now=NOW
+            )
+            await repo.start_decision(evaluation_id, docs, now=NOW)  # EVALUATING
+            with pytest.raises(DriverDecisionStateError):
+                await repo.route_batch_to_manual_review(
+                    evaluation_id,
+                    reason_code="X:Y",
+                    message="m",
+                    note="n",
+                    summary={},
+                    now=NOW,
+                )
+            assert (await repo.open_evaluation()).status is _E.EVALUATING
+
+    asyncio.run(run())

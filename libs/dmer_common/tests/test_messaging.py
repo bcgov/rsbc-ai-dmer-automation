@@ -465,6 +465,44 @@ def test_publisher_sets_the_session_only_when_given():
     assert calls[1]["session_id"] == "drv-1"
 
 
+def test_publisher_schedules_only_when_given():
+    # GIVEN a publisher whose factory records the broker ids it is given
+    sender = FakeSender()
+    calls = []
+
+    def factory(body, **ids):
+        calls.append(ids)
+        return {"body": body}
+
+    publisher = ServiceBusPublisher(sender, message_factory=factory)
+    msg = ExtractedMessage(
+        message_id="m-9",
+        document_id="doc-1",
+        document_guid="123e4567-e89b-12d3-a456-426614174000",
+        blob_url="https://example/extracted-dmer/doc-1/combined.json",
+        enqueued_at=datetime(2026, 8, 5, tzinfo=UTC),
+    )
+    due = datetime(2026, 10, 14, 12, 15, tzinfo=UTC)
+    # WHEN published now and scheduled for later
+    publisher.publish(msg)
+    publisher.publish(msg, session_id="drv-1", scheduled_enqueue_time=due)
+    # THEN only the second is held by the broker until it is due
+    assert "scheduled_enqueue_time" not in calls[0]
+    assert calls[1]["scheduled_enqueue_time"] == due
+
+
+def test_default_message_factory_sets_the_scheduled_enqueue_time():
+    from dmer_common.messaging.publisher import _default_message_factory
+
+    due = datetime(2026, 10, 14, 12, 15, tzinfo=UTC)
+    message = _default_message_factory(
+        "{}", message_id="m", document_id="d", scheduled_enqueue_time=due
+    )
+    assert message.scheduled_enqueue_time_utc == due
+    plain = _default_message_factory("{}", message_id="m", document_id="d")
+    assert plain.scheduled_enqueue_time_utc is None
+
+
 def test_default_message_factory_sets_session_id():
     from dmer_common.messaging.publisher import _default_message_factory
 

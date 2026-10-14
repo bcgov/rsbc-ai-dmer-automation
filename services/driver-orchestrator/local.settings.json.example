@@ -4,6 +4,7 @@
     "FUNCTIONS_WORKER_RUNTIME": "python",
     "AzureWebJobsStorage": "UseDevelopmentStorage=true",
     "ServiceBusConnection__fullyQualifiedNamespace": "",
+    "SERVICE_BUS_NAMESPACE_FQDN": "",
     "DRIVER_DECISION_QUEUE": "driver-decision",
     "POSTGRES_HOST": "",
     "POSTGRES_PORT": "5432",

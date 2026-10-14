@@ -61,6 +61,7 @@ from ._advisory import advisory_lock_session
 from .dmer_document import _pipeline_status_enum, _stage_enum
 from .dmer_stage_run import dmer_stage_run
 from .driver import driver
+from .processing_error import FailureCategory, record_processing_error
 
 metadata = MetaData()
 
@@ -181,6 +182,10 @@ _DECISION_STAGE = "DECISION"
 _POST_STAGE = "POST"
 _AWAITING = "AWAITING_DRIVER_COMPLETION"
 _DECIDED_DOC = "DECIDED"
+_MANUAL_REVIEW_DOC = "MANUAL_REVIEW"
+# Batch documents not decided yet: awaiting their driver, or counted by the
+# Rule Engine but not yet signalled.
+_UNDECIDED = (_AWAITING, "RULES_APPLIED")
 _RUNNING, _SUCCEEDED, _FAILED = "RUNNING", "SUCCEEDED", "FAILED"
 
 
@@ -609,6 +614,110 @@ class DriverDecisionRepository:
                 error_code=error_code,
                 error_detail="Decision attempt failed; see error_code.",
             )
+
+    async def route_batch_to_manual_review(
+        self,
+        evaluation_id: str,
+        *,
+        reason_code: str,
+        message: str,
+        note: str,
+        summary: dict[str, Any],
+        now: datetime,
+    ) -> list[str]:
+        """Give up on deciding the batch: send its undecided documents to
+        ``MANUAL_REVIEW`` with a fallback outcome. Returns their ids.
+
+        Used when the batch can't be verified (e.g. Mercury still unavailable
+        after every re-check). One transaction, the evaluation row locked
+        first (the same order as :meth:`record_decided`):
+
+        - the evaluation: WAITING/STALE -> DECIDED and closed, with *summary*
+          (so the driver's next DMER starts a new batch);
+        - each document awaiting its driver (or counted but not yet
+          signalled) -> ``MANUAL_REVIEW``, with a ``processing_error`` row
+          (*reason_code*, *message* -- codes and fixed text, never content);
+        - one ``dmer_decision`` per document: outcome IN, ``decided_by =
+          FALLBACK``, *note* in ``decision_reason`` -- the comment Intake sees
+          once Post-Processing posts it (architecture 6.4: failing to decide
+          must not mean failing to appear).
+
+        Raises :class:`DriverDecisionStateError` (nothing written) if the
+        evaluation is no longer open and WAITING/STALE.
+        """
+        self._check_session()
+        async with self._conn.begin():
+            moved = await self._conn.execute(
+                driver_evaluation.update()
+                .where(
+                    driver_evaluation.c.id == evaluation_id,
+                    driver_evaluation.c.open.is_(True),
+                    driver_evaluation.c.status.in_((_E.WAITING.value, _E.STALE.value)),
+                )
+                .values(
+                    status=_E.DECIDED.value,
+                    open=False,
+                    evaluated_at=now,
+                    decision_summary=summary,
+                )
+                .returning(driver_evaluation.c.id)
+            )
+            if moved.first() is None:
+                raise DriverDecisionStateError()
+            routed = list(
+                (
+                    await self._conn.execute(
+                        _document.update()
+                        .where(
+                            _document.c.id.in_(
+                                select(_counted.c.document_id).where(
+                                    _counted.c.driver_evaluation_id == evaluation_id
+                                )
+                            ),
+                            _document.c.pipeline_status.in_(_UNDECIDED),
+                        )
+                        .values(
+                            pipeline_status=_MANUAL_REVIEW_DOC,
+                            updated_at=now,
+                        )
+                        .returning(_document.c.id)
+                    )
+                ).scalars()
+            )
+            routed = [str(d) for d in routed]
+            for document_id in routed:
+                await record_processing_error(
+                    self._conn,
+                    document_id=document_id,
+                    stage=_DECISION_STAGE,
+                    category=FailureCategory.PROCESSING,
+                    reason_code=reason_code,
+                    message=message,
+                    now=now,
+                )
+            if routed:
+                await self._conn.execute(
+                    dmer_decision.insert(),
+                    [
+                        {
+                            "document_id": document_id,
+                            "driver_evaluation_id": evaluation_id,
+                            "outcome_code": "IN",
+                            "is_duplicate": False,
+                            "superseded_by_cutoff_rule": False,
+                            "driver_mapped": False,
+                            "decision_reason": {
+                                "path": "fallback",
+                                "reason_code": reason_code,
+                                "notes": [note],
+                            },
+                            "decided_by": "FALLBACK",
+                            "decided_at": now,
+                        }
+                        for document_id in routed
+                    ],
+                )
+            return routed
 
     async def _finish_runs(
         self,
