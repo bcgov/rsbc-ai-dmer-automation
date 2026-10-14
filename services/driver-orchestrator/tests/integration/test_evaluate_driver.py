@@ -359,3 +359,42 @@ def test_driver_without_open_evaluation():
             assert result.result is Result.NO_OPEN_EVALUATION
 
     asyncio.run(run())
+
+
+def test_a_failed_dmer_counted_by_manual_review_does_not_hold_the_batch():
+    # Driver with DMERs A and B; B failed after Driver Lookup and Route To
+    # Manual Review counted it into the batch. Mercury still lists both.
+    async def run():
+        async with database() as (engine, driver_key, _evaluation_id, docs):
+            ready, failed = docs
+            async with engine.begin() as conn:
+                await conn.execute(
+                    text(
+                        "UPDATE dmer_document SET pipeline_status = 'MANUAL_REVIEW' "
+                        "WHERE id = :d"
+                    ),
+                    {"d": failed},
+                )
+            result = await _evaluate(engine, driver_key, _mercury(waiting=2))
+            # decided now, not waiting for B
+            assert result.result is Result.DECIDED
+            assert (result.expected, result.done, result.decided_count) == (2, 2, 1)
+            async with engine.connect() as conn:
+                decided = (
+                    (
+                        await conn.execute(
+                            text("SELECT document_id::text FROM dmer_decision")
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                failed_status = await _scalar(
+                    conn,
+                    "SELECT pipeline_status FROM dmer_document WHERE id = :d",
+                    d=failed,
+                )
+            assert decided == [ready]  # B gets its outcome from the fallback
+            assert failed_status == "MANUAL_REVIEW"
+
+    asyncio.run(run())

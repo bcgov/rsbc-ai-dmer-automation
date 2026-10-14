@@ -5,6 +5,15 @@ a document an activity could not process -- a poison result, or retries
 exhausted -- is routed to ``MANUAL_REVIEW`` rather than letting the
 orchestration instance fail silently, with a ``processing_error`` row: the
 stage, the failure category and a reason code (``<activity>:<error>``).
+
+A document that already has its driver (it failed after Driver Lookup) is
+counted into the driver's open batch by the same write, and its driver is
+then signalled on ``driver-decision``: the batch can be decided without it
+instead of waiting for it forever. The signal's ``message_id`` is distinct
+from Signal Driver's for the same document, so duplicate detection never
+drops it. A failed publish is logged, not raised: the document is already
+counted, so a missed signal only delays the decision to the driver's next
+signal (or the Reconciliation Sweeper).
 """
 
 from __future__ import annotations
@@ -14,11 +23,18 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 import azure.durable_functions as df
-from dmer_common.db.document_routing import route_to_manual_review
+from dmer_common.db.document_routing import load_signal_state, route_to_manual_review
 from dmer_common.db.processing_error import FailureCategory
+from dmer_common.dto import (
+    DRIVER_DECISION_EVENT,
+    DriverDecisionMessage,
+    event_message_id,
+)
 from dmer_common.telemetry import document_id_context, get_logger
 
 from ._runtime import get_async_engine as _get_async_engine
+from ._runtime import run_sync as _run_sync
+from .signal_driver import publish_driver_decision
 
 _log = get_logger(__name__)
 
@@ -66,6 +82,10 @@ async def route_to_manual_review_activity(payload: dict) -> dict:
             "Manual review input requires a failure category"
         ) from None
 
+    blob_url = payload.get("blob_url")
+    if blob_url is not None and not isinstance(blob_url, str):
+        raise ManualReviewValidationError("Manual review blob_url must be a string")
+
     with document_id_context(document_id):
         engine = await _get_async_engine()
         try:
@@ -78,17 +98,61 @@ async def route_to_manual_review_activity(payload: dict) -> dict:
                 message=_MESSAGES[category],
                 now=datetime.now(UTC),
             )
+            _log.warning(
+                (
+                    "routed to manual review"
+                    if routed
+                    else "manual review: already terminal"
+                ),
+                extra={
+                    "reason": reason,
+                    "stage": stage,
+                    "failure_category": category.value,
+                },
+            )
+            signalled = await _signal_driver(engine, document_id, blob_url)
         finally:
             await engine.dispose()
-        _log.warning(
-            "routed to manual review" if routed else "manual review: already terminal",
-            extra={
-                "reason": reason,
-                "stage": stage,
-                "failure_category": category.value,
-            },
+        return {"routed": routed, "driver_signalled": signalled}
+
+
+async def _signal_driver(engine, document_id: str, blob_url: str | None) -> bool:
+    """Signal the document's driver if it is in MANUAL_REVIEW with a driver
+    (counted into the batch by the routing write). Also on a retried call,
+    so a signal lost to a crash is re-sent. Never raises."""
+    state = await load_signal_state(engine, document_id)
+    if (
+        state is None
+        or state.pipeline_status != "MANUAL_REVIEW"
+        or not state.driver_key
+    ):
+        return False
+    if not blob_url:
+        _log.warning("manual review: no blob URL; driver not signalled")
+        return False
+    message = DriverDecisionMessage(
+        message_id=event_message_id(
+            DRIVER_DECISION_EVENT, f"{document_id}:manual-review"
+        ),
+        document_id=document_id,
+        document_guid=state.document_guid,
+        driver_key=state.driver_key,
+        blob_url=blob_url,
+        enqueued_at=datetime.now(UTC),
+    )
+    try:
+        await _run_sync(publish_driver_decision, message)
+    except Exception as exc:  # noqa: BLE001 - counted already; see module docstring
+        _log.error(
+            "manual review: driver signal failed",
+            extra={"error_code": type(exc).__name__},
         )
-        return {"routed": routed}
+        return False
+    _log.info(
+        "manual review: driver signalled",
+        extra={"message_id": message.message_id, "driver_key": state.driver_key},
+    )
+    return True
 
 
 def register(app: df.DFApp) -> None:

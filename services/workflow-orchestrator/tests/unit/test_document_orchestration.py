@@ -133,6 +133,7 @@ def test_a_poison_result_routes_to_manual_review_and_stops(steps, failing):
         "RouteToManualReview",
         {
             "document_id": DOC,
+            "blob_url": INPUT["extracted_blob_url"],
             "stage": orch.ACTIVITY_STAGES[failing],
             "category": "PERMANENT_BUSINESS",
             "reason": reason,
@@ -158,6 +159,7 @@ def test_retries_exhausted_routes_to_manual_review(steps, failing):
         "RouteToManualReview",
         {
             "document_id": DOC,
+            "blob_url": INPUT["extracted_blob_url"],
             "stage": orch.ACTIVITY_STAGES[failing],
             "category": "UNKNOWN",
             "reason": reason,
