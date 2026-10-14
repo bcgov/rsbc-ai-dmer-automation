@@ -17,7 +17,7 @@ The open evaluation's row is locked first, so counting cannot interleave with
 the gateway deciding and closing that batch: either the document is counted
 before the gateway locks the row (the gateway then sees an extra document and
 re-evaluates), or the gateway closes the batch first and the document starts
-the driver's next batch (V0006) -- never counted into a batch already decided.
+the driver's next batch (V0009) -- never counted into a batch already decided.
 """
 
 from __future__ import annotations
@@ -75,7 +75,7 @@ async def count_into_open_batch(
     ).first()
     if open_evaluation is None:
         # No open batch: the previous one was decided and closed after Driver
-        # Lookup attached this document (V0006). Open the driver's next one;
+        # Lookup attached this document (V0009). Open the driver's next one;
         # its expected count stays unset -- the gateway re-checks Mercury.
         evaluation_id = (
             await conn.execute(

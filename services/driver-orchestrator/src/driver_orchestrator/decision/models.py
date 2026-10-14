@@ -33,7 +33,7 @@ class RuleOutcome:
     """The latest ``rule_evaluation`` row for a document."""
 
     outcome_code: str  # selected_outcome_code: CP, IN, PR, PU, PCM, CR
-    # Higher wins: CP 0, IN 1, PR 2, PU 3 in rules sha256-bc8bd53103ff.
+    # Higher wins: CP 0, IN 1, PR 2, PU 3, TCM 4, CR 5 (rules engine OUTCOME_PRIORITY).
     priority_rank: int
     reason: str | None = None  # selected_reason -- clinical content: never log
     rules_version: str | None = None

@@ -65,7 +65,7 @@ async def _add_document(
             text(
                 "INSERT INTO rule_evaluation (document_id, rules_version, "
                 "selected_outcome_code, selected_reason, priority_rank, evaluated_at) "
-                "VALUES (:d, 'rules-v1', :c, :reason, :p, now())"
+                "VALUES (:d, '2026-06-12', :c, :reason, :p, now())"
             ),
             {"d": doc, "c": code, "reason": f"FAKE reason {code}", "p": rank},
         )
@@ -95,7 +95,7 @@ async def database():
             for script in _SCHEMA:
                 await raw.driver_connection.execute(script.read_text(encoding="utf-8"))
             await conn.execute(
-                text("INSERT INTO rules_version (version) VALUES ('rules-v1')")
+                text("INSERT INTO rules_version (version) VALUES ('2026-06-12')")
             )
             driver_key = str(
                 await _scalar(
@@ -143,7 +143,7 @@ def test_open_evaluation_and_batch_reads_back():
             # The latest rule evaluation wins (PU inserted after CP)
             assert (older.outcome_code, older.priority_rank) == ("PU", 3)
             assert older.outcome_reason == "FAKE reason PU"
-            assert older.rules_version == "rules-v1"
+            assert older.rules_version == "2026-06-12"
             # No rule evaluation -> None, not an error
             assert newer.outcome_code is None and newer.priority_rank is None
             assert older.comparison_hash == "a" * 64

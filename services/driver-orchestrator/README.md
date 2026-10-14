@@ -22,7 +22,7 @@ Each signal runs `evaluate.evaluate_driver`:
    count) and stop.
 5. Complete: `decision.decide()`, then `DECIDED` + one `dmer_decision` row per
    document, in one transaction, and the batch is **closed** -- the driver's
-   next DMER starts a new batch (I-10; migration V0006). If the Rule Engine
+   next DMER starts a new batch (I-10; migration V0009). If the Rule Engine
    counted another DMER in meanwhile, nothing is written and the signal is
    retried with the full batch.
 

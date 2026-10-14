@@ -345,7 +345,7 @@ class DriverLookupRepository:
                     .values(
                         driver_key=driver_key, open=True, **evaluation
                     )  # status: WAITING
-                    # The one open evaluation per driver (V0006's partial
+                    # The one open evaluation per driver (V0009's partial
                     # unique index); closed, decided batches don't conflict.
                     .on_conflict_do_update(
                         index_elements=["driver_key"],

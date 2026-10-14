@@ -1,4 +1,4 @@
--- V0006__driver_evaluation_one_open_batch.sql
+-- V0009__driver_evaluation_one_open_batch.sql
 --
 -- Lets a driver's decided batch be closed, so a DMER that arrives after the
 -- decision starts a new batch instead of joining one that will never be

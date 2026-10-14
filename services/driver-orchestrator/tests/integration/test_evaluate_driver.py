@@ -82,7 +82,7 @@ async def _add_document(conn, driver_key, evaluation_id, *, day, outcome, hash_)
         text(
             "INSERT INTO rule_evaluation (document_id, rules_version, "
             "selected_outcome_code, selected_reason, priority_rank, evaluated_at) "
-            "VALUES (:d, 'rules-v1', :c, 'FAKE reason', :p, now())"
+            "VALUES (:d, '2026-06-12', :c, 'FAKE reason', :p, now())"
         ),
         {"d": doc, "c": outcome, "p": rank},
     )
@@ -112,7 +112,7 @@ async def database(documents=(("CP", "h1"), ("CP", "h1"))):
             for script in _SCHEMA:
                 await raw.driver_connection.execute(script.read_text(encoding="utf-8"))
             await conn.execute(
-                text("INSERT INTO rules_version (version) VALUES ('rules-v1')")
+                text("INSERT INTO rules_version (version) VALUES ('2026-06-12')")
             )
             driver_key = str(
                 await _scalar(
