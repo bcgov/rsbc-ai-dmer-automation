@@ -101,7 +101,6 @@ CONDITIONS: dict[str, dict] = {
         "type": "bool",
         "description": "physician expresses concern about the Alzheimer's disease's impact on driving",
     },
-    "cns.cognitiveimpairment_s7_15_suspected": {"type": "bool", "description": ""},
     "cns.significant_head_injury_date": {"type": "str", "description": ""},
     "cns.other": {"type": "str", "description": ""},
     # --- Visual Acuity ---
@@ -799,6 +798,7 @@ CONDITIONS: dict[str, dict] = {
 #   diabetes_guide_9_1                -- see pipeline.check_diabetes_guide_9_1()
 #   endocrine.diabetes_treatment_not_indicated -- see pipeline.check_diabetes_treatment_not_indicated()
 #   non_vision_condition_indicated    -- see pipeline.check_no_other_conditions()
+#   cns.cognitiveimpairment_s7_15_suspected -- see pipeline.check_guide_7_15()
 # ---------------------------------------------------------------------------
 META_FIELD_DEFAULTS: dict[str, bool] = {
     "no_other_conditions": False,
@@ -806,6 +806,7 @@ META_FIELD_DEFAULTS: dict[str, bool] = {
     "guide_with_no_matching_condition": False,
     "diabetes_guide_9_1": False,
     "endocrine.diabetes_treatment_not_indicated": False,
+    "cns.cognitiveimpairment_s7_15_suspected": False,
 }
 
 
@@ -981,7 +982,7 @@ CATEGORY_INSTRUCTIONS: dict[ConditionCategory, str] = {
     ),
     ConditionCategory.COGNITION: (
         "Focus on cognitive impairment, dementia, Alzheimer's disease, cognitive "
-        "test scores, functional concerns, and suspected section 7.15 impairment."
+        "test scores, and functional concerns."
     ),
     ConditionCategory.CARDIOVASCULAR: (
         "Recognize common abbreviations such as CAD, CABG, PCI, MI, CHF, Afib, ICD, "

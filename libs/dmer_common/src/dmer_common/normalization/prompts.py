@@ -271,6 +271,7 @@ READ ENTIRE SENTENCES FULLY to understand context and causality. DO NOT isolate 
 (e.g., "symptom X due to disease Y", or "patient has disease X and symptom Y"), it is ONLY a concern for that primary disease (setting its _has_concerns to TRUE). NEVER flag secondary symptoms as separate independent conditions.
 Set the corresponding boolean field(s) to true for EVERY independent medical condition, diagnosis, or procedure mentioned — a single details_of_condition entry can and often does name more than one distinct condition; extract all of them, not just the first or most prominent one.
 Only set a condition the text actually names (or a recognized synonym/abbreviation of it). Do NOT infer one condition from a different one -- e.g. drop attacks are not narcolepsy or cataplexy, a seizure is not syncope.
+Only set a condition or procedure the patient has or has had. Something only possible, suspected, recommended, planned or ruled out ("may need", "?", "to be assessed for", "R/O", "no") stays false, unless the field itself is for suspected cases.
 Do NOT copy details_of_condition into any ".other" field. Set a ".other" field only to the words naming a condition in this category that has no field of its own.
 
 CRITICAL — OCR/handwriting corrections:
@@ -309,8 +310,8 @@ For each field, determine if the provided data supports setting it.
 Common medical abbreviations: PT=patient, W.=with, Hx=history, c/o=complains of, R/O=rule out.
 
 RULE — Evidence:
-EVERY SINGLE bool set to true MUST have its own separate corresponding "{{field_name}}_evidence" string in the form source_field: "exact text" -- the name of the input field it came from, then the words copied EXACTLY as they appear there (OCR errors included). Never paraphrase, summarize, or add commentary. A checked checkbox is quoted as checkbox_field: true.
-CRITICAL MINIMUM REQUIREMENT: If you set BOTH a parent condition to true AND its `_has_concerns` companion to true, you MUST generate TWO SEPARATE evidence fields (e.g., one for `vision.strabismus_evidence` AND one for `vision.strabismus_has_concerns_evidence`). Never omit the evidence for the `_has_concerns` field! Non-bools need no evidence.
+EVERY SINGLE bool set to true, and every other value you add or change, MUST have its own separate corresponding "{{field_name}}_evidence" string in the form source_field: "exact text" -- the name of the input field it came from, then the words copied EXACTLY as they appear there (OCR errors included). Never paraphrase, summarize, or add commentary. A checked checkbox is quoted as checkbox_field: true.
+CRITICAL MINIMUM REQUIREMENT: If you set BOTH a parent condition to true AND its `_has_concerns` companion to true, you MUST generate TWO SEPARATE evidence fields (e.g., one for `vision.strabismus_evidence` AND one for `vision.strabismus_has_concerns_evidence`). Never omit the evidence for the `_has_concerns` field!
 
 
 IMPORTANT: Return ONLY fields changed. Do NOT echo unchanged values.

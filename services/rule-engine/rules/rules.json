@@ -305,28 +305,28 @@
           },
           {
             "_id": "8b015257-b238-480c-8a44-23b2be78de82",
-            "8de5c5e9-dbc6-4586-a433-0027b66d3c98": "license_category == \"NORMAL\" and dmer['cerebrovascular.cerebral_aneurysm'] == true and ((dmer['cerebrovascular.cerebral_aneurysm_repaired'] == true and cerebral_aneurysm_within_3_months_post_surgery == true) or dmer['cerebrovascular.cerebral_aneurysm_residual_neuro_deficit'] == true)",
+            "8de5c5e9-dbc6-4586-a433-0027b66d3c98": "license_category == \"NORMAL\" and dmer['cerebrovascular.cerebral_aneurysm'] == true and ((dmer['cerebrovascular.cerebral_aneurysm_repaired'] == true and (cerebral_aneurysm_within_3_months_post_surgery == true or dmer['cerebrovascular.cerebral_aneurysm_date'] == \"\")) or dmer['cerebrovascular.cerebral_aneurysm_residual_neuro_deficit'] == true)",
             "fffd8665-7f6a-4f5c-8460-ee02eb93c8c7": "\"PR\"",
             "1775796a-4303-40af-9eee-d4209614871c": "false",
-            "d3377a2e-21d4-4bd6-b649-0ecae204cd70": "\"The driver has a NORMAL class license and a cerebral (brain) aneurysm, along with either a repaired stroke/TIA, a residual neurological deficit, or is within three months post CVA/TIA surgery.\""
+            "d3377a2e-21d4-4bd6-b649-0ecae204cd70": "\"The driver has a NORMAL class license and a cerebral (brain) aneurysm, along with either a repaired stroke/TIA, a residual neurological deficit, or is within three months post CVA/TIA surgery or no surgery date was given.\""
           },
           {
             "_id": "8dc9b75f-1910-424e-94be-380e3dd0c798",
-            "8de5c5e9-dbc6-4586-a433-0027b66d3c98": "license_category == \"HIGH\" and dmer['cerebrovascular.cerebral_aneurysm'] == true and ((dmer['cerebrovascular.cerebral_aneurysm_repaired'] == true and cerebral_aneurysm_within_6_months_post_surgery == true) or dmer['cerebrovascular.cerebral_aneurysm_residual_neuro_deficit'] == true)",
+            "8de5c5e9-dbc6-4586-a433-0027b66d3c98": "license_category == \"HIGH\" and dmer['cerebrovascular.cerebral_aneurysm'] == true and ((dmer['cerebrovascular.cerebral_aneurysm_repaired'] == true and (cerebral_aneurysm_within_6_months_post_surgery == true or dmer['cerebrovascular.cerebral_aneurysm_date'] == \"\")) or dmer['cerebrovascular.cerebral_aneurysm_residual_neuro_deficit'] == true)",
             "fffd8665-7f6a-4f5c-8460-ee02eb93c8c7": "\"PR\"",
             "1775796a-4303-40af-9eee-d4209614871c": "false",
-            "d3377a2e-21d4-4bd6-b649-0ecae204cd70": "\"The driver has a HIGH class license and a cerebral (brain) aneurysm, along with either a repaired stroke/TIA, a residual neurological deficit, or is within three months post CVA/TIA surgery.\""
+            "d3377a2e-21d4-4bd6-b649-0ecae204cd70": "\"The driver has a HIGH class license and a cerebral (brain) aneurysm, along with either a repaired stroke/TIA, a residual neurological deficit, or is within three months post CVA/TIA surgery or no surgery date was given.\""
           },
           {
             "_id": "02db7edf-0fb1-4b14-bf0a-ac107170bdfa",
-            "8de5c5e9-dbc6-4586-a433-0027b66d3c98": "license_category == \"NORMAL\" and dmer['cerebrovascular.cerebral_aneurysm'] == true and\ndmer['cerebrovascular.cerebral_aneurysm_repaired'] == true and dmer['cerebrovascular.cerebral_aneurysm_residual_neuro_deficit'] == false and cerebral_aneurysm_within_3_months_post_surgery == false ",
+            "8de5c5e9-dbc6-4586-a433-0027b66d3c98": "license_category == \"NORMAL\" and dmer['cerebrovascular.cerebral_aneurysm'] == true and\ndmer['cerebrovascular.cerebral_aneurysm_repaired'] == true and dmer['cerebrovascular.cerebral_aneurysm_residual_neuro_deficit'] == false and dmer['cerebrovascular.cerebral_aneurysm_date'] != \"\" and cerebral_aneurysm_within_3_months_post_surgery == false ",
             "fffd8665-7f6a-4f5c-8460-ee02eb93c8c7": "\"CP\"",
             "1775796a-4303-40af-9eee-d4209614871c": "true",
             "d3377a2e-21d4-4bd6-b649-0ecae204cd70": "\"The driver has a NORMAL class license and has had a repaired stroke or TIA with no residual neurological deficits and it has been more than 3 months since surgery. A FIT certificate is required.\""
           },
           {
             "_id": "214dda75-c408-4645-a10e-7b074f02b37e",
-            "8de5c5e9-dbc6-4586-a433-0027b66d3c98": "license_category == \"HIGH\" and dmer['cerebrovascular.cerebral_aneurysm'] == true and\ndmer['cerebrovascular.cerebral_aneurysm_repaired'] == true and dmer['cerebrovascular.cerebral_aneurysm_residual_neuro_deficit'] == false and cerebral_aneurysm_within_6_months_post_surgery == false ",
+            "8de5c5e9-dbc6-4586-a433-0027b66d3c98": "license_category == \"HIGH\" and dmer['cerebrovascular.cerebral_aneurysm'] == true and\ndmer['cerebrovascular.cerebral_aneurysm_repaired'] == true and dmer['cerebrovascular.cerebral_aneurysm_residual_neuro_deficit'] == false and dmer['cerebrovascular.cerebral_aneurysm_date'] != \"\" and cerebral_aneurysm_within_6_months_post_surgery == false ",
             "fffd8665-7f6a-4f5c-8460-ee02eb93c8c7": "\"CP\"",
             "1775796a-4303-40af-9eee-d4209614871c": "false",
             "d3377a2e-21d4-4bd6-b649-0ecae204cd70": "\"The driver has a HIGH class license and has had a repaired stroke or TIA with no residual neurological deficits and it has been more than 3 months since surgery. A FIT certificate is required.\""
@@ -1217,10 +1217,10 @@
           },
           {
             "_id": "1bda0ddc-a376-459d-b123-f82a88aaaca9",
-            "170b8a60-614e-4769-8520-7513fd8babb9": "dmer['cardiovascular.syncope'] == true and (syncope_date_within_1_year or dmer['cardiovascular.syncope_has_concerns'] == true)",
+            "170b8a60-614e-4769-8520-7513fd8babb9": "dmer['cardiovascular.syncope'] == true and (syncope_date_within_1_year or dmer['cardiovascular.syncope_date'] == \"\" or dmer['cardiovascular.syncope_has_concerns'] == true)",
             "19c4fb17-58e7-4f74-b75e-9a5d1eb9aeca": "\"PR\"",
             "81cf688c-2363-4516-91a5-2b4225f84f23": "false",
-            "ee4229d5-9e54-4197-8b1b-d9a00443816e": "\"The driver has syncope within 12 months, or with concerns\""
+            "ee4229d5-9e54-4197-8b1b-d9a00443816e": "\"The driver has syncope within 12 months, with no date given, or with concerns\""
           },
           {
             "_id": "55f5df7f-c991-40e4-9554-5f48bcced917",
@@ -1296,21 +1296,21 @@
             "170b8a60-614e-4769-8520-7513fd8babb9": "dmer['endocrine.diabetes'] == true and dmer['type'] == 'age' and (dmer['endocrine.diabetes.diet'] or dmer['endocrine.diabetes.oral_meds']) and license_category == \"NORMAL\"",
             "19c4fb17-58e7-4f74-b75e-9a5d1eb9aeca": "\"CP\"",
             "81cf688c-2363-4516-91a5-2b4225f84f23": "false",
-            "ee4229d5-9e54-4197-8b1b-d9a00443816e": "\"The driver holds a NORMAL license, has diabetes, is treated diet or other medications, and this is an age dmer\""
+            "ee4229d5-9e54-4197-8b1b-d9a00443816e": "\"The driver holds a NORMAL license, has diabetes, is treated with diet or oral medications, and this is an age dmer\""
           },
           {
             "_id": "9b374f05-5ad1-4e87-ad54-7aa5867075ef",
             "170b8a60-614e-4769-8520-7513fd8babb9": "dmer['endocrine.diabetes'] == true and (dmer['endocrine.diabetes.diet'] or dmer['endocrine.diabetes.oral_meds']) and license_category == \"HIGH\" and dmer['endocrine.diabetes_has_concerns'] == false",
             "19c4fb17-58e7-4f74-b75e-9a5d1eb9aeca": "\"CP\"",
             "81cf688c-2363-4516-91a5-2b4225f84f23": "true",
-            "ee4229d5-9e54-4197-8b1b-d9a00443816e": "\"The driver holds a HIGH license, has diabetes, is treated diet or other medications, and no other concerns\""
+            "ee4229d5-9e54-4197-8b1b-d9a00443816e": "\"The driver holds a HIGH license, has diabetes, is treated with diet or oral medications, and no other concerns\""
           },
           {
             "_id": "eea89d08-e7b5-48f0-9ad5-38ef350e0248",
             "170b8a60-614e-4769-8520-7513fd8babb9": "dmer['endocrine.diabetes'] == true and (dmer['endocrine.diabetes.diet'] or dmer['endocrine.diabetes.oral_meds']) and license_category == \"NORMAL\" and dmer['type'] != 'age'",
             "19c4fb17-58e7-4f74-b75e-9a5d1eb9aeca": "\"IN\"",
             "81cf688c-2363-4516-91a5-2b4225f84f23": "true",
-            "ee4229d5-9e54-4197-8b1b-d9a00443816e": "\"The driver holds a NORMAL license, is under 75, has diabetes, is treated diet or other medications, and no other concerns\""
+            "ee4229d5-9e54-4197-8b1b-d9a00443816e": "\"The driver holds a NORMAL license, is under 75, has diabetes, is treated with diet or oral medications, and no other concerns\""
           },
           {
             "_id": "95c176af-5b3a-4751-8271-816aa8aa9434",
@@ -1327,11 +1327,39 @@
             "ee4229d5-9e54-4197-8b1b-d9a00443816e": "\"The driver has diabetes treated insulin or insulin secretagogues, a HIGH license and R22\""
           },
           {
-            "_id": "87dc9cb3-6824-4cab-8f67-b34c146a108c",
-            "170b8a60-614e-4769-8520-7513fd8babb9": "(dmer['endocrine.diabetes'] == true or dmer['diabetes_guide_9_1'] == true) and not (((dmer['endocrine.diabetes'] == true and dmer['endocrine.diabetes_treatment_not_indicated'] == true) or dmer['diabetes_guide_9_1'] == true) and dmer['type'] == 'age' and dmer['endocrine.diabetes.non_compliant'] == false and dmer['endocrine.stable_bg_control'] == true and  license_category == \"NORMAL\" ) and not (dmer['endocrine.diabetes'] == true and dmer['type'] == 'age' and (dmer['endocrine.diabetes.insulin_secretagogues'] or dmer['endocrine.diabetes.insulin']) and dmer['endocrine.diabetes.non_compliant'] == false and dmer['endocrine.stable_bg_control'] == true and license_category == \"NORMAL\" ) and not (dmer['endocrine.diabetes'] == true and dmer['type'] == 'age' and (dmer['endocrine.diabetes.diet'] or dmer['endocrine.diabetes.oral_meds']) and license_category == \"NORMAL\" and not (dmer['endocrine.diabetes.insulin'] or dmer['endocrine.diabetes.insulin_secretagogues'])) and not (dmer['endocrine.diabetes'] == true and (dmer['endocrine.diabetes.diet'] or dmer['endocrine.diabetes.oral_meds']) and license_category == \"HIGH\" and dmer['endocrine.diabetes_has_concerns'] == false and not (dmer['endocrine.diabetes.insulin'] or dmer['endocrine.diabetes.insulin_secretagogues'])) and not (dmer['endocrine.diabetes'] == true and (dmer['endocrine.diabetes.diet'] or dmer['endocrine.diabetes.oral_meds']) and license_category == \"NORMAL\" and dmer['type'] != 'age' and not (dmer['endocrine.diabetes.insulin'] or dmer['endocrine.diabetes.insulin_secretagogues'])) and not (dmer['endocrine.diabetes'] == true and (dmer['endocrine.diabetes.diet'] or dmer['endocrine.diabetes.oral_meds']) and license_category == \"HIGH\" and dmer['endocrine.diabetes_has_concerns'] == true and not (dmer['endocrine.diabetes.insulin'] or dmer['endocrine.diabetes.insulin_secretagogues'])) and not (dmer['endocrine.diabetes'] == true and dmer['type'] == 'age' and (dmer['endocrine.diabetes.insulin_secretagogues'] or dmer['endocrine.diabetes.insulin']) and license_category == \"HIGH\" and 22 in dmer['restrictions'])",
+            "_id": "800b56e5-0317-4459-87b2-9eb5b6c591e6",
+            "170b8a60-614e-4769-8520-7513fd8babb9": "((dmer['endocrine.diabetes'] == true and dmer['endocrine.diabetes_treatment_not_indicated'] == true) or (dmer['diabetes_guide_9_1'] == true and not (dmer['endocrine.diabetes'] == true and (dmer['endocrine.diabetes.diet'] == true or dmer['endocrine.diabetes.oral_meds'] == true or dmer['endocrine.diabetes.insulin'] == true or dmer['endocrine.diabetes.insulin_secretagogues'] == true)))) and license_category == \"NORMAL\" and not (dmer['type'] == 'age' and dmer['endocrine.diabetes.non_compliant'] == false and dmer['endocrine.stable_bg_control'] == true)",
             "19c4fb17-58e7-4f74-b75e-9a5d1eb9aeca": "\"IN\"",
             "81cf688c-2363-4516-91a5-2b4225f84f23": "false",
-            "ee4229d5-9e54-4197-8b1b-d9a00443816e": "\"The driver has diabetes and none of the other diabetes treatment rows apply\""
+            "ee4229d5-9e54-4197-8b1b-d9a00443816e": "\"The driver holds a NORMAL license and has diabetes with no medication or treatment indicated (or the DMER is programmed as 9.1/9.1A), and is not an age dmer or has an indication of non compliance or unstable BG control\""
+          },
+          {
+            "_id": "22af0ff5-6859-4c5f-993c-d58d1275485a",
+            "170b8a60-614e-4769-8520-7513fd8babb9": "((dmer['endocrine.diabetes'] == true and dmer['endocrine.diabetes_treatment_not_indicated'] == true) or (dmer['diabetes_guide_9_1'] == true and not (dmer['endocrine.diabetes'] == true and (dmer['endocrine.diabetes.diet'] == true or dmer['endocrine.diabetes.oral_meds'] == true or dmer['endocrine.diabetes.insulin'] == true or dmer['endocrine.diabetes.insulin_secretagogues'] == true)))) and license_category == \"HIGH\"",
+            "19c4fb17-58e7-4f74-b75e-9a5d1eb9aeca": "\"IN\"",
+            "81cf688c-2363-4516-91a5-2b4225f84f23": "false",
+            "ee4229d5-9e54-4197-8b1b-d9a00443816e": "\"The driver holds a HIGH license and has diabetes with no medication or treatment indicated (or the DMER is programmed as 9.1/9.1A), with or without concerns\""
+          },
+          {
+            "_id": "006c5dd8-1c94-41b5-9316-ca6c97ca94fe",
+            "170b8a60-614e-4769-8520-7513fd8babb9": "dmer['endocrine.diabetes'] == true and (dmer['endocrine.diabetes.insulin'] == true or dmer['endocrine.diabetes.insulin_secretagogues'] == true) and license_category == \"NORMAL\" and not (dmer['type'] == 'age' and dmer['endocrine.diabetes.non_compliant'] == false and dmer['endocrine.stable_bg_control'] == true)",
+            "19c4fb17-58e7-4f74-b75e-9a5d1eb9aeca": "\"IN\"",
+            "81cf688c-2363-4516-91a5-2b4225f84f23": "false",
+            "ee4229d5-9e54-4197-8b1b-d9a00443816e": "\"The driver holds a NORMAL license, has diabetes treated with insulin or insulin secretagogues, and is not an age dmer or has an indication of non compliance or unstable BG control\""
+          },
+          {
+            "_id": "a7f4f016-c1b1-4945-b57e-195225d8e676",
+            "170b8a60-614e-4769-8520-7513fd8babb9": "dmer['endocrine.diabetes'] == true and (dmer['endocrine.diabetes.insulin'] == true or dmer['endocrine.diabetes.insulin_secretagogues'] == true) and license_category == \"HIGH\" and not (dmer['type'] == 'age' and 22 in dmer['restrictions'])",
+            "19c4fb17-58e7-4f74-b75e-9a5d1eb9aeca": "\"IN\"",
+            "81cf688c-2363-4516-91a5-2b4225f84f23": "false",
+            "ee4229d5-9e54-4197-8b1b-d9a00443816e": "\"The driver holds a HIGH license and has diabetes treated with insulin or insulin secretagogues, with or without concerns\""
+          },
+          {
+            "_id": "24a96ee7-016f-468b-8119-4adb231985b8",
+            "170b8a60-614e-4769-8520-7513fd8babb9": "dmer['endocrine.diabetes'] == true and not (dmer['endocrine.diabetes_treatment_not_indicated'] == true) and not (dmer['diabetes_guide_9_1'] == true) and not (dmer['endocrine.diabetes.diet'] == true or dmer['endocrine.diabetes.oral_meds'] == true or dmer['endocrine.diabetes.insulin'] == true or dmer['endocrine.diabetes.insulin_secretagogues'] == true)",
+            "19c4fb17-58e7-4f74-b75e-9a5d1eb9aeca": "\"IN\"",
+            "81cf688c-2363-4516-91a5-2b4225f84f23": "false",
+            "ee4229d5-9e54-4197-8b1b-d9a00443816e": "\"The driver has diabetes and a treatment is mentioned on the DMER but not which kind (diet, oral medications, insulin or insulin secretagogues), so no diabetes treatment row can be applied\""
           },
           {
             "_id": "5afa85b8-6309-4859-b112-b597df2bd74c",
@@ -2062,7 +2090,7 @@
             "170b8a60-614e-4769-8520-7513fd8babb9": "dmer['cns.als'] == true and dmer['cns.als_has_concerns'] == true",
             "19c4fb17-58e7-4f74-b75e-9a5d1eb9aeca": "\"PU\"",
             "81cf688c-2363-4516-91a5-2b4225f84f23": "false",
-            "ee4229d5-9e54-4197-8b1b-d9a00443816e": "\"The driver has ALS and Dr. indicates no concerns\""
+            "ee4229d5-9e54-4197-8b1b-d9a00443816e": "\"The driver has ALS and Dr. indicates concerns\""
           },
           {
             "_id": "e41929d1-9998-4467-b680-adf657e263bf",
@@ -2229,14 +2257,14 @@
             "170b8a60-614e-4769-8520-7513fd8babb9": "(dmer['pvd.deep_vein_thrombosis'] == true or dmer['pvd.peripheral_arterial_disease'] == true or dmer['pvd.peripheral_vascular_disease']) and dmer['recommendations.road_test_to_assess'] == true",
             "19c4fb17-58e7-4f74-b75e-9a5d1eb9aeca": "\"PR\"",
             "81cf688c-2363-4516-91a5-2b4225f84f23": "false",
-            "ee4229d5-9e54-4197-8b1b-d9a00443816e": "\"The driver has deep vein thrombosis or peripheral arterial disease with road test indicated\""
+            "ee4229d5-9e54-4197-8b1b-d9a00443816e": "\"The driver has deep vein thrombosis or peripheral vascular/arterial disease with road test indicated\""
           },
           {
             "_id": "2b9b783b-d54a-451b-a8d0-8f902d8e2a88",
             "170b8a60-614e-4769-8520-7513fd8babb9": "(dmer['pvd.deep_vein_thrombosis'] == true or dmer['pvd.peripheral_arterial_disease'] == true or dmer['pvd.peripheral_vascular_disease']) and dmer['recommendations.road_test_to_assess'] == false",
             "19c4fb17-58e7-4f74-b75e-9a5d1eb9aeca": "\"CP\"",
             "81cf688c-2363-4516-91a5-2b4225f84f23": "true",
-            "ee4229d5-9e54-4197-8b1b-d9a00443816e": "\"The driver has deep vein thrombosis or peripheral arterial disease with no road test indicated\""
+            "ee4229d5-9e54-4197-8b1b-d9a00443816e": "\"The driver has deep vein thrombosis or peripheral vascular/arterial disease with no road test indicated\""
           }
         ],
         "inputs": [
@@ -2284,7 +2312,7 @@
             "170b8a60-614e-4769-8520-7513fd8babb9": "license_category == \"NORMAL\" and dmer['cns.cognitiveimpairment'] == false and ((dmer['cns.mmse_score'] != null and dmer['cns.mmse_score'] >= 26 and dmer['cns.mmse_score'] <= 30) or (dmer['cns.moca_score'] != null and dmer['cns.moca_score'] >= 26 and dmer['cns.moca_score'] <= 30) or (dmer['cns.simard_score'] != null and dmer['cns.simard_score'] >= 71 and dmer['cns.simard_score'] <= 130) or (dmer['cns.gds_level_score'] != null and dmer['cns.gds_level_score'] >= 1 and dmer['cns.gds_level_score'] <= 2)) and dmer['cns.cognitiveimpairment_has_concerns'] == false and dmer['cns.cognitiveimpairment_s7_15_suspected'] == false and dmer['cns.dementia'] == false and dmer['cns.alzheimers'] == false",
             "19c4fb17-58e7-4f74-b75e-9a5d1eb9aeca": "\"CP\"",
             "81cf688c-2363-4516-91a5-2b4225f84f23": "false",
-            "ee4229d5-9e54-4197-8b1b-d9a00443816e": "\"The driver holds a NORMAL license and who has no cognitive impairment indicated, has at least one cognitive test score within the normal range, has no additional cognitive concerns noted, is flagged as known or suspected under section 7 and/or 15, and has no diagnosis of dementia or Alzheimer’s disease.\"",
+            "ee4229d5-9e54-4197-8b1b-d9a00443816e": "\"The driver holds a NORMAL license and who has no cognitive impairment indicated, has at least one cognitive test score within the normal range, has no additional cognitive concerns noted, is not flagged as known or suspected under section 7 and/or 15, and has no diagnosis of dementia or Alzheimer’s disease.\"",
             "_description": ""
           },
           {
@@ -2292,7 +2320,7 @@
             "170b8a60-614e-4769-8520-7513fd8babb9": "license_category == \"HIGH\" and dmer['cns.cognitiveimpairment'] == false and ((dmer['cns.mmse_score'] != null and dmer['cns.mmse_score'] >= 26 and dmer['cns.mmse_score'] <= 30) or (dmer['cns.moca_score'] != null and dmer['cns.moca_score'] >= 26 and dmer['cns.moca_score'] <= 30) or (dmer['cns.simard_score'] != null and dmer['cns.simard_score'] >= 71 and dmer['cns.simard_score'] <= 130) or (dmer['cns.gds_level_score'] != null and dmer['cns.gds_level_score'] >= 1 and dmer['cns.gds_level_score'] <= 2)) and dmer['cns.cognitiveimpairment_has_concerns'] == false and dmer['cns.cognitiveimpairment_s7_15_suspected'] == false and dmer['cns.dementia'] == false and dmer['cns.alzheimers'] == false",
             "19c4fb17-58e7-4f74-b75e-9a5d1eb9aeca": "\"CP\"",
             "81cf688c-2363-4516-91a5-2b4225f84f23": "false",
-            "ee4229d5-9e54-4197-8b1b-d9a00443816e": "\"The driver holds a HIGH license and who has no cognitive impairment indicated, has at least one cognitive test score within the normal range, has no additional cognitive concerns noted, is flagged as known or suspected under section 7 and/or 15, and has no diagnosis of dementia or Alzheimer’s disease.\"",
+            "ee4229d5-9e54-4197-8b1b-d9a00443816e": "\"The driver holds a HIGH license and who has no cognitive impairment indicated, has at least one cognitive test score within the normal range, has no additional cognitive concerns noted, is not flagged as known or suspected under section 7 and/or 15, and has no diagnosis of dementia or Alzheimer’s disease.\"",
             "_description": ""
           },
           {
@@ -2300,7 +2328,7 @@
             "170b8a60-614e-4769-8520-7513fd8babb9": "license_category == \"NORMAL\" and dmer['cns.cognitiveimpairment'] == false and ((dmer['cns.trails_a_seconds'] != null and dmer['cns.trails_a_seconds'] < 90) or (dmer['cns.trails_b_seconds'] != null and dmer['cns.trails_b_seconds'] < 180)) and dmer['cns.cognitiveimpairment_has_concerns'] == false and dmer['cns.cognitiveimpairment_s7_15_suspected'] == false and dmer['cns.dementia'] == false and dmer['cns.alzheimers'] == false",
             "19c4fb17-58e7-4f74-b75e-9a5d1eb9aeca": "\"CP\"",
             "81cf688c-2363-4516-91a5-2b4225f84f23": "false",
-            "ee4229d5-9e54-4197-8b1b-d9a00443816e": "\"The driver holds a NORMAL license and who has no cognitive impairment indicated, has at least Trail A under 90 seconds or Trials B under 3 minutes, has no additional cognitive concerns noted, is flagged as known or suspected under section 7 and/or 15, and has no diagnosis of dementia or Alzheimer’s disease.\"",
+            "ee4229d5-9e54-4197-8b1b-d9a00443816e": "\"The driver holds a NORMAL license and who has no cognitive impairment indicated, has at least Trail A under 90 seconds or Trials B under 3 minutes, has no additional cognitive concerns noted, is not flagged as known or suspected under section 7 and/or 15, and has no diagnosis of dementia or Alzheimer’s disease.\"",
             "_description": ""
           },
           {
@@ -2308,7 +2336,7 @@
             "170b8a60-614e-4769-8520-7513fd8babb9": "license_category == \"HIGH\" and dmer['cns.cognitiveimpairment'] == false and ((dmer['cns.trails_a_seconds'] != null and dmer['cns.trails_a_seconds'] < 90) or (dmer['cns.trails_b_seconds'] != null and dmer['cns.trails_b_seconds'] < 180)) and dmer['cns.cognitiveimpairment_has_concerns'] == false and dmer['cns.cognitiveimpairment_s7_15_suspected'] == false and dmer['cns.dementia'] == false and dmer['cns.alzheimers'] == false",
             "19c4fb17-58e7-4f74-b75e-9a5d1eb9aeca": "\"CP\"",
             "81cf688c-2363-4516-91a5-2b4225f84f23": "false",
-            "ee4229d5-9e54-4197-8b1b-d9a00443816e": "\"The driver holds a HIGH license and who has no cognitive impairment indicated, has at least Trail A under 90 seconds or Trials B under 3 minutes, has no additional cognitive concerns noted, is flagged as known or suspected under section 7 and/or 15, and has no diagnosis of dementia or Alzheimer’s disease.\"",
+            "ee4229d5-9e54-4197-8b1b-d9a00443816e": "\"The driver holds a HIGH license and who has no cognitive impairment indicated, has at least Trail A under 90 seconds or Trials B under 3 minutes, has no additional cognitive concerns noted, is not flagged as known or suspected under section 7 and/or 15, and has no diagnosis of dementia or Alzheimer’s disease.\"",
             "_description": ""
           },
           {
@@ -2332,7 +2360,7 @@
             "170b8a60-614e-4769-8520-7513fd8babb9": "license_category == \"NORMAL\" and ( dmer['cns.cognitiveimpairment'] == true or dmer['cns.dementia'] == true or dmer['cns.alzheimers'] == true ) and ( dmer['cns.cognitiveimpairment_has_concerns'] == true or dmer['cns.dementia_has_concern'] == true or dmer['cns.alzheimers_has_concern'] == true or (dmer['cns.mmse_score'] != null and dmer['cns.mmse_score'] >= 17 and dmer['cns.mmse_score'] <= 25) or (dmer['cns.moca_score'] != null and dmer['cns.moca_score'] >= 17 and dmer['cns.moca_score'] <= 25) or (dmer['cns.simard_score'] != null and dmer['cns.simard_score'] >= 31 and dmer['cns.simard_score'] <= 70) or (dmer['cns.gds_level_score'] != null and dmer['cns.gds_level_score'] >= 3 and dmer['cns.gds_level_score'] <= 4) or (dmer['cns.trails_a_seconds'] != null and dmer['cns.trails_a_seconds'] < 90) or (dmer['cns.trails_b_seconds'] != null and dmer['cns.trails_b_seconds'] >= 90 and dmer['cns.trails_b_seconds'] <= 180) )",
             "19c4fb17-58e7-4f74-b75e-9a5d1eb9aeca": "\"PU\"",
             "81cf688c-2363-4516-91a5-2b4225f84f23": "false",
-            "ee4229d5-9e54-4197-8b1b-d9a00443816e": "\"A NORMAL licence applicant who has cognitive impairment, dementia, or Alzheimer’s disease and either has documented concerns or demonstrates moderate cognitive impairment based on test results, including MMSE or MOCA scores between 17 and 25, SIMARD scores between 31 and 70, GDS level 3 or 4, Trails A time under 90 seconds, or Trails B time between 90 seconds and 3 minutes.\"",
+            "ee4229d5-9e54-4197-8b1b-d9a00443816e": "\"A NORMAL licence applicant who has cognitive impairment, dementia, or Alzheimer’s disease and either has documented concerns or demonstrates moderate cognitive impairment based on test results, including MMSE or MOCA scores between 17 and 25, SIMARD scores between 31 and 70, GDS level 3 or 4, Trails A time under 90 seconds, or Trails B time between 90 seconds and 3 minutes, or doctor has noted concerns\"",
             "_description": ""
           },
           {
@@ -2340,7 +2368,7 @@
             "170b8a60-614e-4769-8520-7513fd8babb9": "license_category == \"HIGH\" and ( dmer['cns.cognitiveimpairment'] == true or dmer['cns.dementia'] == true or dmer['cns.alzheimers'] == true ) and ( dmer['cns.cognitiveimpairment_has_concerns'] == true or dmer['cns.dementia_has_concern'] == true or dmer['cns.alzheimers_has_concern'] == true or (dmer['cns.mmse_score'] != null and dmer['cns.mmse_score'] >= 17 and dmer['cns.mmse_score'] <= 25) or (dmer['cns.moca_score'] != null and dmer['cns.moca_score'] >= 17 and dmer['cns.moca_score'] <= 25) or (dmer['cns.simard_score'] != null and dmer['cns.simard_score'] >= 31 and dmer['cns.simard_score'] <= 70) or (dmer['cns.gds_level_score'] != null and dmer['cns.gds_level_score'] >= 3 and dmer['cns.gds_level_score'] <= 4) or (dmer['cns.trails_a_seconds'] != null and dmer['cns.trails_a_seconds'] < 90) or (dmer['cns.trails_b_seconds'] != null and dmer['cns.trails_b_seconds'] >= 90 and dmer['cns.trails_b_seconds'] <= 180) )",
             "19c4fb17-58e7-4f74-b75e-9a5d1eb9aeca": "\"PU\"",
             "81cf688c-2363-4516-91a5-2b4225f84f23": "false",
-            "ee4229d5-9e54-4197-8b1b-d9a00443816e": "\"A HIGH licence applicant who has cognitive impairment, dementia, or Alzheimer’s disease and either has documented concerns or demonstrates moderate cognitive impairment based on test results, including MMSE or MOCA scores between 17 and 25, SIMARD scores between 31 and 70, GDS level 3 or 4, Trails A time under 90 seconds, or Trails B time between 90 seconds and 3 minutes.\"",
+            "ee4229d5-9e54-4197-8b1b-d9a00443816e": "\"A HIGH licence applicant who has cognitive impairment, dementia, or Alzheimer’s disease and either has documented concerns or demonstrates moderate cognitive impairment based on test results, including MMSE or MOCA scores between 17 and 25, SIMARD scores between 31 and 70, GDS level 3 or 4, Trails A time under 90 seconds, or Trails B time between 90 seconds and 3 minutes, or doctor has noted concerns\"",
             "_description": ""
           },
           {
@@ -2377,18 +2405,18 @@
           },
           {
             "_id": "a6909901-8037-4bc1-ae96-e9b4ef5f145b",
-            "170b8a60-614e-4769-8520-7513fd8babb9": "license_category == \"NORMAL\" and\ndmer['recommendations.road_test_to_assess'] == true and\n(\n  dmer['cns.cognitiveimpairment'] == false or\n  dmer['cns.dementia'] == false or\n  dmer['cns.alzheimers'] == false\n) \nand\n(\n  (dmer['cns.mmse_score'] != null and dmer['cns.mmse_score'] >= 26 and dmer['cns.mmse_score'] <= 30) or\n  (dmer['cns.moca_score'] != null and dmer['cns.moca_score'] >= 26 and dmer['cns.moca_score'] <= 30) or\n  (dmer['cns.simard_score'] != null and dmer['cns.simard_score'] >= 71 and dmer['cns.simard_score'] <= 130) or\n  (dmer['cns.gds_level_score'] != null and dmer['cns.gds_level_score'] >= 1 and dmer['cns.gds_level_score'] <= 2) or\n  (dmer['cns.trails_a_seconds'] != null and dmer['cns.trails_a_seconds'] < 90) or \n  (dmer['cns.trails_b_seconds'] != null and dmer['cns.trails_b_seconds'] < 180)\n)",
+            "170b8a60-614e-4769-8520-7513fd8babb9": "license_category == \"NORMAL\" and\ndmer['recommendations.road_test_to_assess'] == true and\n(\n  dmer['cns.mmse_score'] != null or\n  dmer['cns.moca_score'] != null or\n  dmer['cns.simard_score'] != null or\n  dmer['cns.gds_level_score'] != null or\n  dmer['cns.trails_a_seconds'] != null or\n  dmer['cns.trails_b_seconds'] != null\n) and\n  (dmer['cns.mmse_score'] == null or (dmer['cns.mmse_score'] >= 26 and dmer['cns.mmse_score'] <= 30)) and\n  (dmer['cns.moca_score'] == null or (dmer['cns.moca_score'] >= 26 and dmer['cns.moca_score'] <= 30)) and\n  (dmer['cns.simard_score'] == null or (dmer['cns.simard_score'] >= 71 and dmer['cns.simard_score'] <= 130)) and\n  (dmer['cns.gds_level_score'] == null or (dmer['cns.gds_level_score'] >= 1 and dmer['cns.gds_level_score'] <= 2)) and\n  (dmer['cns.trails_a_seconds'] == null or dmer['cns.trails_a_seconds'] < 90) and\n  (dmer['cns.trails_b_seconds'] == null or dmer['cns.trails_b_seconds'] < 180)",
             "19c4fb17-58e7-4f74-b75e-9a5d1eb9aeca": "\"PR\"",
             "81cf688c-2363-4516-91a5-2b4225f84f23": "false",
-            "ee4229d5-9e54-4197-8b1b-d9a00443816e": "\"A NORMAL licence applicant where the road test assessment box is checked or a road test is requested, and cognitive test results are within the normal range.\"",
+            "ee4229d5-9e54-4197-8b1b-d9a00443816e": "\"A NORMAL licence applicant where the road test assessment box is checked or a road test is requested, at least one cognitive test result is given, and every cognitive test result given is within the normal range.\"",
             "_description": ""
           },
           {
             "_id": "78213fd4-f42e-4820-a2f3-2d3e8a07a0be",
-            "170b8a60-614e-4769-8520-7513fd8babb9": "license_category == \"HIGH\" and dmer['recommendations.road_test_to_assess'] == true and ( dmer['cns.cognitiveimpairment'] == false or dmer['cns.dementia'] == false or dmer['cns.alzheimers'] == false ) and ( (dmer['cns.mmse_score'] != null and dmer['cns.mmse_score'] >= 26 and dmer['cns.mmse_score'] <= 30) or (dmer['cns.moca_score'] != null and dmer['cns.moca_score'] >= 26 and dmer['cns.moca_score'] <= 30) or (dmer['cns.simard_score'] != null and dmer['cns.simard_score'] >= 71 and dmer['cns.simard_score'] <= 130) or (dmer['cns.gds_level_score'] != null and dmer['cns.gds_level_score'] >= 1 and dmer['cns.gds_level_score'] <= 2) or (dmer['cns.trails_a_seconds'] != null and dmer['cns.trails_a_seconds'] < 90) or (dmer['cns.trails_b_seconds'] != null and dmer['cns.trails_b_seconds'] < 180) )",
+            "170b8a60-614e-4769-8520-7513fd8babb9": "license_category == \"HIGH\" and\ndmer['recommendations.road_test_to_assess'] == true and\n(\n  dmer['cns.mmse_score'] != null or\n  dmer['cns.moca_score'] != null or\n  dmer['cns.simard_score'] != null or\n  dmer['cns.gds_level_score'] != null or\n  dmer['cns.trails_a_seconds'] != null or\n  dmer['cns.trails_b_seconds'] != null\n) and\n  (dmer['cns.mmse_score'] == null or (dmer['cns.mmse_score'] >= 26 and dmer['cns.mmse_score'] <= 30)) and\n  (dmer['cns.moca_score'] == null or (dmer['cns.moca_score'] >= 26 and dmer['cns.moca_score'] <= 30)) and\n  (dmer['cns.simard_score'] == null or (dmer['cns.simard_score'] >= 71 and dmer['cns.simard_score'] <= 130)) and\n  (dmer['cns.gds_level_score'] == null or (dmer['cns.gds_level_score'] >= 1 and dmer['cns.gds_level_score'] <= 2)) and\n  (dmer['cns.trails_a_seconds'] == null or dmer['cns.trails_a_seconds'] < 90) and\n  (dmer['cns.trails_b_seconds'] == null or dmer['cns.trails_b_seconds'] < 180)",
             "19c4fb17-58e7-4f74-b75e-9a5d1eb9aeca": "\"PR\"",
             "81cf688c-2363-4516-91a5-2b4225f84f23": "false",
-            "ee4229d5-9e54-4197-8b1b-d9a00443816e": "\"A HIGH licence applicant where the road test assessment box is checked or a road test is requested, and cognitive test results are within the normal range.\"",
+            "ee4229d5-9e54-4197-8b1b-d9a00443816e": "\"A HIGH licence applicant where the road test assessment box is checked or a road test is requested, at least one cognitive test result is given, and every cognitive test result given is within the normal range.\"",
             "_description": ""
           }
         ],
@@ -2649,7 +2677,7 @@
         "rules": [
           {
             "_id": "4924bc17-f26b-4082-8f5f-33b700875a0c",
-            "170b8a60-614e-4769-8520-7513fd8babb9": "dmer['psychotropic_drugs.perscribed_drugs'] == true and (dmer['psychotropic_drugs.perscribed_drugs_compliant'] == true or (dmer['psychotropic_drugs.perscribed_drugs_compliant'] == false and  dmer['psychotropic_drugs.perscribed_drugs_has_concerns'] == false)) or (dmer['psychiatric.on_medications'] == true and dmer['psychiatric.compliant_with_treatment'] == true)",
+            "170b8a60-614e-4769-8520-7513fd8babb9": "(dmer['psychotropic_drugs.perscribed_drugs'] == true and (dmer['psychotropic_drugs.perscribed_drugs_compliant'] == true or (dmer['psychotropic_drugs.perscribed_drugs_compliant'] == false and  dmer['psychotropic_drugs.perscribed_drugs_has_concerns'] == false))) or (dmer['psychiatric.on_medications'] == true and dmer['psychiatric.compliant_with_treatment'] == true)",
             "19c4fb17-58e7-4f74-b75e-9a5d1eb9aeca": "\"CP\"",
             "81cf688c-2363-4516-91a5-2b4225f84f23": "false",
             "ee4229d5-9e54-4197-8b1b-d9a00443816e": "\"The driver has prescribed medications and is compliant and has no concerns\"",
@@ -2657,7 +2685,7 @@
           },
           {
             "_id": "4fe08c84-04de-4751-93bc-3f9fcc9ccd46",
-            "170b8a60-614e-4769-8520-7513fd8babb9": "dmer['psychotropic_drugs.perscribed_drugs'] == true and (dmer['psychotropic_drugs.perscribed_drugs_non_compliant'] == true or dmer['psychotropic_drugs.perscribed_drugs_has_concerns'] == true) or (dmer['psychiatric.on_medications'] == true and dmer['psychiatric.non_compliant_with_treatment'] == true)",
+            "170b8a60-614e-4769-8520-7513fd8babb9": "(dmer['psychotropic_drugs.perscribed_drugs'] == true and (dmer['psychotropic_drugs.perscribed_drugs_non_compliant'] == true or dmer['psychotropic_drugs.perscribed_drugs_has_concerns'] == true)) or (dmer['psychiatric.on_medications'] == true and dmer['psychiatric.non_compliant_with_treatment'] == true)",
             "19c4fb17-58e7-4f74-b75e-9a5d1eb9aeca": "\"PR\"",
             "81cf688c-2363-4516-91a5-2b4225f84f23": "false",
             "ee4229d5-9e54-4197-8b1b-d9a00443816e": "\"The driver has prescribed medications and is not compliant or has concerns\"",
@@ -2843,7 +2871,7 @@
             "170b8a60-614e-4769-8520-7513fd8babb9": "dmer['sleep.obstructive_sleep_apnea'] == true and (dmer['sleep.osa_severe'] == true or (dmer['sleep.osa_mild'] == false and dmer['sleep.osa_mod'] == false and dmer['sleep.osa_severe'] == false)) and ((dmer['sleep.cpap_compliant'] == false and dmer['sleep.cpap_non_compliant'] == false) or dmer['sleep.obstructive_sleep_apnea_has_concerns'] == true)",
             "19c4fb17-58e7-4f74-b75e-9a5d1eb9aeca": "\"IN\"",
             "81cf688c-2363-4516-91a5-2b4225f84f23": "false",
-            "ee4229d5-9e54-4197-8b1b-d9a00443816e": "\"The driver has OSA box checked and no other information, or severe box checked and no treatment or CPAP compliant indicated\""
+            "ee4229d5-9e54-4197-8b1b-d9a00443816e": "\"The driver has OSA box checked and no other information, or severe box checked and no treatment or CPAP compliance indicated\""
           },
           {
             "_id": "eab3e7cc-89ae-4953-a62b-d9ad16a62282",
@@ -3055,17 +3083,17 @@
           },
           {
             "_id": "7d50fdb2-08f1-4574-a11c-b43aecf20dfa",
-            "170b8a60-614e-4769-8520-7513fd8babb9": "dmer['vestibular.recurrent_vertigo'] == true and dmer['vestibular.vertigo_with_warnings'] == true and dmer['vestibular.recurrent_vertigo_has_concerns'] == false",
+            "170b8a60-614e-4769-8520-7513fd8babb9": "dmer['vestibular.recurrent_vertigo'] == true and dmer['vestibular.vertigo_with_warnings'] == true and dmer['vestibular.vertigo_date'] != \"\" and dmer['vestibular.recurrent_vertigo_has_concerns'] == false",
             "19c4fb17-58e7-4f74-b75e-9a5d1eb9aeca": "\"CP\"",
             "81cf688c-2363-4516-91a5-2b4225f84f23": "true",
             "ee4229d5-9e54-4197-8b1b-d9a00443816e": "\"The driver has recurrent vertigo with warnings and no concerns\""
           },
           {
             "_id": "69b636b0-3b39-44ef-9d0c-26986ab73f08",
-            "170b8a60-614e-4769-8520-7513fd8babb9": "dmer['vestibular.recurrent_vertigo'] == true and dmer['vestibular.vertigo_with_warnings'] == true and (vertigo_date_after_6_months or dmer['vestibular.recurrent_vertigo_has_concerns'] == true)",
+            "170b8a60-614e-4769-8520-7513fd8babb9": "dmer['vestibular.recurrent_vertigo'] == true and dmer['vestibular.vertigo_with_warnings'] == true and (vertigo_date_after_6_months or dmer['vestibular.vertigo_date'] == \"\" or dmer['vestibular.recurrent_vertigo_has_concerns'] == true)",
             "19c4fb17-58e7-4f74-b75e-9a5d1eb9aeca": "\"PR\"",
             "81cf688c-2363-4516-91a5-2b4225f84f23": "false",
-            "ee4229d5-9e54-4197-8b1b-d9a00443816e": "\"The driver has recurrent vertigo with warnings, under 6 months or has concerns\""
+            "ee4229d5-9e54-4197-8b1b-d9a00443816e": "\"The driver has recurrent vertigo with warnings, under 6 months, with no date given, or has concerns\""
           },
           {
             "_id": "d464e7d0-6813-419a-abf9-d0c8a3f8f656",
@@ -3341,7 +3369,7 @@
           },
           {
             "_id": "b5a727ac-00aa-4988-8468-59ae1f183d97",
-            "170b8a60-614e-4769-8520-7513fd8babb9": "dmer['vision.progressive_eye_condition'] == true and license_category == 'NORMAL' and (dmer['visual_field.normal'] == true or dmer['visual_field.meet_criteria_for_licence_class_yes'] == true) and dmer['visual_acuity.vision_20/50_or_better']",
+            "170b8a60-614e-4769-8520-7513fd8babb9": "dmer['vision.progressive_eye_condition'] == true and license_category == 'NORMAL' and (dmer['visual_field.normal'] == true or dmer['visual_field.meet_criteria_for_licence_class_yes'] == true) and dmer['visual_acuity.vision_20/30_or_better']",
             "19c4fb17-58e7-4f74-b75e-9a5d1eb9aeca": "\"CP\"",
             "81cf688c-2363-4516-91a5-2b4225f84f23": "false",
             "ee4229d5-9e54-4197-8b1b-d9a00443816e": "\"The driver has a normal license and a progressive eye condition, acuity meets the standard and fields meet\""

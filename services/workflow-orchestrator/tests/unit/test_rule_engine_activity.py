@@ -59,7 +59,7 @@ def dependencies(monkeypatch):
         start_or_resume=AsyncMock(
             return_value=RuleEngineRun(11, 1, RECEIVED, DRIVER_KEY)
         ),
-        register_rules_version=AsyncMock(return_value="v2026.09"),
+        find_rules_version=AsyncMock(return_value="2026-06-12"),
         succeed=AsyncMock(return_value=(501, DriverCount(True, "eval-1"))),
         fail=AsyncMock(),
     )
@@ -100,12 +100,12 @@ def test_evaluates_the_normalized_document_and_records_every_candidate(dependenc
 
     assert result == {
         "rule_evaluation_id": 501,
-        "rules_version": "v2026.09",
+        "rules_version": "2026-06-12",
         "selected_outcome_code": result["selected_outcome_code"],
     }
     kwargs = d.repo.succeed.call_args.kwargs
     assert d.repo.succeed.call_args.args == (11,)
-    assert kwargs["rules_version_name"] == "v2026.09"
+    assert kwargs["rules_version_name"] == "2026-06-12"
     assert kwargs["driver_key"] == DRIVER_KEY
     evaluation = kwargs["evaluation"]
     assert evaluation.selected_outcome_code == result["selected_outcome_code"]
@@ -114,15 +114,26 @@ def test_evaluates_the_normalized_document_and_records_every_candidate(dependenc
     d.engine.dispose.assert_awaited_once()
 
 
-def test_reads_the_active_ruleset_and_registers_its_checksum(dependencies):
+def test_reads_the_active_ruleset_and_looks_up_its_version(dependencies):
     import hashlib
 
     d = dependencies
     _run()
     d.blob.blob_url.assert_called_with("rules", "active/rules.json")
-    kwargs = d.repo.register_rules_version.call_args.kwargs
-    assert kwargs["checksum"] == hashlib.sha256(RULES_JSON).hexdigest()
-    assert kwargs["blob_url"] == RULES_URL
+    kwargs = d.repo.find_rules_version.call_args.kwargs
+    assert kwargs == {"checksum": hashlib.sha256(RULES_JSON).hexdigest()}
+
+
+def test_unregistered_active_ruleset_is_unavailable_and_recorded(dependencies):
+    # rules_version is written by maintenance only: an active rules.json with
+    # no registered version fails like a missing one, never evaluated.
+    d = dependencies
+    d.repo.find_rules_version.return_value = None
+    with pytest.raises(activity.RulesetUnavailableError):
+        _run()
+    d.repo.fail.assert_awaited_once()
+    assert d.repo.fail.call_args.kwargs["error_code"] == "RulesetUnavailableError"
+    d.repo.succeed.assert_not_awaited()
 
 
 def test_blank_document_selects_intake(dependencies):

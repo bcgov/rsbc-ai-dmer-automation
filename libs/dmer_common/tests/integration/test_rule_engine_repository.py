@@ -16,7 +16,6 @@ from uuid import uuid4
 
 import pytest
 from dmer_common.db.rule_engine import (
-    UNREGISTERED_ACTIVATED_BY,
     RuleEngineBusyError,
     RuleEngineNotReadyError,
     RuleEngineStateError,
@@ -36,6 +35,7 @@ _MIGRATIONS = Path(__file__).resolve().parents[4] / "database/migrations"
 _SCHEMA = sorted(_MIGRATIONS.glob("V*.sql"), key=lambda path: int(path.name[1:5]))
 RECEIVED = datetime(2026, 9, 1, tzinfo=UTC)
 CHECKSUM = hashlib.sha256(b"rules").hexdigest()
+VERSION = "2026-06-12"
 EVALUATION = select_outcome(
     (
         Outcome("Cardiovascular", "PR", False, "CAD with concerns"),
@@ -58,6 +58,18 @@ async def database(*, status="NORMALIZED", with_driver=True, open_evaluation=Tru
             raw = await conn.get_raw_connection()
             for script in _SCHEMA:
                 await raw.driver_connection.execute(script.read_text(encoding="utf-8"))
+            # Registered by maintenance, never by the pipeline.
+            await conn.execute(
+                text(
+                    "INSERT INTO rules_version (version, blob_url, checksum, "
+                    "activated_at, activated_by) VALUES (:v, :u, :c, now(), 'maintenance')"
+                ),
+                {
+                    "v": VERSION,
+                    "u": "https://blob/rules/active/rules.json",
+                    "c": CHECKSUM,
+                },
+            )
             driver_key = None
             if with_driver:
                 driver_key = str(
@@ -103,11 +115,7 @@ async def _evaluate(engine, document_id):
     async with rule_engine_session(engine, document_id) as repository:
         run = await repository.start_or_resume(now=datetime.now(UTC))
         assert run.completed is None
-        version = await repository.register_rules_version(
-            checksum=CHECKSUM,
-            blob_url="https://blob/rules/active/rules.json",
-            now=datetime.now(UTC),
-        )
+        version = await repository.find_rules_version(checksum=CHECKSUM)
         evaluation_id, count = await repository.succeed(
             run.run_id,
             evaluation=EVALUATION,
@@ -127,13 +135,14 @@ def test_success_records_every_candidate_and_completes_the_stage():
         async with database() as (engine, doc_id):
             attempt, version, evaluation_id, count = await _evaluate(engine, doc_id)
             assert attempt.received_date == RECEIVED
-            assert version == f"sha256-{CHECKSUM[:12]}"
+            assert version == VERSION
             assert count.counted is True
             async with engine.connect() as conn:
                 row = await _one(
                     conn,
                     "SELECT rules_version, all_outcomes, selected_outcome_code, "
-                    "selected_reason, priority_rank FROM rule_evaluation WHERE id = :i",
+                    "selected_reason, priority_rank, fit_letter FROM rule_evaluation "
+                    "WHERE id = :i",
                     i=evaluation_id,
                 )
                 record = row[1] if isinstance(row[1], dict) else json.loads(row[1])
@@ -144,6 +153,8 @@ def test_success_records_every_candidate_and_completes_the_stage():
                 assert row[2] == "PR"
                 assert row[3] == EVALUATION.selected_reason
                 assert row[4] == EVALUATION.priority_rank
+                # The winning PR row has no FIT letter; the losing CP row's doesn't count.
+                assert row[5] is False
                 assert await _one(
                     conn, "SELECT status, model_version FROM dmer_stage_run"
                 ) == ("SUCCEEDED", version)
@@ -154,9 +165,10 @@ def test_success_records_every_candidate_and_completes_the_stage():
                 assert await _one(
                     conn, "SELECT completed_document_count FROM driver_evaluation"
                 ) == (1,)
-                assert await _one(conn, "SELECT activated_by FROM rules_version") == (
-                    UNREGISTERED_ACTIVATED_BY,
-                )
+                # The evaluation read the version; it never writes one.
+                assert await _one(
+                    conn, "SELECT version, activated_by FROM rules_version"
+                ) == (VERSION, "maintenance")
 
     asyncio.run(run())
 
@@ -210,21 +222,25 @@ def test_a_rerun_records_a_new_evaluation_but_counts_the_document_once():
     asyncio.run(run())
 
 
-def test_a_published_version_is_used_by_its_checksum():
+def test_each_version_is_found_by_its_own_checksum():
+    # A later file for the same procedures date gets its own version (.2).
+    revised = hashlib.sha256(b"rules, revised").hexdigest()
+
     async def run():
         async with database() as (engine, doc_id):
             async with engine.begin() as conn:
                 await conn.execute(
                     text(
                         "INSERT INTO rules_version (version, checksum, activated_at, activated_by) "
-                        "VALUES ('2026.09.1', :c, now(), 'publisher')"
+                        "VALUES ('2026-06-12.2', :c, now(), 'maintenance')"
                     ),
-                    {"c": CHECKSUM},
+                    {"c": revised},
                 )
-            _, version, _, _ = await _evaluate(engine, doc_id)
-            assert version == "2026.09.1"
-            async with engine.connect() as conn:
-                assert await _one(conn, "SELECT count(*) FROM rules_version") == (1,)
+            async with rule_engine_session(engine, doc_id) as repository:
+                assert await repository.find_rules_version(checksum=revised) == (
+                    "2026-06-12.2"
+                )
+                assert await repository.find_rules_version(checksum=CHECKSUM) == VERSION
 
     asyncio.run(run())
 
@@ -312,11 +328,7 @@ def test_an_overridden_clean_pass_keeps_the_engine_outcome_and_says_why():
         async with database() as (engine, doc_id):
             async with rule_engine_session(engine, doc_id) as repository:
                 attempt = await repository.start_or_resume(now=datetime.now(UTC))
-                version = await repository.register_rules_version(
-                    checksum=CHECKSUM,
-                    blob_url="https://blob/rules/active/rules.json",
-                    now=datetime.now(UTC),
-                )
+                version = await repository.find_rules_version(checksum=CHECKSUM)
                 await repository.succeed(
                     attempt.run_id,
                     evaluation=override,
@@ -336,5 +348,16 @@ def test_an_overridden_clean_pass_keeps_the_engine_outcome_and_says_why():
                 reason == override.selected_reason
                 and "driving record" in reason.lower()
             )
+
+    asyncio.run(run())
+
+
+def test_unregistered_checksum_has_no_version_and_registers_nothing():
+    async def run():
+        async with database() as (engine, doc_id):
+            async with rule_engine_session(engine, doc_id) as repository:
+                assert await repository.find_rules_version(checksum="0" * 64) is None
+            async with engine.connect() as conn:
+                assert await _one(conn, "SELECT count(*) FROM rules_version") == (1,)
 
     asyncio.run(run())
