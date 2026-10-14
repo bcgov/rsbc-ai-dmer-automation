@@ -19,7 +19,7 @@ The evaluation's status moves WAITING -> READY -> EVALUATING -> DECIDED
 
 - ``driver_evaluation``: status DECIDED, ``evaluated_at``, ``decision_summary``,
   and **closed** (``open = false``), so the driver's next DMER starts a new
-  batch (I-10; V0009/V0010 allow any number of closed batches per driver);
+  batch (I-10; V0009/V0011 allow any number of closed batches per driver);
 - one ``dmer_decision`` row per decided document (``decided_by = AI``), so
   Post-Processing reads the outcomes from the database -- they never travel
   in a message (decision_reason carries clinical content, section 9.2);

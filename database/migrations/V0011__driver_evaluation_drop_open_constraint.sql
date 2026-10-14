@@ -1,4 +1,4 @@
--- V0010__driver_evaluation_drop_open_constraint.sql
+-- V0011__driver_evaluation_drop_open_constraint.sql
 --
 -- Second step of V0009 (read that file's header first): drops V0001's
 -- UNIQUE (driver_key, open), so any number of closed (decided) batches per

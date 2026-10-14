@@ -16,7 +16,7 @@
 --     so the currently deployed Driver Lookup -- ON CONFLICT (driver_key,
 --     open) -- keeps working, and the new code -- ON CONFLICT (driver_key)
 --     WHERE open, used by Driver Lookup and the Rule Engine -- works too.
---   V0010: DROP the old constraint, once the new workflow-orchestrator code
+--   V0011: DROP the old constraint, once the new workflow-orchestrator code
 --     is deployed. Until then, closing a driver's second batch is blocked
 --     (the Decision Gateway's trigger deploys disabled).
 --

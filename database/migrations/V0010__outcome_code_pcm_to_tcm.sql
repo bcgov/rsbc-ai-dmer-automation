@@ -1,4 +1,4 @@
--- V0011__outcome_code_pcm_to_tcm.sql
+-- V0010__outcome_code_pcm_to_tcm.sql
 --
 -- Renames the dmer_outcome_code enum value PCM to TCM in databases created
 -- before V0001 was corrected.
