@@ -119,30 +119,35 @@ async def route_to_manual_review_activity(payload: dict) -> dict:
 async def _signal_driver(engine, document_id: str, blob_url: str | None) -> bool:
     """Signal the document's driver if it is in MANUAL_REVIEW with a driver
     (counted into the batch by the routing write). Also on a retried call,
-    so a signal lost to a crash is re-sent. Never raises."""
-    state = await load_signal_state(engine, document_id)
-    if (
-        state is None
-        or state.pipeline_status != "MANUAL_REVIEW"
-        or not state.driver_key
-    ):
-        return False
-    if not blob_url:
-        _log.warning("manual review: no blob URL; driver not signalled")
-        return False
-    message = DriverDecisionMessage(
-        message_id=event_message_id(
-            DRIVER_DECISION_EVENT, f"{document_id}:manual-review"
-        ),
-        document_id=document_id,
-        document_guid=state.document_guid,
-        driver_key=state.driver_key,
-        blob_url=blob_url,
-        enqueued_at=datetime.now(UTC),
-    )
+    so a signal lost to a crash is re-sent.
+
+    Never raises -- any failure (reading the document, building or publishing
+    the message) is logged and reported as not signalled: the routing write
+    is already committed, so a missed signal only delays the decision.
+    """
     try:
+        state = await load_signal_state(engine, document_id)
+        if (
+            state is None
+            or state.pipeline_status != "MANUAL_REVIEW"
+            or not state.driver_key
+        ):
+            return False
+        if not blob_url:
+            _log.warning("manual review: no blob URL; driver not signalled")
+            return False
+        message = DriverDecisionMessage(
+            message_id=event_message_id(
+                DRIVER_DECISION_EVENT, f"{document_id}:manual-review"
+            ),
+            document_id=document_id,
+            document_guid=state.document_guid,
+            driver_key=state.driver_key,
+            blob_url=blob_url,
+            enqueued_at=datetime.now(UTC),
+        )
         await _run_sync(publish_driver_decision, message)
-    except Exception as exc:  # noqa: BLE001 - counted already; see module docstring
+    except Exception as exc:  # noqa: BLE001 - routed already; see the docstring
         _log.error(
             "manual review: driver signal failed",
             extra={"error_code": type(exc).__name__},

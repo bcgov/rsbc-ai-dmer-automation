@@ -22,7 +22,7 @@ Each signal runs `evaluate.evaluate_driver`:
    count) and stop.
 5. Complete: `decision.decide()`, then `DECIDED` + one `dmer_decision` row per
    document, in one transaction, and the batch is **closed** -- the driver's
-   next DMER starts a new batch (I-10; migration V0009). If the Rule Engine
+   next DMER starts a new batch (I-10; migrations V0009 and V0010). If the Rule Engine
    counted another DMER in meanwhile, nothing is written and the signal is
    retried with the full batch.
 
@@ -52,6 +52,10 @@ but doesn't create:
 - the shared orchestrator subnet (`snet-rsbc-dmer-orchestrator-<env>`), the same one the
   Document Orchestration app uses;
 - the session-enabled `driver-decision` queue (`main.bicep`);
+- migrations up to V0010. Order: apply **V0009** (adds the open-batch index; safe with old and
+  new code), deploy the `workflow-orchestrator` code from this change, then apply **V0010**
+  (drops the old constraint; old code would break without it). Switch the `DriverDecision`
+  trigger on only after V0010, or a driver's second batch can't be closed;
 - the deployment package container on the runtime storage account
   (`app-package-func-rsbc-dmer-driver-orchestrator-dev` in DEV). Not a Durable Functions app, so
   no queue or table state is kept there.

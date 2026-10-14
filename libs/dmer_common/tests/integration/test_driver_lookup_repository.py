@@ -297,7 +297,7 @@ def test_documents_not_ready_or_reviewed_elsewhere_are_refused(status, error):
 
 
 def test_a_driver_with_a_closed_batch_gets_a_new_open_one():
-    # V0009: closed (decided) batches don't block the driver's next one.
+    # V0009/V0010: closed (decided) batches don't block the driver's next one.
     from dmer_common.db.driver import normalize_licence_number
 
     async def run():

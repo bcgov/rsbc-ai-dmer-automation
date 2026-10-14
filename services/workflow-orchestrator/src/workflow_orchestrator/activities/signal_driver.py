@@ -7,11 +7,18 @@ decision. The message goes to the session-enabled ``driver-decision`` queue
 with ``SessionId = driver_key`` -- one writer per driver -- and the document
 moves ``RULES_APPLIED`` -> ``AWAITING_DRIVER_COMPLETION``.
 
+Order matters: the document moves to ``AWAITING_DRIVER_COMPLETION`` *before*
+the message is published. The Decision Gateway only decides documents that
+are awaiting their driver; publishing first let it handle the signal while
+the document was still ``RULES_APPLIED``, treat the batch as still processing
+and stop -- with no later signal for that driver, the batch waited forever.
+
 Idempotent: the ``message_id`` is derived from the document
 (``event_message_id("driver-decision", document_id)``), so a retry that
 publishes again sends the same event, which duplicate detection and the
-consumer's idempotency recognise; a document already signalled is not
-published again.
+consumer's idempotency recognise. A retry that finds the document already
+awaiting its driver (moved, then the publish failed) publishes again; one
+already decided or further on is not published.
 """
 
 from __future__ import annotations
@@ -42,10 +49,10 @@ _log = get_logger(__name__)
 
 ACTIVITY_NAME = "SignalDriver"
 
-# Already signalled (or further on): nothing to publish.
-_SIGNALLED = frozenset(
-    {"AWAITING_DRIVER_COMPLETION", "DECIDED", "POSTING", "COMPLETED"}
-)
+# Decided or further on: the driver needs no signal for this document.
+_PAST_SIGNAL = frozenset({"DECIDED", "POSTING", "COMPLETED"})
+# Rules applied (first attempt) or already awaiting (a retry after the move).
+_SIGNALLABLE = frozenset({"RULES_APPLIED", "AWAITING_DRIVER_COMPLETION"})
 
 
 class SignalDriverValidationError(ValueError):
@@ -94,7 +101,7 @@ def publish_driver_decision(message: DriverDecisionMessage) -> None:
 
 
 async def signal_driver_activity(payload: dict) -> dict:
-    """Publish ``driver-decision`` for the document and mark it awaiting its driver."""
+    """Mark the document awaiting its driver, then publish ``driver-decision``."""
     document_id, normalized_blob_url = _input(payload)
     engine = None
     with document_id_context(document_id):
@@ -103,12 +110,18 @@ async def signal_driver_activity(payload: dict) -> dict:
             state = await load_signal_state(engine, document_id)
             if state is None:
                 raise SignalDriverValidationError("Document not found")
-            if state.pipeline_status in _SIGNALLED:
-                _log.info("signal driver: already signalled")
+            if state.pipeline_status in _PAST_SIGNAL:
+                _log.info("signal driver: already decided")
                 return {"published": False}
-            if state.pipeline_status != "RULES_APPLIED" or not state.driver_key:
+            if state.pipeline_status not in _SIGNALLABLE or not state.driver_key:
                 raise SignalDriverValidationError(
                     "Document is not ready to signal its driver"
+                )
+            # Move first, publish second -- see the module docstring.
+            moved = False
+            if state.pipeline_status == "RULES_APPLIED":
+                moved = await mark_awaiting_driver_completion(
+                    engine, document_id, now=datetime.now(UTC)
                 )
             message = DriverDecisionMessage(
                 message_id=event_message_id(DRIVER_DECISION_EVENT, document_id),
@@ -119,9 +132,6 @@ async def signal_driver_activity(payload: dict) -> dict:
                 enqueued_at=datetime.now(UTC),
             )
             await _run_sync(publish_driver_decision, message)
-            moved = await mark_awaiting_driver_completion(
-                engine, document_id, now=datetime.now(UTC)
-            )
             _log.info(
                 "signal driver: published",
                 extra={

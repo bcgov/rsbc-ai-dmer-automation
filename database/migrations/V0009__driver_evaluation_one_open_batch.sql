@@ -6,19 +6,23 @@
 -- treated separately).
 --
 -- V0001's UNIQUE (driver_key, open) allows one open AND one closed
--- evaluation per driver, so closing a driver's second batch would fail.
--- Replaced by a unique index on open evaluations only: still at most one
+-- evaluation per driver, so closing a driver's second batch would fail. It
+-- is replaced by a unique index on open evaluations only: still at most one
 -- open batch per driver, any number of closed ones.
 --
--- Writers that upsert the open evaluation (Driver Lookup, Rule Engine) use
--- ON CONFLICT (driver_key) WHERE open, which this index serves.
+-- Two steps, so neither the old nor the new code breaks during a deploy:
 --
--- Re-runnable: IF EXISTS / IF NOT EXISTS. Existing data cannot violate the
--- new index -- the old constraint already allowed one open row per driver.
+--   V0009 (this file): ADD the open-only index. The old constraint stays,
+--     so the currently deployed Driver Lookup -- ON CONFLICT (driver_key,
+--     open) -- keeps working, and the new code -- ON CONFLICT (driver_key)
+--     WHERE open, used by Driver Lookup and the Rule Engine -- works too.
+--   V0010: DROP the old constraint, once the new workflow-orchestrator code
+--     is deployed. Until then, closing a driver's second batch is blocked
+--     (the Decision Gateway's trigger deploys disabled).
+--
+-- Re-runnable (IF NOT EXISTS). Existing data cannot violate the new index:
+-- the old constraint already allowed only one open row per driver.
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_driver_evaluation_open_per_driver
     ON driver_evaluation (driver_key)
     WHERE open;
-
-ALTER TABLE driver_evaluation
-    DROP CONSTRAINT IF EXISTS driver_evaluation_driver_key_open_key;
