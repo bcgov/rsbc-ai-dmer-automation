@@ -21,7 +21,8 @@
 //   The deployment package container must exist before the first publish.
 // - The driver-decision queue -- owned by main.bicep.
 // - The Postgres role for this app's identity (data-plane SQL -- see
-//   services/driver-orchestrator/roles.sql).
+//   services/driver-orchestrator/README.md, which reuses
+//   services/intake-processor/create-principal.sql and roles.sql).
 //
 // The DriverDecision trigger is DISABLED unless driverDecisionTriggerEnabled
 // is true -- via the AzureWebJobs.DriverDecision.Disabled app setting, the
