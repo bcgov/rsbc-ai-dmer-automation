@@ -5,8 +5,9 @@ Pure functions (no I/O beyond reading bundled resource files):
 - :func:`parse_llm_json` / :func:`repair_json_text` — tolerate markdown fences and
   repair known LLM JSON defects (JS ternary values) before parsing.
 - :func:`sanitize_fields` — fill any missing field keys, blank values that are
-  actually printed form labels, and force ``low`` confidence whenever the two
-  sources did not both agree (the binary-confidence rule).
+  actually printed form labels, force ``low`` confidence whenever the two
+  sources did not both agree (the binary-confidence rule), and withhold (blank)
+  every ``low``-confidence value, so only agreed readings go downstream.
 
 Resource loaders read the bundled ``dmer_field_schema.json`` and
 ``dmer_template_labels.json``.
@@ -122,6 +123,8 @@ def sanitize_fields(
     - Force ``low`` confidence whenever ``source != "both"`` -- including BLANK
       fields: the model often marks a field it is sure is empty as ``high`` with
       ``source: none``, which the schema rejects (a real reply has dozens).
+    - Blank every ``low``-confidence value (with a note): only readings where the
+      image and OCR agree (``high``) are kept.
     - Add any missing field keys as empty ``low``/``none`` entries.
 
     Returns the mutated ``result`` for convenience.
@@ -150,11 +153,17 @@ def sanitize_fields(
 
         if entry["source"] != "both" and entry["confidence"] != "low":
             entry["confidence"] = "low"
-            if entry.get("value"):  # a blank field needs no explanation
-                note = entry.get("notes", "") or ""
-                entry["notes"] = (
-                    note + " | Confidence set to low: image and OCR did not both agree."
-                ).strip(" |")
+
+        # Only confident handwritten values are kept: a low-confidence reading
+        # is withheld (blanked) rather than passed downstream as if it were
+        # reliable. The field stays listed, so reviewers can still see it.
+        if entry["confidence"] == "low" and entry.get("value"):
+            entry["value"] = ""
+            note = entry.get("notes", "") or ""
+            entry["notes"] = (
+                note
+                + " | Value withheld: low confidence (image and OCR did not both agree)."
+            ).strip(" |")
 
     for key in keys:
         if key not in fields:

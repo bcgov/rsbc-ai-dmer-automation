@@ -12,7 +12,10 @@ dicts, so line/word parsing here operates on dicts (not raw SDK objects).
 
 from __future__ import annotations
 
+import contextvars
 import logging
+import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from dmer_common.doc_intelligence import DocumentIntelligenceClient
@@ -28,6 +31,12 @@ PREBUILT_READ = "prebuilt-read"
 # Row grouping band size (px) — half a tile height so both vertical passes land
 # in the same band (matches the POC's group_results_by_row).
 BAND_SIZE = max(TILE_HEIGHT // 2, 1)
+
+# Tiles analyzed at once. Each tile is a tiny image, so a call's ~2 s is almost
+# all round-trip and polling wait, not compute: sequential OCR of 108-135 tiles
+# took ~4-5 min per document in dev. 8 in flight keeps well under the DI S0
+# rate limit (~15 analyze requests/s); throttling (429) is retried by the client.
+DEFAULT_OCR_CONCURRENCY = 8
 
 
 def _poly_top_left(polygon: list[float]) -> tuple[float, float]:
@@ -117,33 +126,57 @@ def tiles_to_rows(
     return ordered
 
 
+def _ocr_tile(client: DocumentIntelligenceClient, tile: Tile) -> list | None:
+    """Analyze one tile; its result pages, or None if it failed (logged)."""
+    try:
+        return client.analyze(PREBUILT_READ, image_to_png_bytes(tile.image)).pages
+    except Exception:  # noqa: BLE001 - one bad tile must not abort the page
+        _log.warning(
+            "tile OCR failed; skipping",
+            extra={"tile_number": tile.tile_number, "segment": tile.segment},
+        )
+        return None
+
+
 def ocr_tiles(
     client: DocumentIntelligenceClient,
     tiles: list[Tile],
     page_number: int,
     page_width: int,
     page_height: int,
+    max_workers: int = DEFAULT_OCR_CONCURRENCY,
 ) -> dict[str, Any]:
     """OCR every tile with ``prebuilt-read`` and assemble the rows/segments JSON.
 
-    A tile that fails to analyze is skipped (its lines are simply absent), so a
-    single bad tile does not abort the whole page. If **every** tile fails, the
-    page has no OCR at all and raises ``OCR_FAILED`` rather than letting the LLM
-    reconstruct handwriting from the image alone.
+    Up to ``max_workers`` tiles are analyzed at once (1 = one at a time); the
+    output is in tile order regardless. A tile that fails to analyze is skipped
+    (its lines are simply absent), so a single bad tile does not abort the
+    whole page. If **every** tile fails, the page has no OCR at all and raises
+    ``OCR_FAILED`` rather than letting the LLM reconstruct handwriting from the
+    image alone.
     """
+    started = time.monotonic()
+    workers = max(1, min(max_workers, len(tiles)))
+    if workers == 1:
+        outcomes = [_ocr_tile(client, tile) for tile in tiles]
+    else:
+        with ThreadPoolExecutor(
+            max_workers=workers, thread_name_prefix="ocr-tile"
+        ) as pool:
+            # Each worker runs in a copy of this context so log lines keep the
+            # document_id (contextvars are not inherited by pool threads).
+            futures = [
+                pool.submit(contextvars.copy_context().run, _ocr_tile, client, tile)
+                for tile in tiles
+            ]
+            outcomes = [f.result() for f in futures]  # tile order preserved
+
     tile_results: list[dict[str, Any]] = []
     failed = 0
-    for tile in tiles:
-        try:
-            di_result = client.analyze(PREBUILT_READ, image_to_png_bytes(tile.image))
-            pages = di_result.pages
-        except Exception:  # noqa: BLE001 - one bad tile must not abort the page
-            _log.warning(
-                "tile OCR failed; skipping",
-                extra={"tile_number": tile.tile_number, "segment": tile.segment},
-            )
-            pages = []
+    for tile, pages in zip(tiles, outcomes, strict=True):
+        if pages is None:
             failed += 1
+            pages = []
         tile_results.append(
             {
                 "tile_number": tile.tile_number,
@@ -165,7 +198,13 @@ def ocr_tiles(
     _log.log(
         logging.WARNING if failed else logging.INFO,
         "tiled OCR complete",
-        extra={"tiles": len(tiles), "failed_tiles": failed, "rows": len(rows)},
+        extra={
+            "tiles": len(tiles),
+            "failed_tiles": failed,
+            "rows": len(rows),
+            "concurrency": workers,
+            "duration_seconds": round(time.monotonic() - started, 1),
+        },
     )
     return {
         "ocr_engine": "azure_document_intelligence",

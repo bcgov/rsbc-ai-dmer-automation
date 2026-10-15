@@ -121,6 +121,7 @@ def build_application(
         config=PipelineConfig(
             custom_model_id=settings.custom_model_id,
             prompt_version=settings.prompt_version,
+            ocr_concurrency=settings.ocr_concurrency,
         ),
         blob=blob,
         di_custom=di_custom,

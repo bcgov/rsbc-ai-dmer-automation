@@ -93,6 +93,7 @@ from dmer_common.storage import (
 from dmer_common.telemetry import get_logger
 
 from .extraction import (
+    comparison,
     di_ocr,
     licence,
     llm_reconstruct,
@@ -126,6 +127,7 @@ class PipelineConfig:
 
     custom_model_id: str
     prompt_version: str | None = None
+    ocr_concurrency: int = di_ocr.DEFAULT_OCR_CONCURRENCY
 
 
 class Pipeline:
@@ -262,6 +264,7 @@ class Pipeline:
                     page_number=render.PAGE_NUMBER,
                     page_width=image.width,
                     page_height=image.height,
+                    max_workers=self._cfg.ocr_concurrency,
                 )
             with failure_step(FailureCode.ARTIFACT_WRITE_FAILED):
                 self._blob.upload_json(extracted_dmer(), ocr_path(doc_id), ocr_result)
@@ -299,6 +302,9 @@ class Pipeline:
                 "licence read from page",
                 extra={"document_id": doc_id, "licence_read": licence_read is not None},
             )
+            # Duplicate comparison: from the custom-model output only (stable
+            # between runs, unlike the LLM's handwriting reading).
+            compare = comparison.comparison_fields(top)
             with failure_step(FailureCode.DB_WRITE_FAILED):
                 await self._extractions.upsert(
                     ExtractionRecord(
@@ -307,6 +313,8 @@ class Pipeline:
                         has_header=combined.cutoff.has_header,
                         has_signature=combined.cutoff.has_signature,
                         is_cutoff=combined.cutoff.is_cutoff,
+                        comparison_fields=compare,
+                        comparison_hash=comparison.comparison_hash(compare),
                     )
                 )
                 # Persist EXTRACTED + the pointer *before* publishing, so a crash
