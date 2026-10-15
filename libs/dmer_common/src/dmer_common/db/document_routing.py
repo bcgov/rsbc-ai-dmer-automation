@@ -3,8 +3,10 @@
 See docs/development/stages/03-document-orchestration.md: after the Rule
 Engine the driver is signalled (``RULES_APPLIED`` -> ``AWAITING_DRIVER_COMPLETION``),
 and a document an activity could not process is routed to ``MANUAL_REVIEW``
-with a ``processing_error`` row. Both are compare-and-set updates, safe to
-repeat on retry.
+with a ``processing_error`` row -- and, if Driver Lookup already attached its
+driver, counted into the driver's open batch so the Decision Gateway can
+decide the rest of the batch instead of waiting for it forever. All are
+compare-and-set or insert-once writes, safe to repeat on retry.
 """
 
 from __future__ import annotations
@@ -17,6 +19,7 @@ from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from .dmer_document import _pipeline_status_enum
+from .driver_batch import count_into_open_batch
 from .processing_error import FailureCategory, record_processing_error
 from .status import PipelineStatus, next_statuses
 
@@ -99,19 +102,36 @@ async def route_to_manual_review(
     """Route the document to ``MANUAL_REVIEW`` and record why in
     ``processing_error``, in one transaction. *reason_code* is a code, never
     document content. False (nothing written) when the document is already
-    terminal -- ``MANUAL_REVIEW`` (its first record stands) or ``COMPLETED``."""
+    terminal -- ``MANUAL_REVIEW`` (its first record stands) or ``COMPLETED``.
+
+    A document with a driver (it failed after Driver Lookup) is also counted
+    into the driver's open batch, in the same transaction: it is finished, so
+    the Decision Gateway must not wait for it (it decides the rest of the
+    batch; this document's outcome comes from the manual-review fallback).
+    """
     async with engine.begin() as conn:
-        routed = await conn.execute(
-            _document.update()
-            .where(
-                _document.c.id == document_id,
-                _document.c.pipeline_status.in_(_REVIEWABLE),
+        routed = (
+            await conn.execute(
+                _document.update()
+                .where(
+                    _document.c.id == document_id,
+                    _document.c.pipeline_status.in_(_REVIEWABLE),
+                )
+                .values(
+                    pipeline_status=PipelineStatus.MANUAL_REVIEW.value, updated_at=now
+                )
+                .returning(_document.c.id, _document.c.driver_key)
             )
-            .values(pipeline_status=PipelineStatus.MANUAL_REVIEW.value, updated_at=now)
-            .returning(_document.c.id)
-        )
-        if routed.first() is None:
+        ).first()
+        if routed is None:
             return False
+        if routed.driver_key:
+            await count_into_open_batch(
+                conn,
+                driver_key=str(routed.driver_key),
+                document_id=document_id,
+                now=now,
+            )
         await record_processing_error(
             conn,
             document_id=document_id,

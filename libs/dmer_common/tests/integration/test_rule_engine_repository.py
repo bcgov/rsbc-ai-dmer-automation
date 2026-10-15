@@ -245,10 +245,9 @@ def test_each_version_is_found_by_its_own_checksum():
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("kwargs", [{"with_driver": False}, {"open_evaluation": False}])
-def test_completes_without_a_driver_evaluation_to_count(kwargs):
+def test_completes_without_a_driver_evaluation_to_count():
     async def run():
-        async with database(**kwargs) as (engine, doc_id):
+        async with database(with_driver=False) as (engine, doc_id):
             _, _, _, count = await _evaluate(engine, doc_id)
             assert count.counted is False and count.driver_evaluation_id is None
             async with engine.connect() as conn:
@@ -348,6 +347,51 @@ def test_an_overridden_clean_pass_keeps_the_engine_outcome_and_says_why():
                 reason == override.selected_reason
                 and "driving record" in reason.lower()
             )
+
+    asyncio.run(run())
+
+
+def test_without_an_open_evaluation_the_driver_gets_one():
+    # Driver Lookup normally opens it; if none is open (e.g. the previous
+    # batch was decided and closed), the Rule Engine opens the next batch.
+    async def run():
+        async with database(open_evaluation=False) as (engine, doc_id):
+            _, _, _, count = await _evaluate(engine, doc_id)
+            assert count.counted is True and count.driver_evaluation_id
+            async with engine.connect() as conn:
+                assert await _one(
+                    conn,
+                    "SELECT id::text, status::text, open, completed_document_count, "
+                    "expected_document_count FROM driver_evaluation",
+                ) == (count.driver_evaluation_id, "WAITING", True, 1, None)
+
+    asyncio.run(run())
+
+
+def test_a_closed_batch_is_never_counted_into_the_next_document_opens_a_new_one():
+    async def run():
+        async with database() as (engine, doc_id):
+            async with engine.begin() as conn:
+                closed = (
+                    await _one(
+                        conn,
+                        "UPDATE driver_evaluation SET open = false, "
+                        "status = 'DECIDED' RETURNING id::text",
+                    )
+                )[0]
+            _, _, _, count = await _evaluate(engine, doc_id)
+            assert count.counted is True
+            assert count.driver_evaluation_id != closed
+            async with engine.connect() as conn:
+                rows = (
+                    await conn.execute(
+                        text(
+                            "SELECT id::text, open, completed_document_count "
+                            "FROM driver_evaluation ORDER BY open"
+                        )
+                    )
+                ).all()
+            assert rows == [(closed, False, 0), (count.driver_evaluation_id, True, 1)]
 
     asyncio.run(run())
 

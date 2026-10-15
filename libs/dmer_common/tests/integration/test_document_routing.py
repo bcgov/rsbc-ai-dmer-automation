@@ -200,3 +200,111 @@ def test_each_category_also_sets_its_legacy_error_class(category, legacy):
                 ).scalar_one() == legacy
 
     asyncio.run(run())
+
+
+# --- counting a failed document into its driver's batch ----------------------
+
+
+async def _route(engine, doc_id):
+    return await route_to_manual_review(
+        engine,
+        doc_id,
+        stage="NORMALIZE",
+        category=FailureCategory.PERMANENT_BUSINESS,
+        reason_code="NormalizeDmer:NormalizationValidationError",
+        message="fixed description",
+        now=datetime.now(UTC),
+    )
+
+
+async def _open_evaluation(engine):
+    """A WAITING open evaluation for the document's driver; returns its id."""
+    async with engine.begin() as conn:
+        return str(
+            (
+                await conn.execute(
+                    text(
+                        "INSERT INTO driver_evaluation (driver_key, expected_document_count) "
+                        "SELECT driver_key, 2 FROM driver RETURNING id"
+                    )
+                )
+            ).scalar_one()
+        )
+
+
+async def _batch(engine):
+    async with engine.connect() as conn:
+        return (
+            await conn.execute(
+                text(
+                    "SELECT e.id::text, e.open, e.completed_document_count, "
+                    "count(m.document_id) FROM driver_evaluation e "
+                    "LEFT JOIN driver_evaluation_document m "
+                    "ON m.driver_evaluation_id = e.id GROUP BY e.id ORDER BY e.open"
+                )
+            )
+        ).all()
+
+
+def test_a_failed_document_with_a_driver_is_counted_into_its_open_batch():
+    # So the Decision Gateway decides the rest of the batch instead of waiting
+    # for a document that will never reach the Rule Engine.
+    async def run():
+        async with document("NORMALIZED") as (engine, doc_id):
+            evaluation_id = await _open_evaluation(engine)
+            assert await _route(engine, doc_id)
+            assert await _batch(engine) == [(evaluation_id, True, 1, 1)]
+
+    asyncio.run(run())
+
+
+def test_without_an_open_batch_one_is_opened_for_the_failed_document():
+    async def run():
+        async with document("NORMALIZED") as (engine, doc_id):
+            assert await _route(engine, doc_id)
+            ((_, is_open, completed, markers),) = await _batch(engine)
+            assert (is_open, completed, markers) == (True, 1, 1)
+
+    asyncio.run(run())
+
+
+def test_a_document_already_counted_by_the_rule_engine_is_not_counted_twice():
+    # e.g. it failed in Signal Driver, after the Rule Engine counted it.
+    async def run():
+        async with document("RULES_APPLIED") as (engine, doc_id):
+            evaluation_id = await _open_evaluation(engine)
+            async with engine.begin() as conn:
+                await conn.execute(
+                    text(
+                        "INSERT INTO driver_evaluation_document "
+                        "(driver_evaluation_id, document_id, counted_at) "
+                        "VALUES (:e, :d, now())"
+                    ),
+                    {"e": evaluation_id, "d": doc_id},
+                )
+                await conn.execute(
+                    text("UPDATE driver_evaluation SET completed_document_count = 1")
+                )
+            assert await _route(engine, doc_id)
+            assert await _batch(engine) == [(evaluation_id, True, 1, 1)]
+
+    asyncio.run(run())
+
+
+def test_a_failed_document_without_a_driver_is_not_counted():
+    async def run():
+        async with document("EXTRACTED", with_driver=False) as (engine, doc_id):
+            assert await _route(engine, doc_id)
+            assert await _batch(engine) == []
+
+    asyncio.run(run())
+
+
+def test_a_terminal_document_is_not_counted():
+    async def run():
+        async with document("COMPLETED") as (engine, doc_id):
+            evaluation_id = await _open_evaluation(engine)
+            assert not await _route(engine, doc_id)
+            assert await _batch(engine) == [(evaluation_id, True, 0, 0)]
+
+    asyncio.run(run())

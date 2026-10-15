@@ -14,6 +14,7 @@ the serialization/wiring logic is unit-testable with a fake sender.
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import datetime
 from typing import Any, Protocol
 
 from ..dto import Envelope
@@ -29,7 +30,12 @@ class _Sender(Protocol):
 
 
 def _default_message_factory(
-    body: str, *, message_id: str, document_id: str, session_id: str | None = None
+    body: str,
+    *,
+    message_id: str,
+    document_id: str,
+    session_id: str | None = None,
+    scheduled_enqueue_time: datetime | None = None,
 ) -> Any:
     """Build an ``azure.servicebus.ServiceBusMessage`` (imported lazily).
 
@@ -37,11 +43,17 @@ def _default_message_factory(
     keyword -- a broker-level AMQP field, unrelated to our envelope's own
     field naming, which no longer has a ``correlation_id`` of its own.
     ``session_id`` is set only for a session-enabled queue.
+    ``scheduled_enqueue_time`` (UTC), when set, makes the broker hold the
+    message until then.
     """
     from azure.servicebus import ServiceBusMessage
 
     return ServiceBusMessage(
-        body, message_id=message_id, correlation_id=document_id, session_id=session_id
+        body,
+        message_id=message_id,
+        correlation_id=document_id,
+        session_id=session_id,
+        scheduled_enqueue_time_utc=scheduled_enqueue_time,
     )
 
 
@@ -57,16 +69,26 @@ class ServiceBusPublisher:
         self._sender = sender
         self._message_factory = message_factory
 
-    def publish(self, envelope: Envelope, *, session_id: str | None = None) -> None:
+    def publish(
+        self,
+        envelope: Envelope,
+        *,
+        session_id: str | None = None,
+        scheduled_enqueue_time: datetime | None = None,
+    ) -> None:
         """Serialize and send an envelope DTO with broker ids set.
 
         ``session_id`` is required by a session-enabled queue (``driver-decision``:
         ``SessionId = driver_key``) and must be omitted for the others.
+        ``scheduled_enqueue_time`` (UTC) delays delivery until then -- e.g. the
+        Decision Gateway's re-check of a driver Mercury could not verify.
         """
         body = envelope.model_dump_json(by_alias=True)
         ids = {"message_id": envelope.message_id, "document_id": envelope.document_id}
         if session_id is not None:
             ids["session_id"] = session_id
+        if scheduled_enqueue_time is not None:
+            ids["scheduled_enqueue_time"] = scheduled_enqueue_time
         message = self._message_factory(body, **ids)
         self._sender.send_messages(message)
         _log.info(

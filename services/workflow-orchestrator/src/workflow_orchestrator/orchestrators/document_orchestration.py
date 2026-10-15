@@ -67,9 +67,16 @@ def _call(context, name: str, payload: dict, retry: df.RetryOptions):
     return result, None
 
 
-def _manual_review(context, document_id: str, failure: dict, retry: df.RetryOptions):
+def _manual_review(
+    context, document_id: str, blob_url: str, failure: dict, retry: df.RetryOptions
+):
+    # blob_url (a pointer, never content) lets the activity signal the
+    # document's driver: a failed document with a driver is counted into the
+    # driver's batch, which can then be decided without waiting for it.
     yield context.call_activity_with_retry(
-        "RouteToManualReview", retry, {"document_id": document_id, **failure}
+        "RouteToManualReview",
+        retry,
+        {"document_id": document_id, "blob_url": blob_url, **failure},
     )
     return {"manual_review": True, "reason": failure["reason"]}
 
@@ -91,7 +98,15 @@ def document_orchestration(context: df.DurableOrchestrationContext):
         context, "DriverLookup", {"document_id": document_id}, retry
     )
     if failure:
-        return (yield from _manual_review(context, document_id, failure, retry))
+        return (
+            yield from _manual_review(
+                context,
+                document_id,
+                trigger_input["extracted_blob_url"],
+                failure,
+                retry,
+            )
+        )
     if driver.get("manual_review"):
         return driver  # Driver Lookup already routed it
 
@@ -105,7 +120,15 @@ def document_orchestration(context: df.DurableOrchestrationContext):
         retry,
     )
     if failure:
-        return (yield from _manual_review(context, document_id, failure, retry))
+        return (
+            yield from _manual_review(
+                context,
+                document_id,
+                trigger_input["extracted_blob_url"],
+                failure,
+                retry,
+            )
+        )
     normalized_blob_url = normalized["normalized_blob_url"]
 
     rules, failure = yield from _call(
@@ -115,7 +138,15 @@ def document_orchestration(context: df.DurableOrchestrationContext):
         retry,
     )
     if failure:
-        return (yield from _manual_review(context, document_id, failure, retry))
+        return (
+            yield from _manual_review(
+                context,
+                document_id,
+                trigger_input["extracted_blob_url"],
+                failure,
+                retry,
+            )
+        )
 
     signal, failure = yield from _call(
         context,
@@ -124,7 +155,15 @@ def document_orchestration(context: df.DurableOrchestrationContext):
         retry,
     )
     if failure:
-        return (yield from _manual_review(context, document_id, failure, retry))
+        return (
+            yield from _manual_review(
+                context,
+                document_id,
+                trigger_input["extracted_blob_url"],
+                failure,
+                retry,
+            )
+        )
 
     return {
         **rules,

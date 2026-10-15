@@ -294,3 +294,43 @@ def test_documents_not_ready_or_reviewed_elsewhere_are_refused(status, error):
                 await repository.start_or_resume(now=datetime.now(UTC))
 
     asyncio.run(run())
+
+
+def test_a_driver_with_a_closed_batch_gets_a_new_open_one():
+    # V0009/V0011: closed (decided) batches don't block the driver's next one.
+    from dmer_common.db.driver import normalize_licence_number
+
+    async def run():
+        async with database() as (engine, doc_id):
+            async with engine.begin() as conn:
+                driver_key = (
+                    await _one(
+                        conn,
+                        "INSERT INTO driver (licence_number) VALUES (:l) "
+                        "RETURNING driver_key::text",
+                        l=normalize_licence_number(MERCURY.licence_number),
+                    )
+                )[0]
+                for _ in range(2):  # two earlier batches, both closed
+                    await conn.execute(
+                        text(
+                            "INSERT INTO driver_evaluation (driver_key, open, status) "
+                            "VALUES (:k, false, 'DECIDED')"
+                        ),
+                        {"k": driver_key},
+                    )
+            _, key, evaluation = await _resolve(engine, doc_id)
+            assert key == driver_key
+            async with engine.connect() as conn:
+                rows = (
+                    await conn.execute(
+                        text(
+                            "SELECT id::text, open FROM driver_evaluation "
+                            "ORDER BY open, id"
+                        )
+                    )
+                ).all()
+            assert [r.open for r in rows] == [False, False, True]
+            assert rows[-1].id == evaluation
+
+    asyncio.run(run())
