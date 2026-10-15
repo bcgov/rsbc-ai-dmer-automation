@@ -44,8 +44,11 @@ def _signal(payload=INPUT):
     return asyncio.run(signal.signal_driver_activity(payload))
 
 
-def test_publishes_a_deterministic_driver_decision_then_marks_awaiting(signal_deps):
+def test_marks_awaiting_then_publishes_a_deterministic_driver_decision(signal_deps):
     d = signal_deps
+    order = []
+    d.awaiting.side_effect = lambda *a, **k: order.append("awaiting") or True
+    d.publish.side_effect = lambda *a, **k: order.append("publish")
     message_id = event_message_id(DRIVER_DECISION_EVENT, DOC_ID)
     assert _signal() == {"published": True, "message_id": message_id}
     message = d.publish.call_args.args[0]
@@ -65,13 +68,25 @@ def test_publishes_a_deterministic_driver_decision_then_marks_awaiting(signal_de
         "enqueuedAt",
     }  # pointers only
     d.awaiting.assert_awaited_once()
+    # The gateway must never see the signal while the document is RULES_APPLIED.
+    assert order == ["awaiting", "publish"]
     d.engine.dispose.assert_awaited_once()
 
 
-@pytest.mark.parametrize(
-    "status", ["AWAITING_DRIVER_COMPLETION", "DECIDED", "COMPLETED"]
-)
-def test_an_already_signalled_document_is_not_published_again(signal_deps, status):
+def test_a_retry_after_the_move_publishes_again(signal_deps):
+    # First attempt moved the document, then the publish failed.
+    d = signal_deps
+    d.state.return_value = DocumentSignalState(
+        GUID, DRIVER_KEY, "AWAITING_DRIVER_COMPLETION"
+    )
+    message_id = event_message_id(DRIVER_DECISION_EVENT, DOC_ID)
+    assert _signal() == {"published": True, "message_id": message_id}
+    d.awaiting.assert_not_awaited()  # already moved
+    assert d.publish.call_args.args[0].message_id == message_id  # same event
+
+
+@pytest.mark.parametrize("status", ["DECIDED", "POSTING", "COMPLETED"])
+def test_an_already_decided_document_is_not_published_again(signal_deps, status):
     d = signal_deps
     d.state.return_value = DocumentSignalState(GUID, DRIVER_KEY, status)
     assert _signal() == {"published": False}
@@ -105,7 +120,8 @@ def test_a_publish_failure_is_retried_not_poison(signal_deps):
             poison_as_result(signal.signal_driver_activity(INPUT), signal.POISON)
         )
     assert "private broker detail" not in str(error.value)
-    d.awaiting.assert_not_awaited()
+    # moved before publishing; the retry finds it awaiting and publishes again
+    d.awaiting.assert_awaited_once()
 
 
 def test_publish_uses_the_driver_key_as_session_and_env_for_the_queue(monkeypatch):
@@ -190,9 +206,14 @@ def test_bad_signal_input_is_poison(signal_deps, payload):
 def review_deps(monkeypatch):
     engine = SimpleNamespace(dispose=AsyncMock())
     route = AsyncMock(return_value=True)
+    # Default: a document without a driver (failed before Driver Lookup).
+    state = AsyncMock(return_value=DocumentSignalState(GUID, None, "MANUAL_REVIEW"))
+    publish = Mock()
     monkeypatch.setattr(review, "_get_async_engine", AsyncMock(return_value=engine))
     monkeypatch.setattr(review, "route_to_manual_review", route)
-    return SimpleNamespace(engine=engine, route=route)
+    monkeypatch.setattr(review, "load_signal_state", state)
+    monkeypatch.setattr(review, "publish_driver_decision", publish)
+    return SimpleNamespace(engine=engine, route=route, state=state, publish=publish)
 
 
 def test_routes_with_the_reason_code(review_deps):
@@ -203,7 +224,8 @@ def test_routes_with_the_reason_code(review_deps):
         "reason": "NormalizeDmer:RETRIES_EXHAUSTED",
     }
     assert asyncio.run(review.route_to_manual_review_activity(payload)) == {
-        "routed": True
+        "routed": True,
+        "driver_signalled": False,  # no driver to signal
     }
     kwargs = review_deps.route.call_args.kwargs
     assert kwargs["reason_code"] == "NormalizeDmer:RETRIES_EXHAUSTED"
@@ -222,8 +244,90 @@ def test_an_already_terminal_document_is_reported_not_rerouted(review_deps):
         "reason": "RunRuleEngine:RETRIES_EXHAUSTED",
     }
     assert asyncio.run(review.route_to_manual_review_activity(payload)) == {
-        "routed": False
+        "routed": False,
+        "driver_signalled": False,
     }
+
+
+_REVIEW_PAYLOAD = {
+    "document_id": DOC_ID,
+    "blob_url": "https://blob/extracted-dmer/doc.json",
+    "stage": "NORMALIZE",
+    "category": "PERMANENT_BUSINESS",
+    "reason": "NormalizeDmer:NormalizationValidationError",
+}
+
+
+def test_a_failed_document_with_a_driver_signals_its_driver(review_deps):
+    # Counted into the driver's batch by the routing write; signalling lets the
+    # Decision Gateway decide the rest of the batch instead of waiting for it.
+    review_deps.state.return_value = DocumentSignalState(
+        GUID, DRIVER_KEY, "MANUAL_REVIEW"
+    )
+    result = asyncio.run(review.route_to_manual_review_activity(_REVIEW_PAYLOAD))
+    assert result == {"routed": True, "driver_signalled": True}
+    (message,) = review_deps.publish.call_args.args
+    assert message.driver_key == DRIVER_KEY
+    assert message.document_guid == GUID
+    assert message.blob_url == _REVIEW_PAYLOAD["blob_url"]
+    # distinct from Signal Driver's id, so duplicate detection never drops it
+    assert message.message_id == event_message_id(
+        DRIVER_DECISION_EVENT, f"{DOC_ID}:manual-review"
+    )
+    assert message.message_id != event_message_id(DRIVER_DECISION_EVENT, DOC_ID)
+
+
+def test_a_retried_call_signals_again(review_deps):
+    # The routing write was committed by an earlier attempt that then crashed.
+    review_deps.route.return_value = False
+    review_deps.state.return_value = DocumentSignalState(
+        GUID, DRIVER_KEY, "MANUAL_REVIEW"
+    )
+    result = asyncio.run(review.route_to_manual_review_activity(_REVIEW_PAYLOAD))
+    assert result == {"routed": False, "driver_signalled": True}
+
+
+def test_a_document_without_a_driver_is_not_signalled(review_deps):
+    result = asyncio.run(review.route_to_manual_review_activity(_REVIEW_PAYLOAD))
+    assert result["driver_signalled"] is False
+    review_deps.publish.assert_not_called()
+
+
+def test_a_completed_document_is_not_signalled(review_deps):
+    review_deps.route.return_value = False
+    review_deps.state.return_value = DocumentSignalState(GUID, DRIVER_KEY, "COMPLETED")
+    result = asyncio.run(review.route_to_manual_review_activity(_REVIEW_PAYLOAD))
+    assert result == {"routed": False, "driver_signalled": False}
+    review_deps.publish.assert_not_called()
+
+
+def test_without_a_blob_url_the_driver_is_not_signalled(review_deps):
+    review_deps.state.return_value = DocumentSignalState(
+        GUID, DRIVER_KEY, "MANUAL_REVIEW"
+    )
+    payload = {k: v for k, v in _REVIEW_PAYLOAD.items() if k != "blob_url"}
+    result = asyncio.run(review.route_to_manual_review_activity(payload))
+    assert result["driver_signalled"] is False
+
+
+def test_a_failed_read_after_routing_is_logged_not_raised(review_deps):
+    # The routing write is committed; a database error while reading the
+    # document back for the signal must not fail the orchestration.
+    review_deps.state.side_effect = ConnectionError("connection dropped")
+    result = asyncio.run(review.route_to_manual_review_activity(_REVIEW_PAYLOAD))
+    assert result == {"routed": True, "driver_signalled": False}
+    review_deps.publish.assert_not_called()
+    review_deps.engine.dispose.assert_awaited_once()
+
+
+def test_a_failed_signal_is_logged_not_raised(review_deps):
+    review_deps.state.return_value = DocumentSignalState(
+        GUID, DRIVER_KEY, "MANUAL_REVIEW"
+    )
+    review_deps.publish.side_effect = RuntimeError("Service Bus unavailable")
+    result = asyncio.run(review.route_to_manual_review_activity(_REVIEW_PAYLOAD))
+    assert result == {"routed": True, "driver_signalled": False}
+    review_deps.engine.dispose.assert_awaited_once()
 
 
 @pytest.mark.parametrize(

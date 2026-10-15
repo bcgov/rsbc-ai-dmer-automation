@@ -27,6 +27,14 @@ serialized, and its answer a durable row rather than an in-memory branch.
 
 ## The mechanism
 
+> **Implemented differently (ADR-0003, approved):** the Driver Orchestration is a **session-triggered
+> Service Bus function**, not a Durable orchestration -- a Durable starter holds the session lock only
+> while starting the orchestration, so a second signal for the same driver could be lost. The function
+> evaluates the batch inside the session lock instead. See
+> [ADR-0003](../../architecture/decision-records/0003-driver-orchestration-as-a-session-triggered-function.md)
+> and `services/driver-orchestrator/README.md`. The rest of this section (sessions, the wait as a row,
+> verify twice) still applies.
+
 - **Two orchestrations.** The per-document orchestration ([Document Orchestration](03-document-orchestration.md))
   ends by signalling the driver. A **separate** per-driver orchestration, with `instanceId = driver_key`,
   runs the Decision Gateway and Post-Processing.
