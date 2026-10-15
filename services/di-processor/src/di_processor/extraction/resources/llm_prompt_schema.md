@@ -53,13 +53,6 @@ to decide where one field ends and the next begins, and to read checkbox marks.
      `low`. Do NOT use `medium`.
    - Set `source` accurately so this can be verified downstream.
 
-Every field key in this schema is a free-text/value field (a date, a score, a cause/details
-narrative, or similar) -- none of them are checkboxes. Checkbox/boolean fields come from the
-custom-trained Document Intelligence model (Stage A), not this handwritten-reconstruction path;
-if a future field addition to this schema is actually a checkbox, it belongs in the custom model's
-schema instead, not here -- `HandwrittenField.value` is typed as a plain string and does not accept
-a JSON boolean (see schemas.py).
-
 ## Output format
 
 Return ONE JSON object. Top-level `fields` maps every provided field key to an object:
