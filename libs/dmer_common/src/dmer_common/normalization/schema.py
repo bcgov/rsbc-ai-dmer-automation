@@ -952,7 +952,10 @@ CATEGORY_INSTRUCTIONS: dict[ConditionCategory, str] = {
     ConditionCategory.VISUAL_ACUITY: (
         "Normalize Snellen acuity. Vision acuity text may be misread with the slash "
         "being read as 1, e.g. 20/80 might be read as 20180. If this is the case, "
-        "correct it. Convert acuity to Snellen before comparing; higher denominator "
+        "correct it. A written superscript after the fraction (letters missed, "
+        "e.g. 20/50-2, 20/50+2, 20/16-2) is read inline as -2 or +2: it is not part "
+        "of the denominator, so 20/16-2 means 20/16, never 20/162 or 20/160. Keep "
+        "the value as written. Convert acuity to Snellen before comparing; higher denominator "
         "means worse. Decimal: denom = 20/value, e.g. 0.25 means 20/80. LogMAR: "
         "denom = 20 x 10^value, e.g. 0.6 means 20/80. Follow each field's description "
         "for which eyes/values to use. Evaluate every threshold independently. "
