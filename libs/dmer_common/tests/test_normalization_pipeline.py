@@ -1667,7 +1667,7 @@ def test_analysis_call_restores_masked_output_before_validating_it():
     assert client.complete.call_count == 1
 
 
-def test_mask_logs_carry_field_names_and_outcomes_never_text(monkeypatch):
+def test_mask_logs_record_each_masked_value_before_and_after(monkeypatch):
     from unittest.mock import Mock
 
     from dmer_common.normalization import unmask
@@ -1685,15 +1685,56 @@ def test_mask_logs_carry_field_names_and_outcomes_never_text(monkeypatch):
     )
     calls = log.info.call_args_list + log.warning.call_args_list
     extras = [c.kwargs["extra"] for c in calls]
-    assert {(e["location"], e["outcome"]) for e in extras} == {
+    assert all(e["step"] == "analyze:cardiovascular" for e in extras)
+    # one line per masked run: where it was and what happened
+    runs = [e for e in extras if "location" in e]
+    assert {(e["location"], e["outcome"]) for e in runs} == {
         ("key", "restored"),
         ("value", "restored"),
         ("value", "ambiguous"),
     }
-    assert all(e["step"] == "analyze:cardiovascular" for e in extras)
-    logged = repr([c.args for c in calls]) + repr(extras)
-    assert "pacemaker" not in logged.replace("cardiovascular.pacemaker", "")
-    assert "Psoriasis" not in logged and "Permanent" not in logged
+    # and one per masked value, with the text before and after (DMER29: the
+    # evidence was restored but the value next to it was not)
+    values = {e["field"]: e for e in extras if "masked_value" in e}
+    assert values["cardiovascular.pacemaker_evidence"]["masked_value"] == (
+        "Permanent *********."
+    )
+    assert values["cardiovascular.pacemaker_evidence"]["restored_value"] == (
+        "Permanent pacemaker."
+    )
+    assert values["cardiovascular.pacemaker_evidence"]["still_masked"] is False
+    assert values["general.other"]["restored_value"] == "*********"  # ambiguous
+    assert values["general.other"]["still_masked"] is True
+
+
+def test_model_calls_log_the_input_and_the_raw_and_restored_output(monkeypatch):
+    from unittest.mock import Mock
+
+    from dmer_common.normalization import errors
+
+    log = Mock()
+    monkeypatch.setattr(errors, "_log", log)
+    client = Mock()
+    client.complete.return_value = (
+        '{"dmer": {"cns.moca_score": 0, '
+        '"cns.moca_score_evidence": "cns.moca_score: \\"*****\\""}}'
+    )
+    errors.call_model(
+        client,
+        [{"role": "user", "content": "x"}],
+        temperature=0,
+        accept=lambda response: response,
+        step="analyze:cognition",
+        source={"dmer": {"cns.moca_score": "19/30"}},
+    )
+    logged = {c.args[0]: c.kwargs["extra"] for c in log.info.call_args_list}
+    assert (
+        logged["model input"]["model_input"] == '{"dmer": {"cns.moca_score": "19/30"}}'
+    )
+    assert '"cns.moca_score": 0' in logged["model output (raw)"]["model_output"]
+    assert "*****" in logged["model output (raw)"]["model_output"]
+    restored = logged["model output (restored)"]["model_output"]
+    assert "19/30" in restored and "*****" not in restored
 
 
 # ---------------------------------------------------------------------------
@@ -2461,3 +2502,93 @@ def test_raw_visual_acuity_is_never_taken_from_the_model():
         "visual_acuity.corrected_vision_20/60_or_worse": True,
         "cns.moca_score": 19,
     }
+
+
+# ---------------------------------------------------------------------------
+# Masked input -- the gateway can mask values before the model sees them
+# ---------------------------------------------------------------------------
+
+
+def test_only_fields_we_sent_unmasked_count_as_masked_inputs():
+    from dmer_common.normalization.pipeline import confirmed_masked_inputs
+
+    sent = {
+        "cns.moca_score": "19/30",
+        "details_of_condition": "MMSE 26/30",
+        "general.other": "***",  # really asterisks in the source
+    }
+    assert confirmed_masked_inputs(
+        ["cns.moca_score", "general.other", "cns.unknown", "details_of_condition"],
+        sent,
+    ) == ["cns.moca_score", "details_of_condition"]
+
+
+def test_a_value_read_from_masked_input_restores_the_extraction_value():
+    # DMER29 run e: the model saw "*****" for MoCA and answered 0.
+    from dmer_common.normalization.pipeline import restore_masked_inputs
+
+    updates = {
+        "cns.moca_score": 0,
+        "cns.moca_score_evidence": 'cns.moca_score: "19/30"',
+        "cns.mmse_score": 0,
+        "cns.mmse_score_evidence": 'details_of_condition: "MMSE 26130"',
+        "cns.cognitiveimpairment": True,
+        "cns.cognitiveimpairment_evidence": "cns.cognitiveimpairment: true",
+    }
+    sent = {
+        "cns.moca_score": "19/30",
+        "details_of_condition": "MMSE 26130",
+        "cns.cognitiveimpairment": True,
+    }
+    flags = restore_masked_inputs(
+        updates, sent, ["cns.moca_score", "details_of_condition"]
+    )
+    # MoCA: extracted, so the extraction value stands (the model's is dropped)
+    assert "cns.moca_score" not in updates
+    assert "cns.moca_score_evidence" not in updates
+    # MMSE: nothing extracted, so the model's new value is kept
+    assert updates["cns.mmse_score"] == 0
+    # untouched: its evidence cites no masked field
+    assert updates["cns.cognitiveimpairment"] is True
+    assert {(f["field"], f["action"]) for f in flags} == {
+        ("cns.moca_score", "restored"),
+        ("cns.mmse_score", "kept"),
+    }
+    assert {f["check"] for f in flags} == {"masked_input"}
+
+
+def test_no_masked_inputs_changes_nothing():
+    from dmer_common.normalization.pipeline import restore_masked_inputs
+
+    updates = {"cns.moca_score": 0}
+    assert restore_masked_inputs(updates, {"cns.moca_score": "19/30"}, []) == []
+    assert updates == {"cns.moca_score": 0}
+
+
+def test_analysis_reads_the_models_masked_inputs_list():
+    import json
+    from unittest.mock import Mock
+
+    from dmer_common.normalization.pipeline import analyze_condition_category
+    from dmer_common.normalization.schema import ConditionCategory
+
+    client = Mock()
+    client.complete.return_value = json.dumps(
+        {
+            "dmer": {
+                "cns.moca_score": 0,
+                "cns.moca_score_evidence": 'cns.moca_score: "*****"',
+            },
+            "masked_inputs": ["cns.moca_score"],
+        }
+    )
+    out = analyze_condition_category(
+        client,
+        {"dmer": {"cns.moca_score": "19/30", "cns.cognitiveimpairment": True}},
+        ConditionCategory.COGNITION,
+    )
+    assert out["masked_inputs"] == ["cns.moca_score"]
+    assert "cns.moca_score" not in out["dmer"]  # the extraction's 19/30 stands
+    assert [(f["field"], f["action"]) for f in out["masked_flags"]] == [
+        ("cns.moca_score", "restored")
+    ]

@@ -17,8 +17,10 @@ put back by matching it against that input:
   otherwise it stays masked.
 
 Only text from the call's own input is ever used, so nothing the model was
-not already given ends up in the output. Logs carry field names, lengths and
-outcomes only -- never the masked or restored text (architecture §9.2).
+not already given ends up in the output. Each masked value is logged before
+and after restoration (normalization input carries no PII), so a wrong
+restoration -- or a model that answered a masked input with a made-up value
+-- can be traced in the logs.
 """
 
 import re
@@ -36,6 +38,10 @@ CONTEXT_WORDS = 3
 # Quote marks and "field_name:" labels separate an evidence string into parts
 # that come from different places, so context never crosses them.
 _SEGMENT_SPLIT_RE = re.compile(r'(["“”]|(?:^|(?<=\s))[\w.]+:(?=\s|$))')
+
+
+# Cap on logged text: an Application Insights trace holds about 32 KB.
+MAX_LOGGED_CHARS = 30_000
 
 
 def has_mask(text: str) -> bool:
@@ -211,6 +217,11 @@ def source_fields(source: object) -> dict[str, str]:
 _EVIDENCE_LABEL_RE = re.compile(r"(?:^|(?<=[\s;]))([A-Za-z_][\w./]*):(?=\s|$)")
 
 
+def evidence_labels(evidence: str) -> list[str]:
+    """The ``field.name:`` labels an evidence string cites."""
+    return _EVIDENCE_LABEL_RE.findall(evidence)
+
+
 def _field_texts(name: str, value: str, fields: Mapping[str, str]) -> list[str]:
     """The input text a value most likely came from: the field's own input
     value, or -- for an evidence string -- the fields its labels name."""
@@ -262,8 +273,22 @@ def restore_masked(
             for item in response
         ]
     if isinstance(response, str):
-        own = _field_texts(field, response, fields) if has_mask(response) else []
+        masked = has_mask(response)
+        own = _field_texts(field, response, fields) if masked else []
+        restored = response
         if own:
-            response = _restore_text(response, own, step, field)
-        return _restore_text(response, texts, step, field)
+            restored = _restore_text(restored, own, step, field)
+        restored = _restore_text(restored, texts, step, field)
+        if masked:
+            _log.info(
+                "masked model output values",
+                extra={
+                    "step": step,
+                    "field": field,
+                    "masked_value": response[:MAX_LOGGED_CHARS],
+                    "restored_value": restored[:MAX_LOGGED_CHARS],
+                    "still_masked": has_mask(restored),
+                },
+            )
+        return restored
     return response
