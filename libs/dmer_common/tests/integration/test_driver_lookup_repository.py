@@ -256,6 +256,30 @@ def test_manual_review_routes_the_document_and_replays_its_reason():
                 assert await _one(conn, "SELECT count(*) FROM driver_evaluation") == (
                     0,
                 )
+                # I-12/I-22: it reaches Intake as IN, with the reason and the
+                # licence read, through the outbox -- no decision row, no driver.
+                operation, key, payload, guid = await _one(
+                    conn,
+                    "SELECT o.operation::text, o.idempotency_key, o.payload, "
+                    "d.document_guid::text FROM mercury_outbox o "
+                    "JOIN dmer_document d ON d.id = o.document_id",
+                )
+                assert (operation, key) == (
+                    "UPDATE_OUTCOME",
+                    f"{doc_id}:FALLBACK:UPDATE_OUTCOME",
+                )
+                assert payload == {
+                    "document_guid": guid,
+                    "outcome_code": "IN",
+                    "decided_by": "FALLBACK",
+                    "comment": (
+                        "AI could not process. The driver's file could not be "
+                        "found or mapped in Mercury. Mercury has no driver with "
+                        f"the page's licence. Licence read from the DMER: {LICENCE}."
+                    ),
+                }
+                assert await _one(conn, "SELECT count(*) FROM dmer_decision") == (0,)
+                assert await _one(conn, "SELECT count(*) FROM driver") == (0,)
 
     asyncio.run(run())
 

@@ -57,6 +57,27 @@ Each layer covers a failure the previous one cannot.
 | `dmer_document` | `UPDATE` | `pipeline_status = COMPLETED` once **every** outbox row for the document is `SENT`. |
 | `driver_evaluation` | `UPDATE` | `status = POSTED` once **every** outbox row in the batch is `SENT`. |
 
+### Implementation
+
+`services/reliability/` (the `OutboxPublisher` timer) over
+`dmer_common.db.outbox_publisher.publish_due`; Mercury writes via
+`MercuryClient.send_outbox` (**provisional endpoints until M-6** -- the dev mock implements them).
+
+- **Claim with a lease:** a run claims up to `OUTBOX_BATCH_SIZE` documents with a due `PENDING`
+  row, with all their `PENDING` rows (`FOR UPDATE SKIP LOCKED`), and moves `next_attempt_at`
+  `OUTBOX_LEASE_SECONDS` ahead; a run that dies mid-send leaves the rows to be claimed again.
+  The send itself is outside any transaction.
+- **Per-document order:** `MAP_DRIVER`, `CREATE_CASE`, `MARK_DUPLICATE`, `UPDATE_OUTCOME`. A
+  failure stops the document: the rows after it wait for the failed row's next attempt, so an
+  outcome is never written before its driver or case.
+- **Retryable vs rejected:** network errors, timeouts, 408, 429 and 5xx (and the circuit breaker
+  open) back off exponentially; any other 4xx marks the row `FAILED` at once, and the document's
+  later rows `FAILED` as "blocked" -- a person resolves it.
+- **`CREATE_CASE`** does the live check at send time (I-13): the driver's open case is looked up,
+  and the DMER attached to it, or a case created when there is none.
+- **Roll-up:** `COMPLETED` / `POSTED` as above; documents in `MANUAL_REVIEW` (fallback outcomes)
+  keep their status.
+
 ### Failure handling
 
 A Mercury outage is a downstream-outage class failure (see `../message-contracts.md`) — back off
@@ -178,9 +199,9 @@ thresholds (queue depth, DLQ count, oldest `PENDING` outbox row age, `driver_eva
 
 ## Open Questions / Decisions Required
 
-- **Service boundary**: new `services/reliability/` app vs. folding these three timer functions into
-  an existing app (e.g. `services/intake-processor/`, which is already a timer/HTTP Functions app).
-  Not specified in the architecture document.
+- **Service boundary** -- decided: a new `services/reliability/` app
+  (`infrastructure/bicep/reliability.bicep`), starting with the Outbox Publisher; the Sweeper and
+  DLQ Drain join it.
 - **I-14** — target time from document arrival to appearing in the AI-processed queue: Intake's
   answer ("seconds or minutes... assume the SLA based on" the ~1M backlog) is directional, not a
   number. A concrete SLA is needed to set `STAGE_SLA_*` thresholds precisely.

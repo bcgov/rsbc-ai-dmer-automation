@@ -200,7 +200,8 @@ def test_full_decision_moves_evaluation_documents_and_stage_runs():
                         {"d": docs},
                     )
                 ).all()
-                assert set(rows) == {("DECIDED", "POST")}
+                # Post-Processing: decided documents are being posted
+                assert set(rows) == {("POSTING", "POST")}
                 stages = (
                     await conn.execute(
                         text(
@@ -531,6 +532,156 @@ def test_route_batch_to_manual_review_gives_every_undecided_document_a_fallback(
                 ("IN", "FALLBACK")
             }
             assert decisions[0].decision_reason["notes"] == ["FAKE note for Intake"]
+            # Post-Processing: each fallback reaches Mercury as IN with the note
+            outbox = await _outbox(engine)
+            assert {o.document_id for o in outbox} == {awaiting, not_signalled}
+            assert {o.operation for o in outbox} == {"UPDATE_OUTCOME"}
+            for o in outbox:
+                assert o.payload["outcome_code"] == "IN"
+                assert o.payload["decided_by"] == "FALLBACK"
+                assert o.payload["comment"] == (
+                    "AI could not process. FAKE note for Intake"
+                )
+                assert (o.status, o.attempt_count, o.next_attempt_at) == (
+                    "PENDING",
+                    0,
+                    NOW,
+                )
+
+    asyncio.run(run())
+
+
+async def _outbox(engine):
+    async with engine.connect() as conn:
+        return (
+            await conn.execute(
+                text(
+                    "SELECT document_id::text, operation::text, payload, "
+                    "idempotency_key, status::text, attempt_count, next_attempt_at "
+                    "FROM mercury_outbox ORDER BY document_id, operation"
+                )
+            )
+        ).all()
+
+
+def test_decisions_and_their_outbox_rows_commit_together():
+    from dmer_common.db.driver_decision import DecisionRecord
+
+    async def run():
+        async with database() as (engine, driver_key, evaluation_id, docs):
+            older, newer = docs
+            async with engine.begin() as conn:
+                await conn.execute(text("UPDATE driver SET mercury_driver_id = 'M-7'"))
+                guids = dict(
+                    (
+                        await conn.execute(
+                            text(
+                                "SELECT id::text, document_guid::text FROM dmer_document"
+                            )
+                        )
+                    ).all()
+                )
+            decisions = (
+                DecisionRecord(
+                    document_id=newer,
+                    outcome_code="CP",
+                    proposed_driver_key=driver_key,
+                    decision_reason={
+                        "path": "duplicate_retained",
+                        "notes": [],
+                        "rule_reason": "FAKE reason CP",
+                    },
+                ),
+                DecisionRecord(
+                    document_id=older,
+                    outcome_code="CP",
+                    is_duplicate=True,
+                    duplicate_of_document_id=newer,
+                    decision_reason={
+                        "path": "duplicate_rejected",
+                        "notes": [],
+                        "rule_reason": "FAKE reason CP",
+                    },
+                ),
+            )
+            async with driver_decision_session(engine, driver_key) as repo:
+                await repo.move_evaluation(
+                    evaluation_id, expected=_E.WAITING, target=_E.READY, now=NOW
+                )
+                runs = await repo.start_decision(evaluation_id, docs, now=NOW)
+                await repo.record_decided(
+                    evaluation_id,
+                    runs,
+                    summary={},
+                    now=NOW,
+                    batch_document_ids=docs,
+                    decisions=decisions,
+                )
+            outbox = await _outbox(engine)
+            ops = {(o.document_id, o.operation) for o in outbox}
+            assert ops == {
+                (newer, "MAP_DRIVER"),
+                (newer, "CREATE_CASE"),
+                (newer, "UPDATE_OUTCOME"),
+                (older, "CREATE_CASE"),
+                (older, "MARK_DUPLICATE"),
+                (older, "UPDATE_OUTCOME"),
+            }
+            by_op = {(o.document_id, o.operation): o.payload for o in outbox}
+            assert by_op[(newer, "MAP_DRIVER")]["mercury_driver_id"] == "M-7"
+            assert by_op[(older, "CREATE_CASE")]["mercury_driver_id"] == "M-7"
+            assert by_op[(older, "MARK_DUPLICATE")] == {
+                "document_guid": guids[older],
+                "comment": "AI outcome: CP. Reason: FAKE reason CP.",
+                "status": "Rejected",
+                "duplicate_of_document_guid": guids[newer],
+            }
+            assert by_op[(newer, "UPDATE_OUTCOME")]["outcome_code"] == "CP"
+            assert {o.status for o in outbox} == {"PENDING"}
+            async with engine.connect() as conn:
+                decision_ids = dict(
+                    (
+                        await conn.execute(
+                            text(
+                                "SELECT document_id::text, id::text FROM dmer_decision"
+                            )
+                        )
+                    ).all()
+                )
+            # keyed on the decision, so the same decision can't be queued twice
+            assert {o.idempotency_key for o in outbox} == {
+                f"{decision_ids[d]}:{op}" for d, op in ops
+            }
+
+    asyncio.run(run())
+
+
+def test_a_failed_decision_queues_no_outbox_rows():
+    from dmer_common.db.driver_decision import BatchChangedError, DecisionRecord
+
+    async def run():
+        async with database() as (engine, driver_key, evaluation_id, docs):
+            async with driver_decision_session(engine, driver_key) as repo:
+                await repo.move_evaluation(
+                    evaluation_id, expected=_E.WAITING, target=_E.READY, now=NOW
+                )
+                runs = await repo.start_decision(evaluation_id, docs, now=NOW)
+                async with engine.begin() as other:
+                    await _add_document(other, driver_key, evaluation_id, day=7)
+                with pytest.raises(BatchChangedError):
+                    await repo.record_decided(
+                        evaluation_id,
+                        runs,
+                        summary={},
+                        now=NOW,
+                        batch_document_ids=docs,
+                        decisions=tuple(
+                            DecisionRecord(document_id=d, outcome_code="IN")
+                            for d in docs
+                        ),
+                    )
+            # the decision and its outbox rows roll back together
+            assert await _outbox(engine) == []
 
     asyncio.run(run())
 

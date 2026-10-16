@@ -45,6 +45,7 @@ from ._advisory import advisory_lock_session
 from .dmer_document import _pipeline_status_enum
 from .dmer_stage_run import dmer_stage_run
 from .driver import driver, normalize_licence_number
+from .mercury_outbox import fallback_comment, fallback_rows, queue_outbox_rows
 from .processing_error import FailureCategory, record_processing_error
 
 metadata = MetaData()
@@ -54,6 +55,7 @@ _document = Table(
     "dmer_document",
     metadata,
     Column("id", PG_UUID(as_uuid=False), primary_key=True),
+    Column("document_guid", PG_UUID(as_uuid=False)),
     Column("driver_key", PG_UUID(as_uuid=False)),
     Column("pipeline_status", _pipeline_status_enum),
     Column("attempt_count", Integer),
@@ -96,6 +98,23 @@ MANUAL_REVIEW_REASONS: Final = {
     DRIVER_NOT_FOUND: "Mercury has no driver with the page's licence.",
     DRIVER_AMBIGUOUS: "Mercury has more than one driver with the page's licence.",
 }
+
+DRIVER_FILE_NOT_FOUND: Final = (
+    "The driver's file could not be found or mapped in Mercury."
+)
+
+
+def unidentified_driver_comment(reason: str, licence_read: str | None) -> str:
+    """The comment on an I-12/I-22 fallback: "AI could not process", that the
+    driver's file could not be found or mapped, the reason and the licence
+    read from the page. Goes to Mercury -- licence is PII, never log it."""
+    licence = (licence_read or "").strip()
+    return fallback_comment(
+        DRIVER_FILE_NOT_FOUND,
+        MANUAL_REVIEW_REASONS[reason],
+        f"Licence read from the DMER: {licence}." if licence else "",
+    )
+
 
 _STAGE = "DRIVER_LOOKUP"
 _RUNNING = "RUNNING"
@@ -359,7 +378,14 @@ class DriverLookupRepository:
 
     async def manual_review(self, run_id: int, *, reason: str, now: datetime) -> None:
         """Route the document to MANUAL_REVIEW with *reason* (a
-        :data:`MANUAL_REVIEW_REASONS` code)."""
+        :data:`MANUAL_REVIEW_REASONS` code), and queue its fallback outcome.
+
+        I-12/I-22: a DMER whose driver's file can't be found or mapped goes to
+        Intake as IN, with a comment saying so, the reason and the licence
+        read from the page; no driver file is created. Without a driver there
+        is no driver evaluation (so no ``dmer_decision`` row): the outcome is
+        the ``UPDATE_OUTCOME`` outbox row alone, in the same transaction.
+        """
         if reason not in MANUAL_REVIEW_REASONS:
             raise ValueError(f"unknown manual review reason {reason!r}")
         self._check_session()
@@ -389,6 +415,30 @@ class DriverLookupRepository:
                 category=FailureCategory.PERMANENT_BUSINESS,
                 reason_code=reason,
                 message=MANUAL_REVIEW_REASONS[reason],
+                now=now,
+            )
+            guid = (
+                await self._conn.execute(
+                    select(_document.c.document_guid).where(
+                        _document.c.id == self._document_id
+                    )
+                )
+            ).scalar_one()
+            licence = (
+                await self._conn.execute(
+                    select(_extraction.c.licence_number_read).where(
+                        _extraction.c.document_id == self._document_id
+                    )
+                )
+            ).scalar_one_or_none()
+            await queue_outbox_rows(
+                self._conn,
+                fallback_rows(
+                    source_id=f"{self._document_id}:FALLBACK",
+                    document_id=self._document_id,
+                    document_guid=str(guid),
+                    comment=unidentified_driver_comment(reason, licence),
+                ),
                 now=now,
             )
 

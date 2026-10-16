@@ -48,7 +48,12 @@ Each signal runs `evaluate.evaluate_driver`:
 | `recheck.py` | Backoff and message for the self-scheduled re-check |
 | `dmer_common.db.driver_decision` | The database unit of work (lock, batch, status, decisions) |
 
-Not built yet: the hand-off to Post-Processing.
+**Post-Processing** (architecture 4.5) runs inside the same transactions: deciding a batch
+also queues each decision's `mercury_outbox` rows (`MAP_DRIVER`, `CREATE_CASE`,
+`MARK_DUPLICATE`, `UPDATE_OUTCOME` -- see `dmer_common.db.mercury_outbox`) and moves the
+documents to `POSTING`; the Mercury-unverified fallback queues an `UPDATE_OUTCOME` IN with
+"AI could not process" and its note. Nothing calls Mercury here: the Outbox Publisher
+drains the rows.
 
 ## Deploy
 

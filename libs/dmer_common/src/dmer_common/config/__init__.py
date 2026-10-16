@@ -124,6 +124,29 @@ class MercuryDriverSettings:
     uncounted_document_statuses: frozenset[str]
 
 
+@dataclass(frozen=True)
+class MercuryWriteSettings:
+    """Mercury write-back settings (the Outbox Publisher; see
+    ``docs/development/stages/09-reliability-components.md``).
+
+    ``base_url`` is the root the write endpoints hang off. **Provisional:**
+    Mercury has not shared its POST/PUT structure yet (question M-6); the dev
+    mock implements the shape :class:`dmer_common.mercury_client.MercuryClient`
+    assumes. ``api_key`` is shared with the read APIs and must never be logged.
+    """
+
+    base_url: str
+    api_key: str
+
+
+def mercury_write_settings() -> MercuryWriteSettings:
+    """Load the Mercury write-back settings from configuration."""
+    return MercuryWriteSettings(
+        base_url=require("MERCURY_WRITE_API_BASE_URL").rstrip("/"),
+        api_key=require("MERCURY_API_KEY"),
+    )
+
+
 def _csv(value: str | None) -> frozenset[str]:
     return frozenset(
         part.strip().lower() for part in (value or "").split(",") if part.strip()

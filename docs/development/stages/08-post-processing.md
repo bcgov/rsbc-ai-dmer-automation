@@ -118,6 +118,30 @@ line an incident review greps for when asked "did we even try to post this."
 (Illustrative — the exact Mercury POST/PUT payload shape is question M-6, not yet confirmed by the
 Mercury team; see [Open Questions](#open-questions--decisions-required).)
 
+## Implementation
+
+Built into the Decision Gateway's own transactions rather than a separate activity -- the
+gateway already writes `dmer_decision` there, so the outbox rows join the same transaction:
+
+- `dmer_common.db.mercury_outbox` -- the table, the pure row builders (`decision_rows`,
+  `fallback_rows`, the comment wording) and `queue_outbox_rows` (insert in the caller's
+  transaction, `ON CONFLICT (idempotency_key) DO NOTHING`, one log line per row).
+- `DriverDecisionRepository.record_decided` -- per AI decision: `MAP_DRIVER` when a driver was
+  matched from the licence (I-11), `CREATE_CASE` always (the publisher checks live for an open
+  case: create or attach, I-13), `MARK_DUPLICATE` for a rejected clean-pass copy (I-7),
+  `UPDATE_OUTCOME` always; documents -> `POSTING`.
+- `DriverDecisionRepository.route_batch_to_manual_review` (Mercury unverifiable) -- an
+  `UPDATE_OUTCOME` IN per document, "AI could not process" plus the note (I-1).
+- `DriverLookupRepository.manual_review` (I-12/I-22: no driver file found or mapped) -- an
+  `UPDATE_OUTCOME` IN with "AI could not process", that the driver's file could not be found or
+  mapped, the reason and the licence read. There is no driver evaluation, so no `dmer_decision`
+  row; the outbox row is the outcome. Its key, `<document_id>:FALLBACK:UPDATE_OUTCOME`, is the
+  one the DLQ Drain's fallback will use, so a document can't get two fallbacks.
+
+Idempotency keys are `<dmer_decision.id>:<operation>`. The publisher applies a document's rows in
+`OPERATION_ORDER` (driver, case, duplicate, outcome). Payload field names are provisional until
+M-6; the comment always states the outcome and the reason (I-13).
+
 ## Implementation considerations for Claude Code
 
 - No placeholder code exists for this activity — `services/post-processing/` currently models the

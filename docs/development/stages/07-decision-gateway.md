@@ -93,8 +93,8 @@ earlier, by [Document Orchestration's Driver Lookup](03-document-orchestration.m
 When the licence matches no driver or matches more than one (question I-12, answered: send for
 human review, mentioning the licence information and reason in the comment), the document never
 reaches this gateway: Driver Lookup routes it to `MANUAL_REVIEW` and its orchestration ends, since
-without a driver it can't join a driver batch. Writing the I-12 Mercury comment for those documents
-is an open question — see [Document Orchestration](03-document-orchestration.md#open-questions--decisions-required).
+without a driver it can't join a driver batch. Driver Lookup queues their I-12/I-22 outcome (IN, with
+the reason and licence in the comment) itself — see [Post-Processing](08-post-processing.md#implementation).
 
 ## Database writes
 

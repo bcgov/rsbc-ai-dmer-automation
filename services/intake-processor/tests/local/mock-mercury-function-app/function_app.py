@@ -5,7 +5,7 @@
 # blob storage) without real Mercury credentials or a route from this dev
 # machine into Mercury.
 #
-# Two endpoints:
+# Read endpoints (write-back endpoints for the Outbox Publisher are at the end):
 #
 #   GET /api/mercury/documents?queue=&page_size=&cursor=
 #       The batch/backlog list the Page Poller reads (one record per DMER).
@@ -309,3 +309,121 @@ def mercury_driver(req: func.HttpRequest) -> func.HttpResponse:
         mimetype="application/json",
         status_code=404,
     )
+
+
+# ---------------------------------------------------------------------------
+# Write-back (the Outbox Publisher). PROVISIONAL -- Mercury hasn't shared its
+# POST/PUT structure yet (question M-6); these mirror what
+# dmer_common.mercury_client.MercuryClient.send_outbox sends:
+#
+#   GET  /api/mercury/drivers/{driver_id}/cases?status=open   the driver's open case
+#   PUT  /api/mercury/documents/{guid}/outcome                UPDATE_OUTCOME
+#   PUT  /api/mercury/documents/{guid}/status                 MARK_DUPLICATE
+#   PUT  /api/mercury/documents/{guid}/driver                 MAP_DRIVER
+#   PUT  /api/mercury/documents/{guid}/case                   CREATE_CASE (attach)
+#   POST /api/mercury/cases                                   CREATE_CASE (create)
+#
+# Every write is recorded as a JSON blob in MOCK_WRITE_CONTAINER (default
+# "mock-writes"): <document_guid>/<what>/<idempotency key>.json, so a test can
+# read back what Mercury "received". A repeated Idempotency-Key returns the
+# first response with "duplicate": true -- the behaviour the outbox assumes.
+#
+# Outage simulation: set MOCK_WRITE_FAIL_STATUS (e.g. 503) and every write
+# returns that status until the setting is removed.
+# ---------------------------------------------------------------------------
+
+
+def _write_container():
+    from azure.core.exceptions import ResourceExistsError
+
+    container = _service().get_container_client(
+        os.environ.get("MOCK_WRITE_CONTAINER", "mock-writes")
+    )
+    try:
+        container.create_container()
+    except ResourceExistsError:
+        pass
+    return container
+
+
+def _json(body: dict, status: int = 200) -> func.HttpResponse:
+    return func.HttpResponse(
+        json.dumps(body), mimetype="application/json", status_code=status
+    )
+
+
+def _record_write(req: func.HttpRequest, guid: str, what: str) -> func.HttpResponse:
+    from azure.core.exceptions import ResourceExistsError
+
+    fail = os.environ.get("MOCK_WRITE_FAIL_STATUS", "").strip()
+    if fail:
+        return _json({"error": "simulated outage"}, int(fail))
+    try:
+        body = req.get_json()
+    except ValueError:
+        return _json({"error": "body must be JSON"}, 400)
+    key = req.headers.get("Idempotency-Key") or uuid.uuid4().hex
+    safe_key = "".join(c if c.isalnum() or c in "-_." else "_" for c in key)
+    blob = _write_container().get_blob_client(f"{guid}/{what}/{safe_key}.json")
+    response = {"ok": True, "document_guid": guid, "operation": what}
+    if what == "case-create":
+        response["case_id"] = f"C{guid[:8].upper()}"
+    record = {
+        "received_at": datetime.now(UTC).strftime(_ISO),
+        "method": req.method,
+        "idempotency_key": key,
+        "body": body,
+        "response": response,
+    }
+    try:
+        blob.upload_blob(json.dumps(record), overwrite=False)
+    except ResourceExistsError:
+        first = json.loads(blob.download_blob().readall())
+        return _json({**first["response"], "duplicate": True})
+    return _json(response, 201 if req.method == "POST" else 200)
+
+
+@app.route(
+    route="mercury/drivers/{driver_id}/cases",
+    methods=["GET"],
+    auth_level=func.AuthLevel.ANONYMOUS,
+)
+def mercury_driver_cases(req: func.HttpRequest) -> func.HttpResponse:
+    driver_id = req.route_params.get("driver_id", "")
+    service = _service()
+    _, groups = _documents_by_group(service, _pdfs(service), datetime.now(UTC))
+    for group in groups:
+        if _driver_identity(group)["driver_id"] == driver_id:
+            return _json({"value": [_case(group)]})
+    return _json({"value": []})
+
+
+_DOCUMENT_WRITES = {
+    "outcome": "outcome",
+    "status": "status",
+    "driver": "driver",
+    "case": "case-attach",
+}
+
+
+@app.route(
+    route="mercury/documents/{guid}/{what}",
+    methods=["PUT"],
+    auth_level=func.AuthLevel.ANONYMOUS,
+)
+def mercury_document_write(req: func.HttpRequest) -> func.HttpResponse:
+    what = _DOCUMENT_WRITES.get(req.route_params.get("what", ""))
+    if what is None:
+        return _json({"error": "unknown write"}, 404)
+    return _record_write(req, req.route_params.get("guid", ""), what)
+
+
+@app.route(route="mercury/cases", methods=["POST"], auth_level=func.AuthLevel.ANONYMOUS)
+def mercury_case_create(req: func.HttpRequest) -> func.HttpResponse:
+    try:
+        guid = str(req.get_json().get("document_guid") or "")
+    except ValueError:
+        return _json({"error": "body must be JSON"}, 400)
+    if not guid:
+        return _json({"error": "document_guid is required"}, 400)
+    return _record_write(req, guid, "case-create")

@@ -224,7 +224,9 @@ def test_decides_when_complete_and_writes_one_decision_per_document():
             assert summary["document_count"] == 2
             assert summary["expected_document_count"] == 2
             assert "FAKE reason" not in json.dumps(summary)  # no clinical text
-            assert doc_statuses == ["DECIDED"]
+            assert doc_statuses == [
+                "POSTING"
+            ]  # Post-Processing queued their outbox rows
             # Clean-pass duplicates: the newest is kept, the older rejected
             assert rows[newer].is_duplicate is False
             assert rows[older].is_duplicate is True
@@ -238,6 +240,24 @@ def test_decides_when_complete_and_writes_one_decision_per_document():
                 evaluation_id
             }
             assert rows[newer].decision_reason["rule_reason"] == "FAKE reason"
+            # Post-Processing: the outbox rows that deliver each decision
+            async with engine.connect() as conn:
+                outbox = (
+                    await conn.execute(
+                        text(
+                            "SELECT document_id::text, operation::text "
+                            "FROM mercury_outbox WHERE status = 'PENDING'"
+                        )
+                    )
+                ).all()
+            ops = {d: sorted(op for doc, op in outbox if doc == d) for d in docs}
+            assert ops[newer] == ["CREATE_CASE", "MAP_DRIVER", "UPDATE_OUTCOME"]
+            assert ops[older] == [
+                "CREATE_CASE",
+                "MAP_DRIVER",
+                "MARK_DUPLICATE",
+                "UPDATE_OUTCOME",
+            ]
 
     asyncio.run(run())
 
@@ -268,6 +288,8 @@ def test_a_late_signal_for_a_decided_batch_changes_nothing():
             )
             async with engine.connect() as conn:
                 assert await _scalar(conn, "SELECT count(*) FROM dmer_decision") == 2
+                # and queues nothing more for Mercury
+                assert await _scalar(conn, "SELECT count(*) FROM mercury_outbox") == 7
 
     asyncio.run(run())
 
