@@ -2592,3 +2592,15 @@ def test_analysis_reads_the_models_masked_inputs_list():
     assert [(f["field"], f["action"]) for f in out["masked_flags"]] == [
         ("cns.moca_score", "restored")
     ]
+
+
+def test_concern_revert_keeps_the_action_a_masked_input_flag_already_has():
+    # DMER29 in dev: masked_input "restored" was relabelled "kept".
+    from dmer_common.normalization.pipeline import revert_unsupported_concerns
+
+    flags = [
+        {"field": "cns.moca_score", "check": "masked_input", "action": "restored"},
+        {"field": "cns.progressive_deficit", "check": "support"},
+    ]
+    revert_unsupported_concerns({}, {}, {}, flags)
+    assert [f["action"] for f in flags] == ["restored", "kept"]

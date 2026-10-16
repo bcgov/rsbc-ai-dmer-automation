@@ -2283,7 +2283,8 @@ def revert_unsupported_concerns(
     only counts when the text links them -- and concern flags are where the
     model over-reaches. Conditions and values stay as set (flagged only); a
     concern from the source form, or one the support check could not judge,
-    is kept. Every flag is labelled ``action``: "reverted" or "kept".
+    is kept. Every flag without an ``action`` yet is labelled "reverted" or
+    "kept"; one another step already labelled keeps its own.
     """
     reverted = set()
     for flag in flags:
@@ -2299,7 +2300,10 @@ def revert_unsupported_concerns(
             dmer.pop(f"{field}_evidence", None)
             reverted.add(field)
     for flag in flags:
-        flag["action"] = "reverted" if flag["field"] in reverted else "kept"
+        # Flags another step already decided (e.g. masked_input "restored")
+        # keep their own action.
+        if "action" not in flag:
+            flag["action"] = "reverted" if flag["field"] in reverted else "kept"
 
 
 # Conditions the analysis model reliably fails to return -- some because the
