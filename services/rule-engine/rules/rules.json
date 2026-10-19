@@ -3481,7 +3481,7 @@
           {
             "_id": "ee38f96a-10e5-4b92-a36f-174e347988e6",
             "170b8a60-614e-4769-8520-7513fd8babb9": "dmer['recommendations.road_test_to_assess'] and dmer['no_other_conditions'] == false",
-            "19c4fb17-58e7-4f74-b75e-9a5d1eb9aeca": "\"PU\"",
+            "19c4fb17-58e7-4f74-b75e-9a5d1eb9aeca": "\"PR\"",
             "81cf688c-2363-4516-91a5-2b4225f84f23": "false",
             "ee4229d5-9e54-4197-8b1b-d9a00443816e": "\"The road test box is checked with medical information given\""
           },

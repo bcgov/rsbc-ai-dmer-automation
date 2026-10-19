@@ -27,6 +27,7 @@ from dmer_common.normalization.pipeline import (
     check_guide_matching,
     check_no_other_conditions,
     derive_other_psych_diagnosis,
+    keep_extracted_acuity,
     missing_evidence,
     normalize_blood_pressure,
     normalize_dates,
@@ -2444,3 +2445,19 @@ def test_section_c_concern_survives_the_evidence_check(monkeypatch):
     assert result["field_sources"]["cardiovascular.cad_has_concerns"] == "rule"
     checks = {(f["field"], f["check"]) for f in result["evidence_flags"]}
     assert ("cardiovascular.cad_has_concerns", "section_c") in checks
+
+
+def test_raw_visual_acuity_is_never_taken_from_the_model():
+    # DMER23: the model rewrote DI's 20/16-2 as 20/160, which gave CR.
+    updates = {
+        "visual_acuity.corrected_both": "20/160",
+        "visual_acuity.corrected_both_evidence": 'visual_acuity.corrected_both: "20/16-2"',
+        "visual_acuity.uncorrected_left": "20/20",
+        "visual_acuity.corrected_vision_20/60_or_worse": True,
+        "cns.moca_score": 19,
+    }
+    keep_extracted_acuity(updates)
+    assert updates == {
+        "visual_acuity.corrected_vision_20/60_or_worse": True,
+        "cns.moca_score": 19,
+    }

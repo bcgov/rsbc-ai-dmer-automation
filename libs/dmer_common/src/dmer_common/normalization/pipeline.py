@@ -1390,6 +1390,25 @@ def drop_model_removals(source: dict, updates: dict) -> list[dict]:
     return flags
 
 
+# Raw visual acuity readings: used exactly as DI extracted them. The model
+# "corrected" them into different values (20/16-2 -> 20/160 gave CR), and the
+# acuity thresholds are computed from these strings deterministically
+# (parse_visual_acuity_denominator ignores superscripts such as -2 or !).
+_DI_ONLY_FIELDS = tuple(
+    f"visual_acuity.{correction}_{eye}"
+    for correction in ("corrected", "uncorrected")
+    for eye in ("right", "left", "both")
+)
+
+
+def keep_extracted_acuity(updates: dict) -> None:
+    """Drop from *updates* (in place) every model value, and its evidence,
+    for the raw visual acuity fields, so DI's values stand as extracted."""
+    for field in _DI_ONLY_FIELDS:
+        updates.pop(field, None)
+        updates.pop(f"{field}_evidence", None)
+
+
 def apply_updates(dmer_data: dict, updates: dict) -> dict:
     """Merge LLM updates back into the original DMER JSON. Call
     :func:`drop_model_removals` first: this merge overwrites."""
@@ -2463,6 +2482,7 @@ def normalize_document(
     """
     dmer_input = flag_monocular_from_bad_eye(adapt_combined_fields(extracted_fields))
     updates = analyze_conditions(openai, dmer_input)
+    keep_extracted_acuity(updates["dmer"])
     source_kept_flags = drop_model_removals(dmer_input["dmer"], updates["dmer"])
     result = apply_updates(dmer_input, updates)
     fallback_flags = apply_text_fallbacks(
