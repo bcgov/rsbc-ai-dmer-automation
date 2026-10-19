@@ -68,6 +68,18 @@
     "dlqRedriveBackoffSeconds": {
       "value": 300
     },
+    "sweeperEnabled": {
+      "value": false
+    },
+    "sweeperSchedule": {
+      "value": "0 */15 * * * *"
+    },
+    "stageSlaMinutes": {
+      "value": 30
+    },
+    "sweeperMaxRepublish": {
+      "value": 3
+    },
     "serviceBusNamespaceFqdn": {
       "value": "sb-rsbc-dmer-shared-dev-001.servicebus.windows.net"
     },

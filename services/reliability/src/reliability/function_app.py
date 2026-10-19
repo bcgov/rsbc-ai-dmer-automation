@@ -11,6 +11,12 @@
   fallback IN; anything else goes to MANUAL_REVIEW. Logic:
   :mod:`reliability.dlq_drain` over :func:`dmer_common.db.dlq_drain.drain_dead_letter`.
 
+- **ReconciliationSweeper** (09-reliability-components.md, 4.6.2): every
+  ~15 minutes (``SWEEPER_SCHEDULE``): documents stalled in a stage past its
+  SLA are re-published (bounded, then MANUAL_REVIEW), stuck WAITING driver
+  evaluations are re-signalled, and the outbox backlog is logged for the
+  alert. Logic: :mod:`reliability.sweeper` over :mod:`dmer_common.db.sweeper`.
+
 This module only reads the settings and wires the database engine, the
 Mercury client and the Service Bus client. Turn a function off without a
 deploy with ``AzureWebJobs.<FunctionName>.Disabled = true``.
@@ -28,6 +34,8 @@ from dmer_common.db.outbox_publisher import (
     publish_due,
 )
 from dmer_common.db.processing_error import FailureCategory
+from dmer_common.db.status import PipelineStage
+from dmer_common.db.sweeper import SweeperSettings, SweepQueue
 from dmer_common.mercury_client import MercuryClient
 from dmer_common.telemetry import get_logger
 
@@ -39,6 +47,7 @@ from .dlq_drain import (
     drain_source,
     pipeline_sources,
 )
+from .sweeper import SweepSummary, run_sweep
 
 _log = get_logger(__name__)
 
@@ -168,6 +177,69 @@ async def dlq_drain(timer: func.TimerRequest) -> None:
     if timer.past_due:
         _log.warning("dlq drain run is past due")
     await run_drain()
+
+
+def _minutes(name: str, default: int) -> timedelta:
+    return timedelta(minutes=_int(name, default))
+
+
+def sweeper_settings() -> SweeperSettings:
+    """The sweeper's thresholds from app settings (``STAGE_SLA_*``: question
+    I-14 -- the defaults are placeholders until it is answered)."""
+    return SweeperSettings(
+        stage_sla={
+            PipelineStage.INGEST: _minutes("STAGE_SLA_INGEST_MINUTES", 30),
+            PipelineStage.EXTRACT: _minutes("STAGE_SLA_EXTRACT_MINUTES", 30),
+            PipelineStage.NORMALIZE: _minutes("STAGE_SLA_NORMALIZE_MINUTES", 30),
+        },
+        driver_sla=_minutes("STAGE_SLA_DRIVER_MINUTES", 30),
+        max_republish=_int("SWEEPER_MAX_REPUBLISH", 3),
+        batch_size=_int("SWEEPER_BATCH_SIZE", 50),
+        outbox_pending_sla=_minutes("OUTBOX_BACKLOG_SLA_MINUTES", 60),
+        outbox_attempt_alert=_int("OUTBOX_ATTEMPT_ALERT", 5),
+    )
+
+
+def _queue_names() -> dict[SweepQueue, str]:
+    sources = {s.stage: s.queue for s in drain_sources()}
+    return {
+        SweepQueue.INGEST: sources[PipelineStage.INGEST],
+        SweepQueue.RAW: sources[PipelineStage.EXTRACT],
+        SweepQueue.EXTRACTED: sources[PipelineStage.NORMALIZE],
+        SweepQueue.DRIVER_DECISION: sources[PipelineStage.DECISION],
+    }
+
+
+async def run_sweeper(
+    *, engine_factory=get_async_engine, client_factory=_service_bus_client
+) -> SweepSummary:
+    """One sweeper run (a fresh engine and Service Bus client)."""
+    settings = sweeper_settings()
+    queues = _queue_names()
+    engine = await engine_factory()
+    try:
+        with client_factory() as client:
+
+            def send(queue: SweepQueue, message) -> None:
+                with client.get_queue_sender(queues[queue]) as sender:
+                    sender.send_messages(message)
+
+            return await run_sweep(engine, send, settings=settings, clock=_now)
+    finally:
+        await engine.dispose()
+
+
+@app.function_name(name="ReconciliationSweeper")
+@app.timer_trigger(
+    arg_name="timer",
+    schedule="%SWEEPER_SCHEDULE%",
+    run_on_startup=False,
+    use_monitor=True,
+)
+async def reconciliation_sweeper(timer: func.TimerRequest) -> None:
+    if timer.past_due:
+        _log.warning("sweeper run is past due")
+    await run_sweeper()
 
 
 @app.function_name(name="OutboxPublisher")

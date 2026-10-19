@@ -11,8 +11,11 @@
 // - DlqDrain -- reads every pipeline queue's dead-letter sub-queue and
 //   records, retries or routes each message (stages/10-dlq-drain.md). It
 //   needs receive (the DLQ) and send (the redrive) on all four queues --
-//   granted queue-scoped below.
-// The Reconciliation Sweeper will join it.
+//   granted queue-scoped below;
+// - ReconciliationSweeper -- every ~15 minutes, re-publishes documents
+//   stalled past their stage SLA (bounded, then MANUAL_REVIEW), re-signals
+//   stuck WAITING driver evaluations and logs the outbox backlog
+//   (09-reliability-components.md). It sends with the same queue roles.
 //
 // Not created here, referenced as already existing:
 // - The VNet integration subnet (delegated to Microsoft.App/environments) --
@@ -122,6 +125,20 @@ param dlqRedriveMaxAttempts int = 3
 @minValue(0)
 param dlqRedriveBackoffSeconds int = 300
 
+@description('Whether the ReconciliationSweeper timer runs. False deploys the app with it disabled.')
+param sweeperEnabled bool = false
+
+@description('NCRONTAB schedule for the ReconciliationSweeper (default: every 15 minutes).')
+param sweeperSchedule string = '0 */15 * * * *'
+
+@description('Minutes a document may sit in a stage before the sweeper re-publishes it (question I-14: placeholder until answered). One value for the ingest, extraction and normalization stages and the driver evaluation.')
+@minValue(1)
+param stageSlaMinutes int = 30
+
+@description('Re-publishes per document and stage before the sweeper routes it to MANUAL_REVIEW.')
+@minValue(0)
+param sweeperMaxRepublish int = 3
+
 @description('Fully-qualified Service Bus namespace hostname, e.g. sb-rsbc-dmer-shared-dev-001.servicebus.windows.net.')
 @minLength(1)
 param serviceBusNamespaceFqdn string
@@ -213,6 +230,13 @@ var appSettings = {
   DLQ_REDRIVE_MAX_ATTEMPTS: string(dlqRedriveMaxAttempts)
   DLQ_REDRIVE_BACKOFF_SECONDS: string(dlqRedriveBackoffSeconds)
   FALLBACK_ENABLED_CATEGORIES: 'PERMANENT_BUSINESS'
+  'AzureWebJobs.ReconciliationSweeper.Disabled': sweeperEnabled ? 'false' : 'true'
+  SWEEPER_SCHEDULE: sweeperSchedule
+  STAGE_SLA_INGEST_MINUTES: string(stageSlaMinutes)
+  STAGE_SLA_EXTRACT_MINUTES: string(stageSlaMinutes)
+  STAGE_SLA_NORMALIZE_MINUTES: string(stageSlaMinutes)
+  STAGE_SLA_DRIVER_MINUTES: string(stageSlaMinutes)
+  SWEEPER_MAX_REPUBLISH: string(sweeperMaxRepublish)
   SERVICE_BUS_NAMESPACE_FQDN: serviceBusNamespaceFqdn
   DMER_INGEST_QUEUE: dmerIngestQueueName
   DMER_RAW_QUEUE: dmerRawQueueName
@@ -265,9 +289,9 @@ module privateEndpoint 'modules/networking/private-endpoint.bicep' = {
 }
 
 // ---------------------------------------------------------------------------
-// 4. Service Bus RBAC (queue-scoped) for the DlqDrain: receive on each
-//    pipeline queue (a dead-letter sub-queue is read with the queue's own
-//    receive right) and send to it (the redrive).
+// 4. Service Bus RBAC (queue-scoped): receive on each pipeline queue (the
+//    DlqDrain reads its dead-letter sub-queue with the queue's own receive
+//    right) and send to it (the drain's redrive, the sweeper's re-publish).
 // ---------------------------------------------------------------------------
 module queueReceiverRoleAssignments 'modules/servicebus/data-plane-role-assignment.bicep' = [
   for queueName in pipelineQueueNames: {

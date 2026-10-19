@@ -4,8 +4,8 @@ The reliability components of the revised architecture (v2.1 §4.6): timer funct
 sure a decided DMER's outcome actually reaches Mercury. See
 `docs/development/stages/09-reliability-components.md`.
 
-It hosts the **Outbox Publisher** and the **DLQ Drain**. The Reconciliation Sweeper will join
-them as a further timer function.
+It hosts three timer functions: the **Outbox Publisher**, the **DLQ Drain** and the
+**Reconciliation Sweeper**.
 
 ## Outbox Publisher
 
@@ -64,6 +64,27 @@ second outcome; a dead letter for a document that has since moved on is recorded
 otherwise recorded without touching the documents. `FALLBACK_ENABLED_CATEGORIES` accepts only
 `PERMANENT_BUSINESS`.
 
+## Reconciliation Sweeper
+
+`ReconciliationSweeper` runs every ~15 minutes (`SWEEPER_SCHEDULE`); the queries are in
+`dmer_common.db.sweeper`. Each sweep commits its records, then publishes:
+
+1. **stalled documents** -- in `RECEIVED` .. `NORMALIZED` with `updated_at` older than the stage's SLA
+   (`STAGE_SLA_INGEST/EXTRACT/NORMALIZE_MINUTES`): re-published to the queue the status waits on
+   (`dmer-ingest`, `dmer-raw` with the raw PDF, `dmer-extracted` with the combined extraction --
+   falling back a stage when an artifact is missing), with a new message id
+   `<document_guid>:sweep<n>`; after `SWEEPER_MAX_REPUBLISH` re-publishes for the stage,
+   `MANUAL_REVIEW` (no decision: a stall is not a business failure);
+2. **stuck driver evaluations** -- open and `WAITING` (or `STALE`) with no document still in flight
+   and nothing moving for `STAGE_SLA_DRIVER_MINUTES` (the lost-update race): `WAITING -> STALE` and a
+   `driver-decision` signal to the driver's session; the orchestrator takes `STALE -> READY`;
+3. **outbox backlog** -- `PENDING` rows past `OUTBOX_BACKLOG_SLA_MINUTES`, rows with
+   `OUTBOX_ATTEMPT_ALERT`+ attempts, and `FAILED` rows: logged at ERROR for the alert.
+
+Every re-publish and give-up is a `processing_error` row (`TRANSIENT_STALLED` / `UNKNOWN_STALLED`).
+A failed send is retried by the next sweep after the SLA. The fourth documented query (documents in
+Mercury's GET-by-licence response with no `dmer_document` row) is not built yet.
+
 ## Deploy
 
 Infrastructure is `infrastructure/bicep/reliability.bicep` with
@@ -75,8 +96,9 @@ create:
 - the deployment package container on the runtime storage account
   (`app-package-func-rsbc-dmer-reliability-dev` in DEV).
 
-Both timers deploy **disabled** (`outboxPublisherEnabled` / `dlqDrainEnabled = false`): outbox rows
-wait as `PENDING` and dead letters stay in their DLQs until they are switched on. The template
+All three timers deploy **disabled** (`outboxPublisherEnabled` / `dlqDrainEnabled` /
+`sweeperEnabled = false`): outbox rows wait as `PENDING`, dead letters stay in their DLQs and
+nothing is swept until they are switched on. The template
 grants the app's identity receive and send on the four pipeline queues.
 
 ```bash
@@ -111,5 +133,5 @@ pytest tests/unit
 ```
 
 The database behaviour is tested in `libs/dmer_common/tests/integration/test_outbox_publisher.py`
-and `test_dlq_drain.py` (against a disposable PostgreSQL, `NORMALIZATION_TEST_DSN`); the
+, `test_dlq_drain.py` and `test_sweeper.py` (against a disposable PostgreSQL, `NORMALIZATION_TEST_DSN`); the
 classification in `libs/dmer_common/tests/test_dlq_classify.py`.

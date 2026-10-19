@@ -108,6 +108,33 @@ per row via `next_attempt_at`, alert on a growing count of `PENDING` rows past S
 | `driver_evaluation` | `UPDATE` | `status` `WAITING` → `STALE` when no progress past SLA, and `STALE` back to `READY` when re-signalled. |
 | `processing_error` | `INSERT` | `document_id`, `stage`, `error_class` / `failure_category` (a sweeper-detected stall is `TRANSIENT` by nature — it never sets `PERMANENT_BUSINESS` and so never triggers a fallback decision), `reason_code`, `message`, `occurred_at` — recorded when a stall is detected, so repeated stalls on the same document are visible as a pattern. |
 
+### Implementation
+
+`services/reliability/` (the `ReconciliationSweeper` timer, `reliability.sweeper`) over
+`dmer_common.db.sweeper`. Queries 1-3 are built; **query 4** (documents in Mercury's
+GET-by-licence response with no `dmer_document` row) is not yet -- it needs a per-driver Mercury
+call, and the Decision Gateway's completeness check already re-reads Mercury for every driver it
+evaluates.
+
+- **Stalled documents** are those in `RECEIVED` .. `NORMALIZED` past their stage's SLA
+  (`RULES_APPLIED` / `AWAITING_DRIVER_COMPLETION` belong to the evaluation query; `DECIDED` /
+  `POSTING` to the outbox). The re-publish goes to the queue the status waits on, with a new
+  message id `<document_guid>:sweep<n>` (the queues' duplicate detection would drop a reused one),
+  and bumps `attempt_count` and `updated_at` so the next sweep waits another SLA. After
+  `SWEEPER_MAX_REPUBLISH` re-publishes for a stage the document goes to `MANUAL_REVIEW` --
+  `UNKNOWN` / `UNKNOWN_STALLED`, never a decision.
+- **Stuck evaluations** are open `WAITING`/`STALE` evaluations with no document still before
+  `RULES_APPLIED`, whose last activity (the newer of the last Mercury check and the documents' last
+  update) is past the SLA: `WAITING -> STALE` and one `driver-decision` signal to the driver's
+  session; the Driver Orchestrator already takes `STALE -> READY`. `STALE -> READY` is therefore
+  the orchestrator's move, not the sweeper's. Bounded by `SWEEPER_MAX_REPUBLISH` too; past it the
+  evaluation is left `STALE` and logged at ERROR.
+- **Outbox backlog** is counted (pending past `OUTBOX_BACKLOG_SLA_MINUTES`, `OUTBOX_ATTEMPT_ALERT`+
+  attempts, `FAILED`) and logged at ERROR when non-zero; nothing is written.
+- Records commit before messages are sent; a failed send is retried by the next sweep after the SLA.
+- `processing_error.redrive_count` holds the re-publish number on sweeper rows; `resolution` is
+  `REPUBLISHED` or `MANUAL_REVIEW`.
+
 ## Daily reconciliation report
 
 Query Mercury for documents in the DPS queues with an empty `dps_date` and compare against
@@ -160,8 +187,10 @@ different triggers — a sweeper-detected stall vs. a drained dead-letter messag
 | `OUTBOX_POLL_INTERVAL_SECONDS` | Default ~60. |
 | `OUTBOX_BATCH_SIZE` | Small batches — bounded by Mercury's unconfirmed concurrency limit (question M-10). |
 | `OUTBOX_MAX_ATTEMPTS` / backoff schedule | |
-| `SWEEPER_INTERVAL_MINUTES` | Default ~15. |
-| `STAGE_SLA_*` | Per-stage SLA thresholds that define "stalled" — set once question I-14 (target time to AI-processed queue) is answered precisely. |
+| `SWEEPER_SCHEDULE` | NCRONTAB, default every 15 minutes. |
+| `STAGE_SLA_INGEST_MINUTES` / `_EXTRACT_` / `_NORMALIZE_` / `_DRIVER_` | Per-stage SLA thresholds that define "stalled" (default 30) — set once question I-14 (target time to AI-processed queue) is answered precisely. |
+| `SWEEPER_MAX_REPUBLISH` | Re-publishes per document and stage before `MANUAL_REVIEW` (default 3). |
+| `OUTBOX_BACKLOG_SLA_MINUTES` / `OUTBOX_ATTEMPT_ALERT` | Outbox backlog alert thresholds (defaults 60, 5). |
 
 ## Authentication / identity
 
@@ -201,7 +230,7 @@ thresholds (queue depth, DLQ count, oldest `PENDING` outbox row age, `driver_eva
 
 - **Service boundary** -- decided: a new `services/reliability/` app
   (`infrastructure/bicep/reliability.bicep`) hosting the Outbox Publisher and the
-  [DLQ Drain](10-dlq-drain.md#implementation); the Sweeper joins it.
+  [DLQ Drain](10-dlq-drain.md#implementation) and the [Reconciliation Sweeper](#implementation-1).
 - **I-14** — target time from document arrival to appearing in the AI-processed queue: Intake's
   answer ("seconds or minutes... assume the SLA based on" the ~1M backlog) is directional, not a
   number. A concrete SLA is needed to set `STAGE_SLA_*` thresholds precisely.
