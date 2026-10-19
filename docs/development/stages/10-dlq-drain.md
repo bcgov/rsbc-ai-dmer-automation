@@ -113,6 +113,35 @@ is no native requeue) once the transient/processing condition is believed cleare
 left for human triage. Redrive never writes a `dmer_decision`. This is the safe counterpart to the
 fallback path: the fallback *decides*, recovery *retries*.
 
+### Implementation
+
+`services/reliability/` (the `DlqDrain` timer, `reliability.dlq_drain`) over
+`dmer_common.db.dlq_drain.drain_dead_letter` and `dmer_common.dlq.classify`. Where it refines or
+departs from the text above:
+
+- **Retry what a retry could fix** (business decision, Oct 2026): a `MaxDeliveryCountExceeded`
+  dead letter is classified by the stage's last `dmer_stage_run.error_code`. A logical error
+  (`InvalidStatusTransition`, `ValidationError`, ...) is `UNKNOWN`; anything else, **including no
+  recorded error**, is `TRANSIENT` and redriven -- not `UNKNOWN` as precedence rule 4 says. Redrive
+  never decides anything, and an exhausted budget still ends in `UNKNOWN` / manual review.
+- **Redrive reopens the document.** `MANUAL_REVIEW` is otherwise terminal, and the DI processor sets
+  it before dead-lettering, so the drain moves the document back to its queue's entry status
+  (`status.REDRIVE_REOPENABLE`: `RECEIVED` for `dmer-ingest`, `DOWNLOADED` for `dmer-raw`,
+  `EXTRACTED` for `dmer-extracted`) -- never when it has a decision or a queued Mercury write, and
+  never when it has already moved past the stage (recorded as `STALE`). The re-sent copy gets a new,
+  deterministic message id and `attempt` + 1, scheduled after a doubling backoff.
+- **The fallback is the outbox row alone.** `dmer_decision` needs a driver evaluation, which a
+  document that dead-lettered before Driver Orchestration doesn't have -- the same as Driver
+  Lookup's I-12/I-22 fallback. The `UPDATE_OUTCOME` row's key is `<document_id>:FALLBACK`, shared
+  with Driver Lookup, so a document gets at most one fallback.
+- **`driver-decision` is driver-level.** A retriable dead letter is re-sent to the driver's session
+  (`attempt` unchanged: it counts the Mercury re-checks); anything else is recorded (`RECORDED`)
+  without routing the batch's documents -- the Reconciliation Sweeper owns stuck evaluations.
+- **A dead letter with no known document** (no `documentId`, or no `dmer_document` row) can't have a
+  `processing_error` row; it is logged at ERROR and completed.
+- **Ingest redrive re-sends the same pre-signed URL** -- re-polling Mercury for a fresh one waits on
+  M-1 (see below). An expired URL fails again and ends in manual review after the redrive budget.
+
 ## Database writes
 
 | Table | Operation | Category | Fields |

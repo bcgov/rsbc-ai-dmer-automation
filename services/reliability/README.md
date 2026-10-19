@@ -4,8 +4,8 @@ The reliability components of the revised architecture (v2.1 §4.6): timer funct
 sure a decided DMER's outcome actually reaches Mercury. See
 `docs/development/stages/09-reliability-components.md`.
 
-Today it hosts the **Outbox Publisher**. The Reconciliation Sweeper and the DLQ Drain will join
-it as further timer functions.
+It hosts the **Outbox Publisher** and the **DLQ Drain**. The Reconciliation Sweeper will join
+them as a further timer function.
 
 ## Outbox Publisher
 
@@ -37,6 +37,33 @@ write under `mock-writes/<document_guid>/` and can simulate an outage with
 Logs carry ids, operations, idempotency keys and HTTP statuses only -- payloads carry clinical
 content and licences.
 
+## DLQ Drain
+
+`DlqDrain` reads the dead-letter sub-queue of each pipeline queue (`dmer-ingest`, `dmer-raw`,
+`dmer-extracted`, `driver-decision`) every few minutes (`DLQ_DRAIN_SCHEDULE`), up to
+`DLQ_DRAIN_BATCH_SIZE` messages per queue. See `docs/development/stages/10-dlq-drain.md`. Per
+message, in one transaction (`dmer_common.db.dlq_drain.drain_dead_letter`):
+
+1. **classify** it (`dmer_common.dlq.classify`) from the dead-letter reason and, for a Service Bus
+   `MaxDeliveryCountExceeded`, the stage's last recorded error;
+2. **a retry could fix it** (`TRANSIENT` / `PROCESSING`: a database or network blip, a 429/5xx,
+   invalid model output, a lost lock, delivery attempts used up with no logical error) -> reopen
+   the document at the queue's entry status and **re-send** the message (`attempt` + 1, a new
+   message id, after `DLQ_REDRIVE_BACKOFF_SECONDS` doubling per re-send), at most
+   `DLQ_REDRIVE_MAX_ATTEMPTS` times; after that it goes to a person as below;
+3. **can never succeed** (`PERMANENT_BUSINESS`: an unreadable PDF) -> `MANUAL_REVIEW` and the
+   fallback outcome queued to `mercury_outbox`: IN, "AI could not process" and the reason
+   (question I-1) -- the one case that produces a decision;
+4. **a logical error or an unknown reason** (`UNKNOWN`) -> `MANUAL_REVIEW`, no decision.
+
+Every message gets a `processing_error` row (category, reason code, `dlq_message_id`, what was
+done in `resolution`), unique per message, so a run that dies half-way is safely repeated. A
+document that already has a decision or a queued Mercury write is never reopened or given a
+second outcome; a dead letter for a document that has since moved on is recorded as `STALE`.
+`driver-decision` dead letters are driver-level: re-sent to the driver's session when retriable,
+otherwise recorded without touching the documents. `FALLBACK_ENABLED_CATEGORIES` accepts only
+`PERMANENT_BUSINESS`.
+
 ## Deploy
 
 Infrastructure is `infrastructure/bicep/reliability.bicep` with
@@ -48,8 +75,9 @@ create:
 - the deployment package container on the runtime storage account
   (`app-package-func-rsbc-dmer-reliability-dev` in DEV).
 
-The `OutboxPublisher` timer deploys **disabled** (`outboxPublisherEnabled = false`), so outbox rows
-wait as `PENDING` until it is switched on.
+Both timers deploy **disabled** (`outboxPublisherEnabled` / `dlqDrainEnabled = false`): outbox rows
+wait as `PENDING` and dead letters stay in their DLQs until they are switched on. The template
+grants the app's identity receive and send on the four pipeline queues.
 
 ```bash
 az deployment group create -g rg-rsbc-dmer-dev   -f infrastructure/bicep/reliability.bicep   -p @deployment/dev/reliability.parameters.json   -p runtimeStorageConnectionString="$(az storage account show-connection-string -n rsbcstorage -g rsbc-dmer-ai-optimization-rg --query connectionString -o tsv)"   -p mercuryApiKey="$(az functionapp config appsettings list -g rg-rsbc-dmer-dev -n func-rsbc-dmer-workflow-orchestrator-dev --query "[?name=='MERCURY_API_KEY'].value" -o tsv)"
@@ -61,7 +89,7 @@ az deployment group create -g rg-rsbc-dmer-dev   -f infrastructure/bicep/reliabi
 Then the Postgres role (once per environment): run `services/intake-processor/create-principal.sql`
 against `postgres` and `roles.sql` against `dmer` with `function_app_name` set to this app's name
 (`SET ROLE rsbc_dmer_admin` first). The app reads and updates `mercury_outbox`, `dmer_document`,
-`dmer_decision` and `driver_evaluation`.
+`dmer_decision`, `driver_evaluation`, `processing_error` and `dmer_stage_run`.
 
 Code: rebuild `dmer_common-0.1.0-py3-none-any.whl` from `libs/dmer_common` into this directory,
 then `func azure functionapp publish <app> --python` (remote build).
@@ -82,5 +110,6 @@ pip install -e ".[dev]"
 pytest tests/unit
 ```
 
-The publisher's database behaviour is tested in `libs/dmer_common/tests/integration/test_outbox_publisher.py`
-(against a disposable PostgreSQL, `NORMALIZATION_TEST_DSN`).
+The database behaviour is tested in `libs/dmer_common/tests/integration/test_outbox_publisher.py`
+and `test_dlq_drain.py` (against a disposable PostgreSQL, `NORMALIZATION_TEST_DSN`); the
+classification in `libs/dmer_common/tests/test_dlq_classify.py`.

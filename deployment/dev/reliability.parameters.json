@@ -56,6 +56,24 @@
     "postgresDatabase": {
       "value": "dmer"
     },
+    "dlqDrainEnabled": {
+      "value": false
+    },
+    "dlqDrainSchedule": {
+      "value": "0 */5 * * * *"
+    },
+    "dlqRedriveMaxAttempts": {
+      "value": 3
+    },
+    "dlqRedriveBackoffSeconds": {
+      "value": 300
+    },
+    "serviceBusNamespaceFqdn": {
+      "value": "sb-rsbc-dmer-shared-dev-001.servicebus.windows.net"
+    },
+    "serviceBusResourceGroupName": {
+      "value": "rg-rsbc-dmer-dev"
+    },
     "mercuryWriteApiBaseUrl": {
       "value": "https://func-mock-mercury-api-dev.azurewebsites.net/api/mercury"
     },

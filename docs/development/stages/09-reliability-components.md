@@ -200,8 +200,8 @@ thresholds (queue depth, DLQ count, oldest `PENDING` outbox row age, `driver_eva
 ## Open Questions / Decisions Required
 
 - **Service boundary** -- decided: a new `services/reliability/` app
-  (`infrastructure/bicep/reliability.bicep`), starting with the Outbox Publisher; the Sweeper and
-  DLQ Drain join it.
+  (`infrastructure/bicep/reliability.bicep`) hosting the Outbox Publisher and the
+  [DLQ Drain](10-dlq-drain.md#implementation); the Sweeper joins it.
 - **I-14** — target time from document arrival to appearing in the AI-processed queue: Intake's
   answer ("seconds or minutes... assume the SLA based on" the ~1M backlog) is directional, not a
   number. A concrete SLA is needed to set `STAGE_SLA_*` thresholds precisely.

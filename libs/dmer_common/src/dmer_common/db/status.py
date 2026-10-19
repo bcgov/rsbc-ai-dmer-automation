@@ -71,6 +71,33 @@ _TERMINAL: frozenset[PipelineStatus] = frozenset(
 )
 
 
+# DLQ Drain redrive (stages/10-dlq-drain.md): the one way back from
+# MANUAL_REVIEW, outside the forward table. A dead letter a retry could fix is
+# re-sent to its queue with the document reopened at the status that queue's
+# stage starts from. Key: that entry status; value: the statuses it may be
+# reopened from (the failed stage's own in-progress statuses, or
+# MANUAL_REVIEW). The drain also refuses when the document already has a
+# decision or a queued Mercury write.
+REDRIVE_REOPENABLE: dict[PipelineStatus, frozenset[PipelineStatus]] = {
+    # dmer-ingest
+    PipelineStatus.RECEIVED: frozenset(
+        {PipelineStatus.RECEIVED, PipelineStatus.MANUAL_REVIEW}
+    ),
+    # dmer-raw (extraction)
+    PipelineStatus.DOWNLOADED: frozenset(
+        {
+            PipelineStatus.DOWNLOADED,
+            PipelineStatus.EXTRACTING,
+            PipelineStatus.MANUAL_REVIEW,
+        }
+    ),
+    # dmer-extracted (document orchestration)
+    PipelineStatus.EXTRACTED: frozenset(
+        {PipelineStatus.EXTRACTED, PipelineStatus.MANUAL_REVIEW}
+    ),
+}
+
+
 def next_statuses(current: PipelineStatus) -> set[PipelineStatus]:
     """Return the set of statuses reachable from ``current``."""
     allowed = set(_FORWARD[current])

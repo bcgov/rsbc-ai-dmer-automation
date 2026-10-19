@@ -5,11 +5,14 @@
 // its own hosting plan, its Application Insights component, and its inbound
 // private endpoint. Same shape and shared modules as driver-orchestrator.bicep.
 //
-// The app runs timer functions only -- today the Outbox Publisher, which
-// drains mercury_outbox to Mercury about once a minute (see
-// services/reliability/ and docs/development/stages/09-reliability-components.md).
-// The Reconciliation Sweeper and the DLQ Drain will join it; the DLQ Drain
-// will then need Service Bus receive/send roles added here.
+// The app runs timer functions only (see services/reliability/):
+// - OutboxPublisher -- drains mercury_outbox to Mercury about once a minute
+//   (docs/development/stages/09-reliability-components.md);
+// - DlqDrain -- reads every pipeline queue's dead-letter sub-queue and
+//   records, retries or routes each message (stages/10-dlq-drain.md). It
+//   needs receive (the DLQ) and send (the redrive) on all four queues --
+//   granted queue-scoped below.
+// The Reconciliation Sweeper will join it.
 //
 // Not created here, referenced as already existing:
 // - The VNet integration subnet (delegated to Microsoft.App/environments) --
@@ -21,10 +24,10 @@
 // - The Postgres role for this app's identity (data-plane SQL -- see
 //   services/reliability/README.md).
 //
-// The OutboxPublisher timer is DISABLED unless outboxPublisherEnabled is true
-// -- via the AzureWebJobs.OutboxPublisher.Disabled app setting, the same
-// setting the Portal's Enable/Disable buttons flip. While disabled, outbox
-// rows wait as PENDING.
+// Each timer is DISABLED unless its *Enabled parameter is true -- via the
+// AzureWebJobs.<FunctionName>.Disabled app setting, the same setting the
+// Portal's Enable/Disable buttons flip. While the publisher is disabled,
+// outbox rows wait as PENDING; while the drain is, dead letters wait.
 
 targetScope = 'resourceGroup'
 
@@ -105,6 +108,40 @@ param outboxBatchSize int = 20
 @minValue(1)
 param outboxMaxAttempts int = 10
 
+@description('Whether the DlqDrain timer runs. False deploys the app with it disabled, so dead letters wait in their DLQs.')
+param dlqDrainEnabled bool = false
+
+@description('NCRONTAB schedule for the DlqDrain (default: every 5 minutes).')
+param dlqDrainSchedule string = '0 */5 * * * *'
+
+@description('Re-sends of a retriable dead letter before the document goes to MANUAL_REVIEW.')
+@minValue(0)
+param dlqRedriveMaxAttempts int = 3
+
+@description('Delay before the first re-send of a dead letter, in seconds; doubled for each further one.')
+@minValue(0)
+param dlqRedriveBackoffSeconds int = 300
+
+@description('Fully-qualified Service Bus namespace hostname, e.g. sb-rsbc-dmer-shared-dev-001.servicebus.windows.net.')
+@minLength(1)
+param serviceBusNamespaceFqdn string
+
+@description('Resource group containing the Service Bus namespace.')
+@minLength(1)
+param serviceBusResourceGroupName string
+
+@description('Ingest queue: its dead letters are drained (and re-sent to it).')
+param dmerIngestQueueName string = 'dmer-ingest'
+
+@description('Extraction queue (DI processor): its dead letters are drained (and re-sent to it).')
+param dmerRawQueueName string = 'dmer-raw'
+
+@description('Document orchestration queue: its dead letters are drained (and re-sent to it).')
+param dmerExtractedQueueName string = 'dmer-extracted'
+
+@description('Driver decision queue (session-enabled): its dead letters are drained (and re-sent to it).')
+param driverDecisionQueueName string = 'driver-decision'
+
 @description('Mercury write-back base URL. PROVISIONAL until question M-6: the dev mock implements the assumed endpoints.')
 param mercuryWriteApiBaseUrl string = ''
 
@@ -132,6 +169,16 @@ param owner string = 'RSBC-DMER'
 param dataClassification string = 'protected-b'
 
 var serviceTags = buildTags(environment, 'reliability', costCenter, owner, dataClassification)
+
+var serviceBusNamespaceName = split(serviceBusNamespaceFqdn, '.')[0]
+var serviceBusDataReceiverRoleId = '4f6d3b9b-027b-4f4c-9142-0e5a2a2247e0'
+var serviceBusDataSenderRoleId = '69a216fc-b8fb-44d8-bc22-1f3c2cd27a39'
+var pipelineQueueNames = [
+  dmerIngestQueueName
+  dmerRawQueueName
+  dmerExtractedQueueName
+  driverDecisionQueueName
+]
 
 // ---------------------------------------------------------------------------
 // 1. Application Insights
@@ -161,6 +208,16 @@ var appSettings = {
   OUTBOX_PUBLISHER_SCHEDULE: outboxPublisherSchedule
   OUTBOX_BATCH_SIZE: string(outboxBatchSize)
   OUTBOX_MAX_ATTEMPTS: string(outboxMaxAttempts)
+  'AzureWebJobs.DlqDrain.Disabled': dlqDrainEnabled ? 'false' : 'true'
+  DLQ_DRAIN_SCHEDULE: dlqDrainSchedule
+  DLQ_REDRIVE_MAX_ATTEMPTS: string(dlqRedriveMaxAttempts)
+  DLQ_REDRIVE_BACKOFF_SECONDS: string(dlqRedriveBackoffSeconds)
+  FALLBACK_ENABLED_CATEGORIES: 'PERMANENT_BUSINESS'
+  SERVICE_BUS_NAMESPACE_FQDN: serviceBusNamespaceFqdn
+  DMER_INGEST_QUEUE: dmerIngestQueueName
+  DMER_RAW_QUEUE: dmerRawQueueName
+  DMER_EXTRACTED_QUEUE: dmerExtractedQueueName
+  DRIVER_DECISION_QUEUE: driverDecisionQueueName
   POSTGRES_HOST: postgresHost
   POSTGRES_PORT: postgresPort
   POSTGRES_DATABASE: postgresDatabase
@@ -206,6 +263,37 @@ module privateEndpoint 'modules/networking/private-endpoint.bicep' = {
     ]
   }
 }
+
+// ---------------------------------------------------------------------------
+// 4. Service Bus RBAC (queue-scoped) for the DlqDrain: receive on each
+//    pipeline queue (a dead-letter sub-queue is read with the queue's own
+//    receive right) and send to it (the redrive).
+// ---------------------------------------------------------------------------
+module queueReceiverRoleAssignments 'modules/servicebus/data-plane-role-assignment.bicep' = [
+  for queueName in pipelineQueueNames: {
+    name: '${deployment().name}-sb-role-${queueName}-receive'
+    scope: resourceGroup(serviceBusResourceGroupName)
+    params: {
+      serviceBusNamespaceName: serviceBusNamespaceName
+      queueName: queueName
+      principalId: functionApp.outputs.principalId
+      roleDefinitionId: serviceBusDataReceiverRoleId
+    }
+  }
+]
+
+module queueSenderRoleAssignments 'modules/servicebus/data-plane-role-assignment.bicep' = [
+  for queueName in pipelineQueueNames: {
+    name: '${deployment().name}-sb-role-${queueName}-send'
+    scope: resourceGroup(serviceBusResourceGroupName)
+    params: {
+      serviceBusNamespaceName: serviceBusNamespaceName
+      queueName: queueName
+      principalId: functionApp.outputs.principalId
+      roleDefinitionId: serviceBusDataSenderRoleId
+    }
+  }
+]
 
 // ---------------------------------------------------------------------------
 // Outputs
