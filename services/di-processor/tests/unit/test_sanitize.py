@@ -57,11 +57,12 @@ def test_sanitize_forces_low_when_source_not_both():
     result = {"fields": {"x": {"value": "6.5", "confidence": "high", "source": "ocr"}}}
     sanitize_fields(result, ("x",), frozenset())
     assert result["fields"]["x"]["confidence"] == "low"
-    # ...and a low-confidence reading is withheld
-    assert result["fields"]["x"]["value"] == ""
+    # ...but the reading is kept, with a note saying why it is low
+    assert result["fields"]["x"]["value"] == "6.5"
+    assert result["fields"]["x"]["notes"].startswith("Confidence set to low")
 
 
-def test_sanitize_blanks_low_confidence_values_with_a_note():
+def test_sanitize_keeps_low_confidence_values():
     result = {
         "fields": {
             "x": {
@@ -74,10 +75,10 @@ def test_sanitize_blanks_low_confidence_values_with_a_note():
     }
     sanitize_fields(result, ("x",), frozenset())
     entry = result["fields"]["x"]
-    assert entry["value"] == ""
+    assert entry["value"] == "FAKE-reading"
     assert entry["confidence"] == "low"
-    assert entry["source"] == "image"  # where the withheld reading came from
-    assert entry["notes"].startswith("faint | Value withheld: low confidence")
+    assert entry["source"] == "image"
+    assert entry["notes"] == "faint"
 
 
 def test_sanitize_keeps_high_confidence_values_where_image_and_ocr_agree():

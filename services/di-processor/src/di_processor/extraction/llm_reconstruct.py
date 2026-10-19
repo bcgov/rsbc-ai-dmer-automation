@@ -89,8 +89,8 @@ def build_messages(
                     "type": "text",
                     "text": (
                         "Extract the handwritten values for the Driver's Medical "
-                        "Examination page. The IMAGE is the primary source of truth; "
-                        "the OCR JSON is a second opinion. Return a value for EVERY "
+                        "Examination page. The OCR JSON is the primary source of truth; "
+                        "the IMAGE is a second opinion. Return a value for EVERY "
                         'field key below (use "" if blank).'
                         + "\n\nFIELD KEYS TO EXTRACT:\n"
                         + field_keys_block
