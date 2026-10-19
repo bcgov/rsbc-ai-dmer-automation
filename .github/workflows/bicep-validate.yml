@@ -77,6 +77,12 @@ jobs:
       - name: az bicep lint (reliability.bicep)
         run: az bicep lint --file reliability.bicep
 
+      - name: az bicep build (monitoring.bicep)
+        run: az bicep build --file monitoring.bicep
+
+      - name: az bicep lint (monitoring.bicep)
+        run: az bicep lint --file monitoring.bicep
+
   what-if-intake-processor:
     runs-on: ubuntu-latest
     needs: build-and-lint

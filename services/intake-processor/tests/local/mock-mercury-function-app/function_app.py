@@ -324,9 +324,16 @@ def mercury_driver(req: func.HttpRequest) -> func.HttpResponse:
 #   POST /api/mercury/cases                                   CREATE_CASE (create)
 #
 # Every write is recorded as a JSON blob in MOCK_WRITE_CONTAINER (default
-# "mock-writes"): <document_guid>/<what>/<idempotency key>.json, so a test can
-# read back what Mercury "received". A repeated Idempotency-Key returns the
-# first response with "duplicate": true -- the behaviour the outbox assumes.
+# "mock-writes") on this app's storage account, named after the source PDF so
+# a batch reads back as one folder:
+#
+#   <source blob name without .pdf>/<what>/<idempotency key>.json
+#   e.g. t20261016e-DMER5_/outcome/<key>.json -- list prefix "t20261016e-"
+#
+# (a guid that matches no PDF in MOCK_DMER_CONTAINER goes under _unknown/<guid>/).
+# Each record holds the source blob, the document_guid, the request body and the
+# mock's response. A repeated Idempotency-Key returns the first response with
+# "duplicate": true -- the behaviour the outbox assumes.
 #
 # Outage simulation: set MOCK_WRITE_FAIL_STATUS (e.g. 503) and every write
 # returns that status until the setting is removed.
@@ -352,6 +359,15 @@ def _json(body: dict, status: int = 200) -> func.HttpResponse:
     )
 
 
+def _source_blob(guid: str) -> str | None:
+    """The mock-dmers blob whose document_guid is *guid* (guids are uuid5 of
+    the blob name, so this is a scan, not a lookup)."""
+    for blob in _pdfs(_service()):
+        if _guid(blob.name) == guid:
+            return blob.name
+    return None
+
+
 def _record_write(req: func.HttpRequest, guid: str, what: str) -> func.HttpResponse:
     from azure.core.exceptions import ResourceExistsError
 
@@ -364,12 +380,16 @@ def _record_write(req: func.HttpRequest, guid: str, what: str) -> func.HttpRespo
         return _json({"error": "body must be JSON"}, 400)
     key = req.headers.get("Idempotency-Key") or uuid.uuid4().hex
     safe_key = "".join(c if c.isalnum() or c in "-_." else "_" for c in key)
-    blob = _write_container().get_blob_client(f"{guid}/{what}/{safe_key}.json")
+    source = _source_blob(guid)
+    folder = source[: -len(".pdf")] if source else f"_unknown/{guid}"
+    blob = _write_container().get_blob_client(f"{folder}/{what}/{safe_key}.json")
     response = {"ok": True, "document_guid": guid, "operation": what}
     if what == "case-create":
         response["case_id"] = f"C{guid[:8].upper()}"
     record = {
         "received_at": datetime.now(UTC).strftime(_ISO),
+        "source_blob": source,
+        "document_guid": guid,
         "method": req.method,
         "idempotency_key": key,
         "body": body,

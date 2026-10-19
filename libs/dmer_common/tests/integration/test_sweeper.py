@@ -318,3 +318,28 @@ def test_the_outbox_backlog_counts_what_needs_an_alert():
             assert backlog.alert
 
     asyncio.run(run())
+
+
+def test_failed_rows_alone_do_not_alert_every_sweep():
+    # A person resolves a FAILED row in Mercury and it stays FAILED: the
+    # publisher alerted once when it gave up.
+    async def run():
+        async with database() as engine:
+            doc = await _document(engine, "POSTING")
+            async with engine.begin() as conn:
+                await queue_outbox_rows(
+                    conn,
+                    fallback_rows(
+                        source_id=f"{doc}:FALLBACK",
+                        document_id=doc,
+                        document_guid=str(uuid4()),
+                        comment="AI could not process.",
+                    ),
+                    now=NOW,
+                )
+                await conn.execute(text("UPDATE mercury_outbox SET status = 'FAILED'"))
+            backlog = await outbox_backlog(engine, settings=SETTINGS, now=NOW)
+            assert backlog.failed == 1
+            assert not backlog.alert
+
+    asyncio.run(run())

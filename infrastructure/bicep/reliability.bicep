@@ -15,7 +15,10 @@
 // - ReconciliationSweeper -- every ~15 minutes, re-publishes documents
 //   stalled past their stage SLA (bounded, then MANUAL_REVIEW), re-signals
 //   stuck WAITING driver evaluations and logs the outbox backlog
-//   (09-reliability-components.md). It sends with the same queue roles.
+//   (09-reliability-components.md). It sends with the same queue roles;
+// - DailyReconciliation -- once a day, checks every document in Mercury's DPS
+//   queue against the pipeline's tables and writes the report to the
+//   reconciliation-reports container on the runtime storage account.
 //
 // Not created here, referenced as already existing:
 // - The VNet integration subnet (delegated to Microsoft.App/environments) --
@@ -139,6 +142,18 @@ param stageSlaMinutes int = 30
 @minValue(0)
 param sweeperMaxRepublish int = 3
 
+@description('Whether the DailyReconciliation timer runs. False deploys the app with it disabled.')
+param reconciliationEnabled bool = false
+
+@description('NCRONTAB schedule for the DailyReconciliation (default: 13:00 UTC, early morning Pacific).')
+param reconciliationSchedule string = '0 0 13 * * *'
+
+@description('Mercury batch API base URL (unpaginated) -- the DPS queue the reconciliation report reads, the same one the Page Poller reads.')
+param mercuryApiBaseUrl string = ''
+
+@description('Mercury queue the reconciliation report reads -- the same one the Page Poller reads.')
+param mercuryQueue string = 'BOTH'
+
 @description('Fully-qualified Service Bus namespace hostname, e.g. sb-rsbc-dmer-shared-dev-001.servicebus.windows.net.')
 @minLength(1)
 param serviceBusNamespaceFqdn string
@@ -237,6 +252,11 @@ var appSettings = {
   STAGE_SLA_NORMALIZE_MINUTES: string(stageSlaMinutes)
   STAGE_SLA_DRIVER_MINUTES: string(stageSlaMinutes)
   SWEEPER_MAX_REPUBLISH: string(sweeperMaxRepublish)
+  'AzureWebJobs.DailyReconciliation.Disabled': reconciliationEnabled ? 'false' : 'true'
+  RECONCILIATION_SCHEDULE: reconciliationSchedule
+  RECONCILIATION_CONTAINER: 'reconciliation-reports'
+  MERCURY_API_BASE_URL: mercuryApiBaseUrl
+  MERCURY_QUEUE: mercuryQueue
   SERVICE_BUS_NAMESPACE_FQDN: serviceBusNamespaceFqdn
   DMER_INGEST_QUEUE: dmerIngestQueueName
   DMER_RAW_QUEUE: dmerRawQueueName

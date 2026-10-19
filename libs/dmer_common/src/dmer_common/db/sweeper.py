@@ -16,8 +16,10 @@ built yet; see the stage doc):
    ``WAITING -> STALE`` and re-signal the driver on ``driver-decision``
    (the orchestrator takes ``STALE -> READY``).
 3. :func:`outbox_backlog` -- ``mercury_outbox`` rows ``PENDING`` past a
-   threshold, retried often, or ``FAILED``: counts for the alert; nothing
-   is written.
+   threshold or retried often: counts for the alert; nothing is written.
+   ``FAILED`` rows are counted but don't alert here: each one alerts once,
+   when the publisher gives up on it, and a person resolves it in Mercury --
+   the row stays ``FAILED`` (no record of that in this system).
 
 Each sweep commits its records first and returns the messages to publish:
 if publishing fails, ``updated_at`` has moved on and the next sweep after the
@@ -122,7 +124,10 @@ class OutboxBacklog:
 
     @property
     def alert(self) -> bool:
-        return bool(self.pending_past_sla or self.high_attempts or self.failed)
+        # FAILED rows alert once, from the publisher; a person resolves them
+        # in Mercury and they stay FAILED, so counting them here would alert
+        # every sweep forever.
+        return bool(self.pending_past_sla or self.high_attempts)
 
 
 async def _latest_output(

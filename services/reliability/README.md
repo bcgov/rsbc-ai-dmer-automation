@@ -4,8 +4,9 @@ The reliability components of the revised architecture (v2.1 §4.6): timer funct
 sure a decided DMER's outcome actually reaches Mercury. See
 `docs/development/stages/09-reliability-components.md`.
 
-It hosts three timer functions: the **Outbox Publisher**, the **DLQ Drain** and the
-**Reconciliation Sweeper**.
+It hosts four timer functions: the **Outbox Publisher**, the **DLQ Drain**, the
+**Reconciliation Sweeper** and the **Daily Reconciliation** report. Their alerts are
+`infrastructure/bicep/monitoring.bicep` (see `docs/operations/monitoring-alerts.md`).
 
 ## Outbox Publisher
 
@@ -31,7 +32,8 @@ as the decision. `OutboxPublisher` drains them about once a minute
 structure or idempotency behaviour). `MercuryClient.send_outbox` and the dev mock
 (`services/intake-processor/tests/local/mock-mercury-function-app`) implement the assumed
 endpoints; only those two should need to change once M-6 is answered. The mock records every
-write under `mock-writes/<document_guid>/` and can simulate an outage with
+write under `mock-writes/<source PDF name>/<operation>/` (so a batch prefix such as
+`t20261016e-` lists one job's writes) and can simulate an outage with
 `MOCK_WRITE_FAIL_STATUS` (e.g. `503`).
 
 Logs carry ids, operations, idempotency keys and HTTP statuses only -- payloads carry clinical
@@ -85,6 +87,21 @@ Every re-publish and give-up is a `processing_error` row (`TRANSIENT_STALLED` / 
 A failed send is retried by the next sweep after the SLA. The fourth documented query (documents in
 Mercury's GET-by-licence response with no `dmer_document` row) is not built yet.
 
+## Daily Reconciliation
+
+`DailyReconciliation` runs once a day (`RECONCILIATION_SCHEDULE`, default 13:00 UTC). It pages
+through Mercury's DPS queue (`MERCURY_API_BASE_URL`, `MERCURY_QUEUE`, at most
+`RECONCILIATION_MAX_PAGES` pages) and checks every document against the pipeline
+(`dmer_common.db.reconciliation`): never received (after `RECONCILIATION_RECEIVE_GRACE_HOURS`),
+overdue in the pipeline (after `RECONCILIATION_OVERDUE_HOURS`), in manual review with nothing sent
+to Mercury, not posted, or a `FAILED` write. The report goes to `RECONCILIATION_CONTAINER`
+(`reconciliation-reports/<date>.json` on the runtime storage account) with the day's manual-review,
+fallback and stage-p95 figures, and its summary is logged for the alerts. What each finding means:
+`docs/operations/runbook.md`.
+
+A `FAILED` outbox row is never retried: the publisher logs it once (the `outbox-write-failed`
+alert) and a person resolves it in Mercury; the sweeper's backlog alert doesn't count `FAILED` rows.
+
 ## Deploy
 
 Infrastructure is `infrastructure/bicep/reliability.bicep` with
@@ -96,9 +113,9 @@ create:
 - the deployment package container on the runtime storage account
   (`app-package-func-rsbc-dmer-reliability-dev` in DEV).
 
-All three timers deploy **disabled** (`outboxPublisherEnabled` / `dlqDrainEnabled` /
-`sweeperEnabled = false`): outbox rows wait as `PENDING`, dead letters stay in their DLQs and
-nothing is swept until they are switched on. The template
+All four timers deploy **disabled** (`outboxPublisherEnabled` / `dlqDrainEnabled` /
+`sweeperEnabled` / `reconciliationEnabled = false`): outbox rows wait as `PENDING`, dead letters
+stay in their DLQs and nothing is swept or reported until they are switched on. The template
 grants the app's identity receive and send on the four pipeline queues.
 
 ```bash

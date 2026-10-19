@@ -78,16 +78,14 @@ carry sensitive content, add it to that frozenset rather than special-casing the
 - Every stage/activity should call `dmer_common.telemetry.get_logger(__name__)` and bind
   `document_id` via `document_id_context()` at the start of message/activity handling — see each
   stage doc's "Logging / auditing" section for what's worth logging at INFO vs. keeping DB-only.
-- `infrastructure/bicep/modules/monitor/alerts.bicep` exists but has no alert rules instantiated
-  yet matching the table above — build these from the four-queue names in `../message-contracts.md`
-  and the specific queries in
-  [Reliability Components §The four queries](../stages/09-reliability-components.md#the-four-queries).
+- `infrastructure/bicep/modules/monitor/alerts.bicep` implements the table above (deployed by
+  `infrastructure/bicep/monitoring.bicep`); the rule list and what each one means is
+  `docs/operations/monitoring-alerts.md`. The DB-derived signals (outbox age, stuck evaluations,
+  manual reviews and fallbacks per day, stage p95) are logged by the Reconciliation Sweeper and the
+  daily reconciliation report, and alerted on from those log lines. Not covered: the external
+  OpenAI gateway's 429s (not our resource, and not logged).
 
 ## Alignment gaps vs. current code
 
-`docs/operations/monitoring-alerts.md` (old) lists alerts scoped to the original architecture's two
-queues + one topic (`raw-dmer-queue`, `extracted-dmer-queue`, `dmer-lifecycle-events`) and its
-service names (`di-processor`, `normalizer-service`, etc.). Update queue-name references to the four
-revised queue names (`dmer-ingest`, `dmer-raw`, `dmer-extracted`, `driver-decision`) and add the
-outbox-age and `driver_evaluation`-stuck alerts above, which have no equivalent in the old table
-(the original architecture had no per-driver join and no outbox pattern).
+`docs/operations/monitoring-alerts.md` now lists the implemented rules on the four revised queues,
+including the outbox-age and `driver_evaluation`-stuck alerts.

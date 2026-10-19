@@ -142,6 +142,19 @@ Query Mercury for documents in the DPS queues with an empty `dps_date` and compa
 posted, appears on the report. **Run this from the first day in production**, not after the first
 incident — it is the evidence that the guarantee holds.
 
+### Implementation
+
+`services/reliability/` (the `DailyReconciliation` timer, `reliability.reconciliation`) over
+`dmer_common.db.reconciliation`. It pages through Mercury's batch API (the DPS queue,
+`MERCURY_QUEUE`, at most `RECONCILIATION_MAX_PAGES`) and reports every document there that is
+`NOT_RECEIVED` (past a grace period), `OVERDUE` in the pipeline, in `MANUAL_REVIEW` with nothing
+sent to Mercury, `NOT_POSTED` or `POST_FAILED`. A document whose outbox rows are all `SENT` is
+accounted for. The report (ids, statuses and dates only, plus the day's manual-review, fallback and
+stage-p95 figures) is saved to the `reconciliation-reports` container as `<date>.json`, and its
+summary is logged -- the line the `reconciliation-*`, `manual-review-rate`, `fallback-rate` and
+`stage-p95` alerts watch. A `FAILED` write a person has resolved in Mercury drops off the report
+once Mercury has triaged the document. Runbook: `docs/operations/runbook.md`.
+
 ## Worked example — the failure this design prevents
 
 A driver has three DMERs. The first two process normally and sit in `AWAITING_DRIVER_COMPLETION`.

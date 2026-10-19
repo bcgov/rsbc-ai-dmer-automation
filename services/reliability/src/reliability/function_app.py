@@ -17,6 +17,12 @@
   evaluations are re-signalled, and the outbox backlog is logged for the
   alert. Logic: :mod:`reliability.sweeper` over :mod:`dmer_common.db.sweeper`.
 
+- **DailyReconciliation** (09-reliability-components.md "Daily
+  reconciliation report"): once a day (``RECONCILIATION_SCHEDULE``) every
+  document in Mercury's DPS queue is checked against our tables; the report
+  goes to ``RECONCILIATION_CONTAINER`` and its summary to the logs. Logic:
+  :mod:`reliability.reconciliation` over :mod:`dmer_common.db.reconciliation`.
+
 This module only reads the settings and wires the database engine, the
 Mercury client and the Service Bus client. Turn a function off without a
 deploy with ``AzureWebJobs.<FunctionName>.Disabled = true``.
@@ -47,6 +53,7 @@ from .dlq_drain import (
     drain_source,
     pipeline_sources,
 )
+from .reconciliation import ReportSettings, run_report
 from .sweeper import SweepSummary, run_sweep
 
 _log = get_logger(__name__)
@@ -240,6 +247,69 @@ async def reconciliation_sweeper(timer: func.TimerRequest) -> None:
     if timer.past_due:
         _log.warning("sweeper run is past due")
     await run_sweeper()
+
+
+def report_settings() -> ReportSettings:
+    """The reconciliation report's settings."""
+    return ReportSettings(
+        queue=os.environ.get("MERCURY_QUEUE", "BOTH"),
+        page_size=_int("MERCURY_PAGE_SIZE", 50),
+        max_pages=_int("RECONCILIATION_MAX_PAGES", 2000),
+        receive_grace=timedelta(hours=_int("RECONCILIATION_RECEIVE_GRACE_HOURS", 2)),
+        overdue=timedelta(hours=_int("RECONCILIATION_OVERDUE_HOURS", 24)),
+    )
+
+
+def _report_saver():
+    """Saves a report blob to RECONCILIATION_CONTAINER on the runtime storage."""
+    from azure.core.exceptions import ResourceExistsError
+    from azure.storage.blob import BlobServiceClient
+
+    service = BlobServiceClient.from_connection_string(
+        os.environ["AzureWebJobsStorage"]
+    )
+    container = service.get_container_client(
+        os.environ.get("RECONCILIATION_CONTAINER", "reconciliation-reports")
+    )
+    try:
+        container.create_container()
+    except ResourceExistsError:
+        pass
+
+    def save(name: str, body: bytes) -> None:
+        container.upload_blob(name, body, overwrite=True)
+
+    return save
+
+
+async def run_reconciliation(
+    *, engine_factory=get_async_engine, client=None, saver_factory=_report_saver
+) -> dict:
+    """One daily reconciliation report (a fresh engine, disposed afterwards)."""
+    engine = await engine_factory()
+    try:
+        return await run_report(
+            engine,
+            client or MercuryClient(),
+            saver_factory(),
+            settings=report_settings(),
+            clock=_now,
+        )
+    finally:
+        await engine.dispose()
+
+
+@app.function_name(name="DailyReconciliation")
+@app.timer_trigger(
+    arg_name="timer",
+    schedule="%RECONCILIATION_SCHEDULE%",
+    run_on_startup=False,
+    use_monitor=True,
+)
+async def daily_reconciliation(timer: func.TimerRequest) -> None:
+    if timer.past_due:
+        _log.warning("daily reconciliation is past due")
+    await run_reconciliation()
 
 
 @app.function_name(name="OutboxPublisher")

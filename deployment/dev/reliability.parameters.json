@@ -80,6 +80,18 @@
     "sweeperMaxRepublish": {
       "value": 3
     },
+    "reconciliationEnabled": {
+      "value": false
+    },
+    "reconciliationSchedule": {
+      "value": "0 0 13 * * *"
+    },
+    "mercuryApiBaseUrl": {
+      "value": "https://func-mock-mercury-api-dev.azurewebsites.net/api/mercury/documents"
+    },
+    "mercuryQueue": {
+      "value": "BOTH"
+    },
     "serviceBusNamespaceFqdn": {
       "value": "sb-rsbc-dmer-shared-dev-001.servicebus.windows.net"
     },
