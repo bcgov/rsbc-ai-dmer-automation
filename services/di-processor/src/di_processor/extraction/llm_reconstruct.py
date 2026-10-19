@@ -21,6 +21,7 @@ from PIL import Image
 from ..failures import FailureCode, failure_step
 from .render import image_to_png_bytes
 from .sanitize import (
+    check_label_anchors,
     load_field_keys,
     load_known_form_labels,
     load_prompt,
@@ -128,6 +129,7 @@ def reconstruct(
     with failure_step(FailureCode.LLM_OUTPUT_INVALID):
         parsed = parse_llm_json(raw_text)
         sanitized = sanitize_fields(parsed, field_keys, load_known_form_labels())
+        sanitized = check_label_anchors(sanitized, ocr_json)
         result = validate_llm_output(sanitized)
     _log.info(
         "handwritten reconstruction complete",
