@@ -1,9 +1,9 @@
 """Unit tests for merging handwritten values onto the custom-model base (Req 6.4).
 
-Semantics: the custom-model output is the complete, authoritative base. The
-handwritten path only fills/refines values of keys that already exist, and only
-when it actually captured content (never blanks a custom-model value, never adds
-new keys).
+Semantics: the custom-model output defines the keys. For every handwritten key
+it also output, the handwritten value replaces the custom-model value, even when
+the handwritten value is empty. Handwritten keys the custom model did not output
+are never added.
 """
 
 from __future__ import annotations
@@ -49,7 +49,21 @@ def test_handwritten_fills_blank_custom_field():
     assert combined.fields["endocrine.HbA1C"] == "6.5"
 
 
-def test_blank_handwritten_does_not_overwrite_custom_value():
+def test_handwritten_value_replaces_custom_value():
+    # custom model read "6.2"; handwritten read "6.5" -> handwritten wins
+    top = _top_level(**{"endocrine.HbA1C": "6.2"})
+    hw = HandwrittenExtraction(
+        fields={
+            "endocrine.HbA1C": HandwrittenField(
+                value="6.5", confidence=Confidence.HIGH, source=Source.BOTH
+            )
+        }
+    )
+    combined = merge("doc-1", top, hw)
+    assert combined.fields["endocrine.HbA1C"] == "6.5"
+
+
+def test_blank_handwritten_overwrites_custom_value():
     # custom model read "cane-use"; handwritten found it blank (source none)
     top = _top_level(**{"musculoskeletal.weakness_details": "cane-use"})
     hw = HandwrittenExtraction(
@@ -60,8 +74,23 @@ def test_blank_handwritten_does_not_overwrite_custom_value():
         }
     )
     combined = merge("doc-1", top, hw)
-    # custom-model value is preserved
-    assert combined.fields["musculoskeletal.weakness_details"] == "cane-use"
+    # the handwritten (blank) value wins
+    assert combined.fields["musculoskeletal.weakness_details"] == ""
+
+
+def test_custom_fields_without_a_handwritten_reading_are_kept():
+    # checkboxes / identity fields are not handwritten keys -> pass through
+    top = _top_level(**{"vision.acuity_loss": "true", "endocrine.HbA1C": "6.2"})
+    hw = HandwrittenExtraction(
+        fields={
+            "endocrine.HbA1C": HandwrittenField(
+                value="", confidence=Confidence.LOW, source=Source.NONE
+            )
+        }
+    )
+    combined = merge("doc-1", top, hw)
+    assert combined.fields["vision.acuity_loss"] == "true"
+    assert combined.fields["endocrine.HbA1C"] == ""
 
 
 def test_handwritten_only_key_is_not_added():

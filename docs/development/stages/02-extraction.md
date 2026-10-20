@@ -51,7 +51,9 @@ quota, not by cost). See `../services/azure-container-apps.md` for the KEDA scal
    read — it does not resolve a `driver`, attach a `driver_key`, or touch `driver_evaluation`.
 8. **Combine and hash.** Merge the custom-model result and the handwriting result into one JSON,
    write it to `extracted-dmer`, and compute the canonical comparison hash used later for duplicate
-   detection.
+   detection. For every handwritten field the custom model also output, the handwriting result
+   replaces the custom-model value, even when it is empty; the custom model defines the keys, and
+   the handwriting result never adds one.
 9. **Publish.** Send to `dmer-extracted` with `document_id`, the `driver_key` as received on
    `dmer-raw` (null when Mercury supplied none), and the extracted blob URL. `message_id` is
    `event_message_id("dmer-extracted", document_id)` — the same for every publish or replay of
