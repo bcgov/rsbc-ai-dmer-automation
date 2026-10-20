@@ -7,7 +7,7 @@ from collections.abc import Callable, Collection
 
 from ..openai_client import OpenAIClient
 from ..telemetry import get_logger
-from .unmask import restore_masked, source_fields, source_strings
+from .unmask import MAX_LOGGED_CHARS, restore_masked, source_fields, source_strings
 
 _log = get_logger(__name__)
 
@@ -39,6 +39,11 @@ def model_object(raw: str) -> dict:
     return value
 
 
+def _text(value: object) -> str:
+    text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+    return text[:MAX_LOGGED_CHARS]
+
+
 def call_model[T](
     openai: OpenAIClient,
     messages: list[dict],
@@ -59,18 +64,34 @@ def call_model[T](
     Before that, words the deployment masked with asterisks are restored
     from *source* (the input this call sent) and *known_keys* (the field
     names it may return) -- see :mod:`.unmask`.
+
+    The input sent, the raw response and the restored response are logged
+    (normalization input carries no PII), so each step's values can be traced.
     """
     texts = source_strings(source)
     fields = source_fields(source)
+    _log.info("model input", extra={"step": step, "model_input": _text(source)})
     for attempt in range(1, MODEL_ATTEMPTS + 1):
         raw = openai.complete(
             messages=messages,
             response_format={"type": "json_object"},
             temperature=temperature,
         )
+        _log.info(
+            "model output (raw)",
+            extra={"step": step, "attempt": attempt, "model_output": _text(raw)},
+        )
         try:
             response = restore_masked(
                 model_object(raw), texts, known_keys, step=step, fields=fields
+            )
+            _log.info(
+                "model output (restored)",
+                extra={
+                    "step": step,
+                    "attempt": attempt,
+                    "model_output": _text(response),
+                },
             )
             return accept(response)
         except (NormalizationValidationError, InvalidModelOutput) as exc:

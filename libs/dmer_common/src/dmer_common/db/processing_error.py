@@ -70,6 +70,8 @@ processing_error = Table(
     Column("dlq_message_id", Text),
     Column("redrive_count", Integer),
     Column("occurred_at", DateTime(timezone=True)),
+    Column("resolved_at", DateTime(timezone=True)),
+    Column("resolution", Text),
 )
 
 

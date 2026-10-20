@@ -70,7 +70,7 @@ from .schema import (
     TYPE_DEFAULTS,
     ConditionCategory,
 )
-from .unmask import has_mask
+from .unmask import evidence_labels, has_mask
 
 _log = get_logger(__name__)
 
@@ -413,24 +413,117 @@ def analyze_condition_category(
     slim_json: dict,
     category: ConditionCategory,
 ) -> dict:
-    """Second LLM call: analyze one category with a narrowed condition list."""
+    """Second LLM call: analyze one category with a narrowed condition list.
+
+    The result also carries ``masked_inputs`` (the input fields the model
+    reports it received masked, checked against what was sent) and
+    ``masked_flags`` (what :func:`restore_masked_inputs` did about them).
+    """
     if not CATEGORY_CONDITIONS[category]:
         return {"dmer": {}}
 
     category_json = filter_fields_for_category(slim_json, category)
     json_str = json.dumps(category_json, indent=2)
-    return call_model(
+    reported: list = []
+
+    def accept(result: dict) -> dict:
+        reported[:] = _reported_masked_inputs(result)
+        return accept_analysis_output(category, result)
+
+    output = call_model(
         openai,
         [
             {"role": "system", "content": build_analysis_prompt(category)},
             {"role": "user", "content": f"Analyze this DMER JSON:\n\n{json_str}"},
         ],
         temperature=ANALYZE_TEMPERATURE,
-        accept=lambda result: accept_analysis_output(category, result),
+        accept=accept,
         step=f"analyze:{category.value}",
         source=category_json,
         known_keys=_ANALYSIS_KEYS,
     )
+    masked = confirmed_masked_inputs(reported, category_json["dmer"])
+    output["masked_inputs"] = masked
+    output["masked_flags"] = restore_masked_inputs(
+        output["dmer"], category_json["dmer"], masked
+    )
+    if reported or masked:
+        _log.info(
+            "masked inputs reported",
+            extra={
+                "step": f"analyze:{category.value}",
+                "reported": reported,
+                "confirmed": masked,
+                "restored": [
+                    f["field"]
+                    for f in output["masked_flags"]
+                    if f["action"] == "restored"
+                ],
+            },
+        )
+    return output
+
+
+def _reported_masked_inputs(result: object) -> list[str]:
+    """The model's ``masked_inputs`` list (top level, or inside ``dmer``)."""
+    if not isinstance(result, dict):
+        return []
+    value = result.get("masked_inputs")
+    if value is None and isinstance(result.get("dmer"), dict):
+        value = result["dmer"].get("masked_inputs")
+    if not isinstance(value, list):
+        return []
+    return [v for v in value if isinstance(v, str) and v.strip()]
+
+
+def confirmed_masked_inputs(reported: list[str], sent: dict) -> list[str]:
+    """The reported fields that were really masked on the way to the model:
+    fields we actually sent, with a value that had no asterisks of its own --
+    so the asterisks the model saw can only have come from the gateway."""
+    confirmed = []
+    for name in reported:
+        value = sent.get(name)
+        if isinstance(value, str) and value.strip() and not has_mask(value):
+            confirmed.append(name)
+    return confirmed
+
+
+def _affected_by_masks(field: str, updates: dict, masked: list[str]) -> bool:
+    """A model value read from a masked input: the field itself was masked,
+    or its evidence quotes a masked field."""
+    if field in masked:
+        return True
+    evidence = updates.get(f"{field}_evidence")
+    return isinstance(evidence, str) and any(
+        label in masked for label in evidence_labels(evidence)
+    )
+
+
+def restore_masked_inputs(updates: dict, sent: dict, masked: list[str]) -> list[dict]:
+    """Model values read from masked input (*masked*, confirmed): when the
+    extraction had a value for the field, it stands -- the model's value and
+    evidence are dropped from *updates* (in place); when the extraction had
+    none, the model's new value is kept. One flag per affected field."""
+    if not masked:
+        return []
+    flags = []
+    for field in [f for f in list(updates) if not f.endswith("_evidence")]:
+        if field not in CONDITIONS or not _affected_by_masks(field, updates, masked):
+            continue
+        extracted = sent.get(field)
+        has_extracted = not _is_blank(extracted) and extracted is not False
+        if has_extracted:
+            del updates[field]
+            updates.pop(f"{field}_evidence", None)
+        flags.append(
+            {
+                "field": field,
+                "check": "masked_input",
+                "reason": "the model received masked input for this value",
+                "action": "restored" if has_extracted else "kept",
+            }
+        )
+    return flags
 
 
 # Field names an analysis response may use (masked ones are restored to these).
@@ -1328,6 +1421,9 @@ def analyze_conditions(openai: OpenAIClient, dmer_json: dict) -> dict:
             continue
         category_updates = analyze_condition_category(openai, slim_json, category)
         updates["dmer"].update(category_updates.get("dmer", {}))
+        updates.setdefault("masked_flags", []).extend(
+            category_updates.get("masked_flags", [])
+        )
 
     if (ConditionCategory.PRIORITY in categories or priority_details_signal) and (
         priority_details_signal or not _has_non_priority_condition_match(updates)
@@ -1338,6 +1434,9 @@ def analyze_conditions(openai: OpenAIClient, dmer_json: dict) -> dict:
             ConditionCategory.PRIORITY,
         )
         updates["dmer"].update(category_updates.get("dmer", {}))
+        updates.setdefault("masked_flags", []).extend(
+            category_updates.get("masked_flags", [])
+        )
 
     return updates
 
@@ -2184,7 +2283,8 @@ def revert_unsupported_concerns(
     only counts when the text links them -- and concern flags are where the
     model over-reaches. Conditions and values stay as set (flagged only); a
     concern from the source form, or one the support check could not judge,
-    is kept. Every flag is labelled ``action``: "reverted" or "kept".
+    is kept. Every flag without an ``action`` yet is labelled "reverted" or
+    "kept"; one another step already labelled keeps its own.
     """
     reverted = set()
     for flag in flags:
@@ -2200,7 +2300,10 @@ def revert_unsupported_concerns(
             dmer.pop(f"{field}_evidence", None)
             reverted.add(field)
     for flag in flags:
-        flag["action"] = "reverted" if flag["field"] in reverted else "kept"
+        # Flags another step already decided (e.g. masked_input "restored")
+        # keep their own action.
+        if "action" not in flag:
+            flag["action"] = "reverted" if flag["field"] in reverted else "kept"
 
 
 # Conditions the analysis model reliably fails to return -- some because the
@@ -2524,6 +2627,7 @@ def normalize_document(
     ]
     flags += fallback_flags
     flags += source_kept_flags
+    flags += updates.get("masked_flags", [])
     flags += check_evidence(openai, dmer_input["dmer"], updates["dmer"], dmer)
     revert_unsupported_concerns(dmer, dmer_input["dmer"], updates["dmer"], flags)
     # After the evidence check, so a Section C concern can't be reverted.

@@ -267,11 +267,11 @@ makes the legacy `error_class` nullable (`UNKNOWN` has no legacy equivalent).
 | `reason_code` | text | Stable enumerated reason string (e.g. `PERMANENT_UNREADABLE_DOCUMENT`, `TRANSIENT_LOCK_EXPIRED`, `UNKNOWN_UNCLASSIFIED`) — see [DLQ Drain §Reason codes](stages/10-dlq-drain.md#reason-codes). Makes failures queryable/auditable rather than free-text-only. |
 | `message` | text | Raw dead-letter reason string, verbatim. |
 | `dlq_message_id` | text, nullable | |
-| `redrive_count` | int, default 0 | Bounded operational-recovery redrive attempts for `TRANSIENT`/`PROCESSING`; at the ceiling the row is re-categorized `UNKNOWN`. |
+| `redrive_count` | int, default 0 | On a DLQ Drain row that redrove the message: which redrive it was (1, 2, ...). The drain counts a document's `resolution = REDRIVEN` rows per stage against `DLQ_REDRIVE_MAX_ATTEMPTS`; past it, the row is `UNKNOWN` / `UNKNOWN_REDRIVE_EXHAUSTED`. |
 | `occurred_at` | timestamptz | |
-| `resolved_at` / `resolution` | timestamptz, text, nullable | |
+| `resolved_at` / `resolution` | timestamptz, text, nullable | On DLQ Drain rows, `resolution` is what the drain did: `REDRIVEN` (with `resolved_at`), `FALLBACK_QUEUED`, `MANUAL_REVIEW`, `RECORDED` or `STALE`. |
 
-Unique on `(document_id, stage, dlq_message_id)` — makes re-draining the same dead-lettered message
+Unique on `(document_id, stage, dlq_message_id)` where `dlq_message_id` is set (V0012) — makes re-draining the same dead-lettered message
 a no-op rather than a duplicate row (see [DLQ Drain §Idempotency](stages/10-dlq-drain.md#idempotency-requirements)).
 
 ### `poll_checkpoint`

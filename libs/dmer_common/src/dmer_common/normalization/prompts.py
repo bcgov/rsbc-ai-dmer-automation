@@ -309,6 +309,9 @@ For each field, determine if the provided data supports setting it.
 
 Common medical abbreviations: PT=patient, W.=with, Hx=history, c/o=complains of, R/O=rule out.
 
+RULE — Masked input:
+Some input values may reach you with characters replaced by asterisks (e.g. "*****" or "MMSE **********"). List the exact name of every input field whose value you received containing asterisks in a top-level "masked_inputs" array, next to "dmer" (use [] when none).
+
 RULE — Evidence:
 EVERY SINGLE bool set to true, and every other value you add or change, MUST have its own separate corresponding "{{field_name}}_evidence" string in the form source_field: "exact text" -- the name of the input field it came from, then the words copied EXACTLY as they appear there (OCR errors included). Never paraphrase, summarize, or add commentary. A checked checkbox is quoted as checkbox_field: true.
 CRITICAL MINIMUM REQUIREMENT: If you set BOTH a parent condition to true AND its `_has_concerns` companion to true, you MUST generate TWO SEPARATE evidence fields (e.g., one for `vision.strabismus_evidence` AND one for `vision.strabismus_has_concerns_evidence`). Never omit the evidence for the `_has_concerns` field!

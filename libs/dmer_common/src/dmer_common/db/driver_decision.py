@@ -20,10 +20,14 @@ The evaluation's status moves WAITING -> READY -> EVALUATING -> DECIDED
 - ``driver_evaluation``: status DECIDED, ``evaluated_at``, ``decision_summary``,
   and **closed** (``open = false``), so the driver's next DMER starts a new
   batch (I-10; V0009/V0011 allow any number of closed batches per driver);
-- one ``dmer_decision`` row per decided document (``decided_by = AI``), so
-  Post-Processing reads the outcomes from the database -- they never travel
-  in a message (decision_reason carries clinical content, section 9.2);
-- each document: ``AWAITING_DRIVER_COMPLETION`` -> ``DECIDED`` (stage POST);
+- one ``dmer_decision`` row per decided document (``decided_by = AI``) --
+  the outcomes never travel in a message (decision_reason carries clinical
+  content, section 9.2);
+- Post-Processing (architecture 4.5): the ``mercury_outbox`` rows that deliver
+  each decision to Mercury (:mod:`.mercury_outbox`), in the same
+  transaction, so a decision can never exist without the intent to post it;
+- each document: ``AWAITING_DRIVER_COMPLETION`` -> ``POSTING`` (stage POST);
+  the Outbox Publisher moves it to ``COMPLETED`` once its rows are sent;
 - each document's ``DECISION`` stage run: SUCCEEDED.
 
 ``decision_summary`` holds counts and ids only; per-document reasons carry
@@ -61,6 +65,12 @@ from ._advisory import advisory_lock_session
 from .dmer_document import _pipeline_status_enum, _stage_enum
 from .dmer_stage_run import dmer_stage_run
 from .driver import driver
+from .mercury_outbox import (
+    decision_rows,
+    fallback_comment,
+    fallback_rows,
+    queue_outbox_rows,
+)
 from .processing_error import FailureCategory, record_processing_error
 
 metadata = MetaData()
@@ -181,7 +191,7 @@ dmer_decision = Table(
 _DECISION_STAGE = "DECISION"
 _POST_STAGE = "POST"
 _AWAITING = "AWAITING_DRIVER_COMPLETION"
-_DECIDED_DOC = "DECIDED"
+_POSTING_DOC = "POSTING"
 _MANUAL_REVIEW_DOC = "MANUAL_REVIEW"
 # Batch documents not decided yet: awaiting their driver, or counted by the
 # Rule Engine but not yet signalled.
@@ -503,8 +513,9 @@ class DriverDecisionRepository:
         batch_document_ids: Collection[str],
         decisions: tuple[DecisionRecord, ...] = (),
     ) -> None:
-        """EVALUATING -> DECIDED and closed, every decided document -> DECIDED,
-        runs SUCCEEDED, and one ``dmer_decision`` row per entry in *decisions*.
+        """EVALUATING -> DECIDED and closed, every decided document -> POSTING,
+        runs SUCCEEDED, one ``dmer_decision`` row per entry in *decisions*,
+        and their ``mercury_outbox`` rows (Post-Processing).
 
         *batch_document_ids* is every document of the batch as loaded
         (including ones not decided here, e.g. in MANUAL_REVIEW). With the
@@ -557,7 +568,7 @@ class DriverDecisionRepository:
                     _document.c.pipeline_status == _AWAITING,
                 )
                 .values(
-                    pipeline_status=_DECIDED_DOC,
+                    pipeline_status=_POSTING_DOC,
                     current_stage=_POST_STAGE,
                     updated_at=now,
                 )
@@ -566,8 +577,10 @@ class DriverDecisionRepository:
             if len(decided.all()) != len(runs):
                 raise DriverDecisionStateError()  # rolls the transaction back
             if decisions:
-                await self._conn.execute(
-                    dmer_decision.insert(),
+                inserted = await self._conn.execute(
+                    dmer_decision.insert().returning(
+                        dmer_decision.c.id, dmer_decision.c.document_id
+                    ),
                     [
                         {
                             "document_id": d.document_id,
@@ -586,6 +599,8 @@ class DriverDecisionRepository:
                         for d in decisions
                     ],
                 )
+                decision_ids = {str(r.document_id): str(r.id) for r in inserted}
+                await self._queue_decision_rows(decisions, decision_ids, now=now)
             await self._finish_runs(runs, status=_SUCCEEDED, now=now)
 
     async def fail_decision(
@@ -638,9 +653,10 @@ class DriverDecisionRepository:
           signalled) -> ``MANUAL_REVIEW``, with a ``processing_error`` row
           (*reason_code*, *message* -- codes and fixed text, never content);
         - one ``dmer_decision`` per document: outcome IN, ``decided_by =
-          FALLBACK``, *note* in ``decision_reason`` -- the comment Intake sees
-          once Post-Processing posts it (architecture 6.4: failing to decide
-          must not mean failing to appear).
+          FALLBACK``, *note* in ``decision_reason`` (architecture 6.4: failing
+          to decide must not mean failing to appear);
+        - its ``UPDATE_OUTCOME`` outbox row: IN with "AI could not process"
+          and *note* -- the comment Intake sees (I-1).
 
         Raises :class:`DriverDecisionStateError` (nothing written) if the
         evaluation is no longer open and WAITING/STALE.
@@ -696,8 +712,10 @@ class DriverDecisionRepository:
                     now=now,
                 )
             if routed:
-                await self._conn.execute(
-                    dmer_decision.insert(),
+                inserted = await self._conn.execute(
+                    dmer_decision.insert().returning(
+                        dmer_decision.c.id, dmer_decision.c.document_id
+                    ),
                     [
                         {
                             "document_id": document_id,
@@ -717,7 +735,82 @@ class DriverDecisionRepository:
                         for document_id in routed
                     ],
                 )
+                guids = await self._document_guids(routed)
+                rows = [
+                    row
+                    for r in inserted
+                    for row in fallback_rows(
+                        source_id=str(r.id),
+                        document_id=str(r.document_id),
+                        document_guid=guids[str(r.document_id)],
+                        comment=fallback_comment(note),
+                    )
+                ]
+                await queue_outbox_rows(self._conn, rows, now=now)
             return routed
+
+    async def _document_guids(self, document_ids: Collection[str]) -> dict[str, str]:
+        rows = await self._conn.execute(
+            select(_document.c.id, _document.c.document_guid).where(
+                _document.c.id.in_(list(document_ids))
+            )
+        )
+        return {str(r.id): str(r.document_guid) for r in rows}
+
+    async def _queue_decision_rows(
+        self,
+        decisions: Collection[DecisionRecord],
+        decision_ids: dict[str, str],
+        *,
+        now: datetime,
+    ) -> None:
+        """Post-Processing: the outbox rows for every AI decision, inside the
+        caller's transaction."""
+        guids = await self._document_guids(
+            {d.document_id for d in decisions}
+            | {
+                d.duplicate_of_document_id
+                for d in decisions
+                if d.duplicate_of_document_id
+            }
+        )
+        driver_keys = {self._driver_key} | {
+            d.proposed_driver_key for d in decisions if d.proposed_driver_key
+        }
+        mercury_ids = {
+            str(r.driver_key): r.mercury_driver_id
+            for r in await self._conn.execute(
+                select(driver.c.driver_key, driver.c.mercury_driver_id).where(
+                    driver.c.driver_key.in_(list(driver_keys))
+                )
+            )
+        }
+        rows = [
+            row
+            for d in decisions
+            for row in decision_rows(
+                decision_id=decision_ids[d.document_id],
+                document_id=d.document_id,
+                document_guid=guids[d.document_id],
+                outcome_code=d.outcome_code,
+                decided_by="AI",
+                reason=d.decision_reason,
+                mercury_driver_id=mercury_ids.get(self._driver_key),
+                is_duplicate=d.is_duplicate,
+                duplicate_of_document_guid=(
+                    guids.get(d.duplicate_of_document_id)
+                    if d.duplicate_of_document_id
+                    else None
+                ),
+                proposed_driver=d.proposed_driver_key is not None,
+                proposed_mercury_driver_id=(
+                    mercury_ids.get(d.proposed_driver_key)
+                    if d.proposed_driver_key
+                    else None
+                ),
+            )
+        ]
+        await queue_outbox_rows(self._conn, rows, now=now)
 
     async def _finish_runs(
         self,

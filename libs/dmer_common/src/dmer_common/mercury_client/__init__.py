@@ -8,10 +8,16 @@ lookup used by Driver Lookup (``03-document-orchestration.md``): cursor-based pa
 auth, not Managed Identity, per question M-4), and retry/circuit-breaker
 wrapping, matching every other external client in this package.
 
-Case/webhook payload parsing and Mercury write-back (POST/PUT for outcomes,
-case creation) are not implemented here yet -- this covers only the read
-paths Ingest and Driver Lookup need. Extend this module rather than adding a
-second Mercury client when that work starts.
+It also wraps the **write-back** the Outbox Publisher needs
+(:meth:`MercuryClient.send_outbox`, one call per ``mercury_outbox`` row).
+**The write endpoints and bodies are provisional**: Mercury has not shared
+its POST/PUT structure or idempotency behaviour yet (question M-6). The shape
+here is what the dev mock implements; when M-6 is answered only
+:meth:`MercuryClient.send_outbox` and the mock should need to change. Every
+write sends the row's idempotency key as the ``Idempotency-Key`` header.
+
+Case/webhook payload parsing is not implemented here yet. Extend this module
+rather than adding a second Mercury client.
 
 Each API's settings are read when that API is first used, so a service that
 only calls one of them needs only that one's configuration.
@@ -29,10 +35,13 @@ from urllib.parse import quote
 from ..config import (
     MercuryDriverSettings,
     MercurySettings,
+    MercuryWriteSettings,
     mercury_driver_settings,
     mercury_settings,
+    mercury_write_settings,
 )
 from ..retry import CircuitBreaker, mercury_breaker, mercury_retry
+from ..retry.circuit_breaker import CircuitOpenError
 from ..telemetry import get_logger
 
 _log = get_logger(__name__)
@@ -40,6 +49,40 @@ _log = get_logger(__name__)
 
 class MercuryApiError(RuntimeError):
     """Raised when the Mercury batch API returns a non-2xx response."""
+
+
+class MercuryWriteError(MercuryApiError):
+    """A Mercury write failed. ``retryable``: the same write may succeed later
+    (network error, timeout, 408, 429, 5xx, or the circuit breaker open);
+    otherwise Mercury rejected it (any other 4xx) and retrying won't help."""
+
+    def __init__(self, message: str, *, status: int | None, retryable: bool) -> None:
+        super().__init__(message)
+        self.status = status
+        self.retryable = retryable
+
+
+class _HttpSend(Protocol):
+    """An HTTP call with a JSON body -- injectable for tests."""
+
+    def __call__(
+        self, method: str, url: str, *, headers: dict[str, str], body: bytes | None
+    ) -> tuple[int, bytes]: ...
+
+
+def _default_http_send(
+    method: str, url: str, *, headers: dict[str, str], body: bytes | None
+) -> tuple[int, bytes]:
+    request = urllib.request.Request(url, data=body, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return response.status, response.read()
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.read()
+
+
+def _retryable(status: int) -> bool:
+    return status in (408, 429) or status >= 500
 
 
 class _HttpGet(Protocol):
@@ -96,12 +139,16 @@ class MercuryClient:
         *,
         settings: MercurySettings | None = None,
         driver_settings: MercuryDriverSettings | None = None,
+        write_settings: MercuryWriteSettings | None = None,
         http_get: _HttpGet = _default_http_get,
+        http_send: _HttpSend = _default_http_send,
         breaker: CircuitBreaker | None = None,
     ) -> None:
         self._batch_settings = settings
         self._driver_settings = driver_settings
+        self._write_settings = write_settings
         self._http_get = http_get
+        self._http_send = http_send
         self._breaker = breaker or mercury_breaker()
 
     @property
@@ -109,6 +156,12 @@ class MercuryClient:
         if self._batch_settings is None:
             self._batch_settings = mercury_settings()
         return self._batch_settings
+
+    @property
+    def write_settings(self) -> MercuryWriteSettings:
+        if self._write_settings is None:
+            self._write_settings = mercury_write_settings()
+        return self._write_settings
 
     @property
     def driver_settings(self) -> MercuryDriverSettings:
@@ -195,3 +248,139 @@ class MercuryClient:
             return drivers
 
         return self._breaker.call(_run)
+
+    # -- write-back (Outbox Publisher) --------------------------------------
+
+    def send_outbox(
+        self, operation: str, payload: dict[str, Any], idempotency_key: str
+    ) -> dict[str, Any]:
+        """Apply one ``mercury_outbox`` row to Mercury; returns Mercury's
+        response (stored as ``mercury_response``).
+
+        Provisional endpoints (M-6), relative to ``MERCURY_WRITE_API_BASE_URL``:
+
+        - ``UPDATE_OUTCOME`` -- ``PUT documents/{guid}/outcome``;
+        - ``MARK_DUPLICATE`` -- ``PUT documents/{guid}/status`` (Rejected,
+          detached from the case, I-7);
+        - ``MAP_DRIVER`` -- ``PUT documents/{guid}/driver`` (I-11);
+        - ``CREATE_CASE`` -- live check ``GET drivers/{id}/cases?status=open``,
+          then ``PUT documents/{guid}/case`` to attach to the open case, or
+          ``POST cases`` when there is none (I-13).
+
+        Raises :class:`MercuryWriteError` (``retryable`` set). No retry here:
+        the publisher backs off per row. The payload carries clinical content
+        and the URL a document id -- neither is logged.
+        """
+        guid = quote(str(payload["document_guid"]), safe="")
+        body = {k: v for k, v in payload.items() if k != "document_guid"}
+        if operation == "UPDATE_OUTCOME":
+            return self._write(
+                "PUT", f"documents/{guid}/outcome", body, idempotency_key
+            )
+        if operation == "MARK_DUPLICATE":
+            return self._write(
+                "PUT",
+                f"documents/{guid}/status",
+                {**body, "detach_from_case": True},
+                idempotency_key,
+            )
+        if operation == "MAP_DRIVER":
+            return self._write("PUT", f"documents/{guid}/driver", body, idempotency_key)
+        if operation == "CREATE_CASE":
+            return self._ensure_case(
+                guid, str(payload["document_guid"]), body, idempotency_key
+            )
+        raise MercuryWriteError(
+            f"unknown outbox operation {operation!r}", status=None, retryable=False
+        )
+
+    def _ensure_case(
+        self, guid: str, document_guid: str, body: dict[str, Any], idempotency_key: str
+    ) -> dict[str, Any]:
+        driver_id = body.get("mercury_driver_id")
+        if not driver_id:
+            raise MercuryWriteError(
+                "CREATE_CASE needs the driver's Mercury id",
+                status=None,
+                retryable=False,
+            )
+        cases = self._write(
+            "GET",
+            f"drivers/{quote(str(driver_id), safe='')}/cases?status=open",
+            None,
+            None,
+        )
+        open_cases = cases.get("value", []) if isinstance(cases, dict) else cases
+        if open_cases:
+            case_id = open_cases[0]["case_id"]
+            response = self._write(
+                "PUT",
+                f"documents/{guid}/case",
+                {"case_id": case_id, "comment": body.get("comment")},
+                idempotency_key,
+            )
+            return {"action": "attached", "case_id": case_id, "response": response}
+        response = self._write(
+            "POST", "cases", {**body, "document_guid": document_guid}, idempotency_key
+        )
+        return {"action": "created", "response": response}
+
+    def _write(
+        self,
+        method: str,
+        path: str,
+        body: dict[str, Any] | None,
+        idempotency_key: str | None,
+    ) -> dict[str, Any]:
+        settings = self.write_settings
+        url = f"{settings.base_url}/{path}"
+        headers = {
+            "Authorization": f"Bearer {settings.api_key}",
+            "Accept": "application/json",
+        }
+        data = None
+        if body is not None:
+            headers["Content-Type"] = "application/json"
+            data = json.dumps(body).encode("utf-8")
+        if idempotency_key:
+            headers["Idempotency-Key"] = idempotency_key
+
+        def _run() -> tuple[int, bytes]:
+            try:
+                status, raw = self._http_send(method, url, headers=headers, body=data)
+            except (urllib.error.URLError, TimeoutError, OSError) as exc:
+                raise MercuryWriteError(
+                    f"Mercury write {method} failed: {type(exc).__name__}",
+                    status=None,
+                    retryable=True,
+                ) from exc
+            if _retryable(status):
+                # counted by the breaker: Mercury is struggling
+                raise MercuryWriteError(
+                    f"Mercury write {method} returned HTTP {status}",
+                    status=status,
+                    retryable=True,
+                )
+            return status, raw
+
+        try:
+            status, raw = self._breaker.call(_run)
+        except CircuitOpenError as exc:
+            raise MercuryWriteError(
+                "Mercury circuit breaker open", status=None, retryable=True
+            ) from exc
+        if status < 200 or status >= 300:
+            _log.error(
+                "mercury write rejected", extra={"method": method, "status": status}
+            )
+            raise MercuryWriteError(
+                f"Mercury write {method} returned HTTP {status}",
+                status=status,
+                retryable=False,
+            )
+        if not raw:
+            return {}
+        try:
+            return json.loads(raw.decode("utf-8"))
+        except ValueError:
+            return {"raw": raw.decode("utf-8", errors="replace")[:1000]}

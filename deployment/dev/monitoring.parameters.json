@@ -1,0 +1,30 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "environment": {
+      "value": "dev"
+    },
+    "location": {
+      "value": "canadacentral"
+    },
+    "alertsEnabled": {
+      "value": true
+    },
+    "alertEmailAddresses": {
+      "value": []
+    },
+    "logAnalyticsWorkspaceId": {
+      "value": "/subscriptions/e34c5ef8-e2f1-4a67-a94f-29cb158155c2/resourceGroups/DefaultResourceGroup-CCAN/providers/Microsoft.OperationalInsights/workspaces/DefaultWorkspace-e34c5ef8-e2f1-4a67-a94f-29cb158155c2-CCAN"
+    },
+    "serviceBusNamespaceId": {
+      "value": "/subscriptions/e34c5ef8-e2f1-4a67-a94f-29cb158155c2/resourceGroups/rg-rsbc-dmer-dev/providers/Microsoft.ServiceBus/namespaces/sb-rsbc-dmer-shared-dev-001"
+    },
+    "postgresServerId": {
+      "value": "/subscriptions/e34c5ef8-e2f1-4a67-a94f-29cb158155c2/resourceGroups/rg-rsbc-dmer-dev/providers/Microsoft.DBforPostgreSQL/flexibleServers/psql-rsbc-dmer-shared-dev-001"
+    },
+    "documentIntelligenceId": {
+      "value": "/subscriptions/e34c5ef8-e2f1-4a67-a94f-29cb158155c2/resourceGroups/rg-rsbc-dmer-dev/providers/Microsoft.CognitiveServices/accounts/di-rsbc-dmer-shared-dev-001"
+    }
+  }
+}

@@ -253,9 +253,10 @@ for the recommended folder).
   readable licence, no matching Mercury driver, or several, to `MANUAL_REVIEW` and ends its
   orchestration (this doc is followed over the architecture document, which instead creates a
   driver row from the page's licence and leaves I-12 to the Decision Gateway). I-12 still requires
-  the licence information and reason in a Mercury comment, and nothing writes one for these
-  documents yet: decide whether the orchestration queues it, or a later stage (DLQ Drain,
-  reconciliation sweeper) does.
+  the licence information and reason in a Mercury comment. **Resolved** (I-22, confirmed by
+  email): Driver Lookup's manual-review route queues an `UPDATE_OUTCOME` IN to `mercury_outbox`
+  in the same transaction, with the reason and the licence read; no driver file is created. See
+  [Post-Processing](08-post-processing.md#implementation).
 - Whether Normalize and Rule Engine activity code lives as Python functions directly inside
   `services/workflow-orchestrator/`, or as importable modules in `libs/dmer_common` invoked from
   there — the architecture document specifies them as "a Durable Functions activity" and "a library
