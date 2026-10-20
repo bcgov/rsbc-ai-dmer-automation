@@ -7,6 +7,8 @@ Pure functions (no I/O beyond reading bundled resource files):
 - :func:`sanitize_fields` — fill any missing field keys, blank values that are
   actually printed form labels, and force ``low`` confidence whenever the two
   sources did not both agree (the binary-confidence rule).
+- :func:`check_label_anchors` — blank a score the OCR shows next to a different
+  label (e.g. a visual acuity "20/30" read as the MoCA score).
 
 Resource loaders read the bundled ``dmer_field_schema.json`` and
 ``dmer_template_labels.json``.
@@ -165,4 +167,54 @@ def sanitize_fields(
                 "notes": "Field missing from LLM output; defaulted to empty.",
             }
 
+    return result
+
+
+# Score fields checked against the OCR: the field's printed label (lowercase,
+# letters only) as it appears in the OCR text.
+_ANCHOR_LABELS: dict[str, str] = {"cns.moca_score": "moca"}
+_SPACES = re.compile(r"\s+")
+
+
+def _ocr_segment_texts(ocr_json: dict[str, Any]) -> list[str]:
+    return [
+        segment.get("text") or ""
+        for page in ocr_json.get("pages") or []
+        for row in page.get("rows") or []
+        for segment in row.get("segments") or []
+    ]
+
+
+def check_label_anchors(
+    result: dict[str, Any], ocr_json: dict[str, Any]
+) -> dict[str, Any]:
+    """Blank a score the OCR shows only next to a different label.
+
+    For each field in ``_ANCHOR_LABELS``: if its value appears in the OCR, at
+    least one OCR segment holding the value must also hold the field's label.
+    A value found only in segments without the label was taken from another
+    part of the form (DMER21: a visual acuity "20/30", OCR'd as "29/30", came
+    back as the MoCA score), so it is blanked with a note. A value the OCR does
+    not show at all is left alone: that is an image-only reading, already low.
+
+    Returns the mutated ``result`` for convenience.
+    """
+    segments = [_SPACES.sub("", text).lower() for text in _ocr_segment_texts(ocr_json)]
+    fields = result.get("fields") or {}
+    for key, label in _ANCHOR_LABELS.items():
+        entry = fields.get(key)
+        if not isinstance(entry, dict):
+            continue
+        value = _SPACES.sub("", str(entry.get("value") or "")).lower()
+        if not value:
+            continue
+        holding = [text for text in segments if value in text]
+        if holding and not any(label in text for text in holding):
+            entry["value"] = ""
+            entry["confidence"] = "low"
+            note = entry.get("notes", "") or ""
+            entry["notes"] = (
+                note
+                + f" | Value withheld: the OCR shows it only away from the {label.upper()} label."
+            ).strip(" |")
     return result

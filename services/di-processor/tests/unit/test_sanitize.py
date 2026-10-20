@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from di_processor.extraction.sanitize import (
+    check_label_anchors,
     load_field_keys,
     load_known_form_labels,
     parse_llm_json,
@@ -152,3 +153,49 @@ def test_realistic_reply_with_many_blank_fields_validates():
     assert all(
         f.confidence.value == "low" for k, f in result.fields.items() if k != keys[0]
     )
+
+
+def _ocr(*segment_texts):
+    return {"pages": [{"rows": [{"segments": [{"text": t} for t in segment_texts]}]}]}
+
+
+def _moca(value, source="both", confidence="high"):
+    return {
+        "fields": {
+            "cns.moca_score": {
+                "value": value,
+                "confidence": confidence,
+                "source": source,
+                "notes": "x",
+            }
+        }
+    }
+
+
+def test_anchor_blanks_moca_taken_from_another_section():
+    # DMER21: "29/30" is the OCR of a visual acuity, not next to MOCA.
+    ocr = _ocr("Cognitive Impairment MOCA\nTrails B", "L\nBoth\n29/30\nNormal")
+    entry = check_label_anchors(_moca("29/30"), ocr)["fields"]["cns.moca_score"]
+    assert entry["value"] == ""
+    assert entry["confidence"] == "low"
+    assert "away from the MOCA label" in entry["notes"]
+
+
+def test_anchor_keeps_moca_written_next_to_its_label():
+    ocr = _ocr("Cognitive Impairment MOCA 24/30\nTrails B")
+    entry = check_label_anchors(_moca("24 / 30"), ocr)["fields"]["cns.moca_score"]
+    assert entry["value"] == "24 / 30"
+    assert entry["confidence"] == "high"
+
+
+def test_anchor_keeps_moca_the_ocr_does_not_show():
+    # An image-only reading: nothing in the OCR to contradict it.
+    ocr = _ocr("Cognitive Impairment MOCA\nTrails B")
+    result = check_label_anchors(_moca("26/30", "image", "low"), ocr)
+    assert result["fields"]["cns.moca_score"]["value"] == "26/30"
+
+
+def test_anchor_ignores_blank_and_missing_fields():
+    assert check_label_anchors({"fields": {}}, _ocr("29/30"))["fields"] == {}
+    entry = check_label_anchors(_moca(""), _ocr("29/30"))["fields"]["cns.moca_score"]
+    assert entry["value"] == ""
