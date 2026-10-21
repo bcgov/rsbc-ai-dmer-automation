@@ -2474,6 +2474,54 @@ EDGE_ROWS = [  # (label, table, row, licence, fields, expected)
         },
         True,
     ),
+    # Triage Sort Procedures 26Jun2026: abnormal VF + BIG BOX YES + acuity not met -> IN.
+    (
+        "abnormal VF + YES + corrected 20/60 (NORMAL) -> R37 IN",
+        "Vision Impairment",
+        37,
+        N,
+        {
+            "visual_field.abnormal": True,
+            "visual_field.meet_criteria_for_licence_class_yes": True,
+            "visual_acuity.corrected_both": "20/60",
+        },
+        True,
+    ),
+    (
+        "abnormal VF + YES + corrected 20/50 (NORMAL meets) -> R37 does not fire",
+        "Vision Impairment",
+        37,
+        N,
+        {
+            "visual_field.abnormal": True,
+            "visual_field.meet_criteria_for_licence_class_yes": True,
+            "visual_acuity.corrected_both": "20/50",
+        },
+        False,
+    ),
+    (
+        "abnormal VF + YES + corrected 20/40 (HIGH) -> R38 IN",
+        "Vision Impairment",
+        38,
+        H,
+        {
+            "visual_field.abnormal": True,
+            "visual_field.meet_criteria_for_licence_class_yes": True,
+            "visual_acuity.corrected_both": "20/40",
+        },
+        True,
+    ),
+    (
+        "abnormal VF + YES, no acuity -> R13 CP",
+        "Vision Impairment",
+        13,
+        N,
+        {
+            "visual_field.abnormal": True,
+            "visual_field.meet_criteria_for_licence_class_yes": True,
+        },
+        True,
+    ),
     (
         "bad eye 20/80 is not monocular -> R22 does not fire",
         "Vision Impairment",

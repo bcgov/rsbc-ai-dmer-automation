@@ -1186,6 +1186,16 @@ def flag_monocular_from_bad_eye(dmer_result: dict) -> dict:
         dmer, corrected_only=cfg["corrected_only"], worse_eye=cfg["worse_eye"]
     )
     if (
+        source_field
+        and source_field.startswith("visual_acuity.uncorrected")
+        and parse_visual_acuity_denominator(dmer.get("visual_acuity.corrected_both"))
+        is not None
+    ):
+        # Triage Sort Procedures 26Jun2026 (VA): "if uncorrected 20/100 but
+        # corrected meets, follow normal VA rules" -- a corrected value for
+        # both eyes means the uncorrected bad eye doesn't make it monocular.
+        denom = None
+    if (
         denom is not None
         and _meets_acuity_threshold(cfg, denom)
         and dmer.get("vision.monocular") is not True

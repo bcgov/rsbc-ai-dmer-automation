@@ -55,7 +55,10 @@ CONDITIONS: dict[str, dict] = {
     },
     "vision.monocular_has_concerns": {"type": "bool", "description": ""},
     "vision.monocular_date": {"type": "str", "description": ""},
-    "vision.color_blindness": {"type": "bool", "description": ""},
+    "vision.color_blindness": {
+        "type": "bool",
+        "description": "colour vision, Ishihara",
+    },
     "vision.retinopathy": {"type": "bool", "description": ""},
     "vision.retinal_detachment": {"type": "bool", "description": ""},
     "vision.crao": {"type": "bool", "description": "central retinal artery"},
@@ -221,7 +224,7 @@ CONDITIONS: dict[str, dict] = {
     },
     "cardiovascular.ventricular_fibrillation": {
         "type": "bool",
-        "description": "ventricular fibrillation, V-fib, VFib (ventricular only -- not atrial fibrillation)",
+        "description": "ventricular fibrillation, V-fib, VFib, cardiac arrest (ventricular only -- not atrial fibrillation)",
     },
     "cardiovascular.surgical_valve_repair": {
         "type": "bool",
@@ -240,7 +243,7 @@ CONDITIONS: dict[str, dict] = {
     "cardiovascular.arrhythmia_has_concerns": {"type": "bool", "description": ""},
     "cardiovascular.icd": {
         "type": "bool",
-        "description": "ICD, implantable cardioverter",
+        "description": "ICD, implantable cardioverter defibrillator, implanted cardiac defibrillator",
     },
     "cardiovascular.icd_primary": {"type": "bool", "description": ""},
     "cardiovascular.icd_secondary": {"type": "bool", "description": ""},
@@ -250,7 +253,7 @@ CONDITIONS: dict[str, dict] = {
     "cardiovascular.loc": {"type": "bool", "description": "loss of consciousness, LOC"},
     "cardiovascular.cad": {
         "type": "bool",
-        "description": "CAD, CABG, coronary artery, angina, angioplasty, stent, post-PCI, post-MI, heart attack",
+        "description": "CAD, CABG, coronary artery, angina, angioplasty, stent, post-PCI, post-MI, myocardial infarction, heart attack",
     },
     "cardiovascular.cad_has_concerns": {"type": "bool", "description": ""},
     "cardiovascular.cad_date": {"type": "str", "description": ""},
@@ -349,7 +352,7 @@ CONDITIONS: dict[str, dict] = {
     # --- General ---
     "general.general_debility": {
         "type": "bool",
-        "description": "frailty, reduced reaction time, weakness",
+        "description": "frailty, functional decline, reduced reaction time, weakness",
     },
     "general.cancer": {
         "type": "bool",
@@ -358,7 +361,7 @@ CONDITIONS: dict[str, dict] = {
     "general.cancer_has_concerns": {"type": "bool", "description": ""},
     "general.blood_disorders": {
         "type": "bool",
-        "description": "blood disorder, anemia, anaemia, hemophilia, sickle cell, thrombocytopenia, bleeding disorder",
+        "description": "blood disorder, anemia, anaemia, neutropenia, thalassemia, hemophilia, sickle cell, thrombocytopenia, bleeding disorder",
     },
     "general.christian_science_exemption": {
         "type": "bool",
@@ -415,7 +418,10 @@ CONDITIONS: dict[str, dict] = {
     "hearing.deaf": {"type": "bool", "description": ""},
     "hearing.other": {"type": "str", "description": ""},
     # --- CNS (continued) ---
-    "cns.intracranial_tumors": {"type": "bool", "description": "intracranial tumor"},
+    "cns.intracranial_tumors": {
+        "type": "bool",
+        "description": "intracranial tumor, brain tumor",
+    },
     "cns.intracranial_tumors.resected": {"type": "bool", "description": ""},
     "cns.intracranial_tumors_details": {"type": "str", "description": ""},
     "cns.intracranial_tumors_has_concerns": {"type": "bool", "description": ""},
@@ -430,7 +436,7 @@ CONDITIONS: dict[str, dict] = {
     "cns.mitochondrial_myopathy_has_concerns": {"type": "bool", "description": ""},
     "cns.muscular_dystrophy": {"type": "bool", "description": "muscular dystrophy"},
     "cns.muscular_dystrophy_has_concerns": {"type": "bool", "description": ""},
-    "cns.myasthenia_gravis": {"type": "bool", "description": "myasthenia gravis"},
+    "cns.myasthenia_gravis": {"type": "bool", "description": "myasthenia gravis, MG"},
     "cns.myasthenia_gravis_has_concerns": {"type": "bool", "description": ""},
     "cns.charcot_marie_tooth_disease": {
         "type": "bool",
@@ -439,7 +445,11 @@ CONDITIONS: dict[str, dict] = {
     "cns.charcot_marie_tooth_disease_has_concerns": {"type": "bool", "description": ""},
     "cns.als": {"type": "bool", "description": "ALS, amyotrophic lateral sclerosis"},
     "cns.als_has_concerns": {"type": "bool", "description": ""},
-    "cns.progressive_deficit": {"type": "bool", "description": ""},
+    "cns.progressive_deficit": {
+        "type": "bool",
+        "description": "NEUROLOGICAL conditions only: multiple sclerosis, Parkinson's, mitochondrial myopathy, "
+        "muscular dystrophy, myasthenia gravis, CMT, ALS, other neurological disorders",
+    },
     "cns.progressive_deficit_has_concerns": {"type": "bool", "description": ""},
     "cns.non_progressive_stable": {
         "type": "bool",
@@ -475,7 +485,10 @@ CONDITIONS: dict[str, dict] = {
     "musculoskeletal.osteoporosis": {"type": "bool", "description": ""},
     "musculoskeletal.lupus": {"type": "bool", "description": "SLE"},
     "musculoskeletal.back_pain": {"type": "bool", "description": ""},
-    "musculoskeletal.degenerative_disk_disease": {"type": "bool", "description": "DDD"},
+    "musculoskeletal.degenerative_disk_disease": {
+        "type": "bool",
+        "description": "DDD, degenerative disc disease",
+    },
     "musculoskeletal.fibromyalgia": {"type": "bool", "description": ""},
     "musculoskeletal.polymyalgia": {"type": "bool", "description": ""},
     "musculoskeletal.foot_drop": {"type": "bool", "description": ""},
@@ -592,7 +605,10 @@ CONDITIONS: dict[str, dict] = {
         "description": "",
     },
     # --- Psychotropic Drugs ---
-    "psychotropic_drugs.perscribed_drugs": {"type": "bool", "description": ""},
+    "psychotropic_drugs.perscribed_drugs": {
+        "type": "bool",
+        "description": "prescribed medications, psychotropic, prescribed marijuana, non-prescribed, over the counter",
+    },
     "psychotropic_drugs.perscribed_drugs_compliant": {
         "type": "bool",
         "description": "",
@@ -639,7 +655,7 @@ CONDITIONS: dict[str, dict] = {
     # --- Sleep ---
     "sleep.obstructive_sleep_apnea": {
         "type": "bool",
-        "description": "OSA, obstructive sleep apnea, sleep apnea",
+        "description": "OSA, obstructive sleep apnea, sleep apnea, hypersomnia",
     },
     "sleep.osa_mild": {"type": "bool", "description": ""},
     "sleep.osa_mod": {"type": "bool", "description": ""},

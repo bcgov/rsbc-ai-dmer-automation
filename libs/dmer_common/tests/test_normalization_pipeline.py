@@ -2520,6 +2520,27 @@ def test_bad_eye_20_100_or_worse_marks_monocular_with_evidence():
     assert "vision.monocular" not in unaffected["dmer"]
 
 
+def test_uncorrected_bad_eye_is_not_monocular_when_corrected_both_is_given():
+    from dmer_common.normalization.pipeline import flag_monocular_from_bad_eye
+
+    # Triage Sort Procedures 26Jun2026: "if uncorrected 20/100 but corrected
+    # meets, follow normal VA rules".
+    result = flag_monocular_from_bad_eye(
+        {
+            "dmer": {
+                "visual_acuity.corrected_both": "20/20",
+                "visual_acuity.uncorrected_left": "20/100",
+                "visual_acuity.uncorrected_right": "20/30",
+            }
+        }
+    )
+    assert "vision.monocular" not in result["dmer"]
+    only_uncorrected = flag_monocular_from_bad_eye(
+        {"dmer": {"visual_acuity.uncorrected_left": "20/100"}}
+    )
+    assert only_uncorrected["dmer"]["vision.monocular"] is True
+
+
 def test_monocular_from_acuity_reaches_the_concerns_analysis(monkeypatch):
     from unittest.mock import Mock
 

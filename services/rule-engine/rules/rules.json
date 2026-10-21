@@ -3401,6 +3401,20 @@
             "19c4fb17-58e7-4f74-b75e-9a5d1eb9aeca": "\"TCM\"",
             "81cf688c-2363-4516-91a5-2b4225f84f23": "false",
             "ee4229d5-9e54-4197-8b1b-d9a00443816e": "\"The DMER has a visual field test result added\""
+          },
+          {
+            "_id": "91a4bad3-c3ec-448e-b0ad-2f505b35ceb7",
+            "170b8a60-614e-4769-8520-7513fd8babb9": "dmer['visual_field.abnormal'] == true and dmer['visual_field.meet_criteria_for_licence_class_yes'] == true and dmer['visual_acuity.vision_20/60_or_worse'] and license_category == 'NORMAL'",
+            "19c4fb17-58e7-4f74-b75e-9a5d1eb9aeca": "\"IN\"",
+            "81cf688c-2363-4516-91a5-2b4225f84f23": "false",
+            "ee4229d5-9e54-4197-8b1b-d9a00443816e": "\"The driver has a normal license, abnormal visual field, the BIG BOX is checked YES, and acuity does not meet the standard (20/60 or worse)\""
+          },
+          {
+            "_id": "1e2c18c7-7272-4a14-98cc-bba7458324b3",
+            "170b8a60-614e-4769-8520-7513fd8babb9": "dmer['visual_field.abnormal'] == true and dmer['visual_field.meet_criteria_for_licence_class_yes'] == true and dmer['visual_acuity.vision_20/40_or_worse'] and license_category == 'HIGH'",
+            "19c4fb17-58e7-4f74-b75e-9a5d1eb9aeca": "\"IN\"",
+            "81cf688c-2363-4516-91a5-2b4225f84f23": "false",
+            "ee4229d5-9e54-4197-8b1b-d9a00443816e": "\"The driver has a high class license, abnormal visual field, the BIG BOX is checked YES, and acuity does not meet the standard (20/40 or worse)\""
           }
         ],
         "inputs": [
