@@ -272,6 +272,7 @@ READ ENTIRE SENTENCES FULLY to understand context and causality. DO NOT isolate 
 Set the corresponding boolean field(s) to true for EVERY independent medical condition, diagnosis, or procedure mentioned — a single details_of_condition entry can and often does name more than one distinct condition; extract all of them, not just the first or most prominent one.
 Only set a condition the text actually names (or a recognized synonym/abbreviation of it). Do NOT infer one condition from a different one -- e.g. drop attacks are not narcolepsy or cataplexy, a seizure is not syncope.
 Only set a condition or procedure the patient has or has had. Something only possible, suspected, recommended, planned or ruled out ("may need", "?", "to be assessed for", "R/O", "no") stays false, unless the field itself is for suspected cases.
+When in doubt whether the text names a condition the patient has (e.g. an unclear abbreviation or a garbled word), err on the side of TRUE for the condition. This applies to conditions only -- never to _has_concerns fields.
 Do NOT copy details_of_condition into any ".other" field. Set a ".other" field only to the words naming a condition in this category that has no field of its own.
 
 CRITICAL — OCR/handwriting corrections:
@@ -279,14 +280,13 @@ This text was OCR'd from handwritten and typed clinical forms and may contain cu
 
 RULE — *_has_concerns / *_has_concern fields:
 Set the _has_concerns companion to TRUE if the parent condition is true AND either:
- 1. opinion.yes is true, OR
+ 1. opinion.yes or opinion.maybe is true, OR
  2. Any text describes symptoms, impacts, complications, or QUALITATIVE context for the condition.
  3. If there is language saying "controlled/under control", "stable", "compliant" etc. or mentioning the absence of a symptom ("no symptom X") then that would not count as a concern.
 
 CRITICAL EXCEPTION FOR MEASUREMENTS/DATES:
 Do NOT set _has_concerns to TRUE if the ONLY additional text is a quantitative measurement, date, size, or score that directly maps to another specific DMER field. Quantitative values alone DO NOT constitute a "concern" if there is no other descriptive narrative.
 
-When in doubt about QUALITATIVE descriptive narrative, ALWAYS err on the side of TRUE.
 CRITICAL: If the text MERELY NAMES OR LISTS the condition (e.g., "Patient has vertigo" or "Diagnosis: strabismus") with NO extra descriptive details, leave _has_concerns FALSE. The mere mention/existence of a condition sets the parent condition to TRUE, but it is NOT a concern by itself. The condition field CAN and OFTEN WILL be true while its _has_concerns companion remains false.
 For example, "Brain tumor.", "On dialysis.", "Cognitive impairment." and "Aortic stenosis, stable." each set the condition true and leave its _has_concerns FALSE. Being on treatment is not a concern by itself.
 If the parent condition is true but lacks ANY descriptive context/concern (other than its existence or mapped measurements), leave _has_concerns false.

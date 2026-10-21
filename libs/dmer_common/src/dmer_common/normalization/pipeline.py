@@ -70,7 +70,12 @@ from .schema import (
     TYPE_DEFAULTS,
     ConditionCategory,
 )
-from .unmask import evidence_labels, has_mask
+from .unmask import (
+    evidence_labels,
+    has_mask,
+    masked_evidence_labels,
+    resolve_masked_label,
+)
 
 _log = get_logger(__name__)
 
@@ -2232,17 +2237,24 @@ _SECTION_C_PARENTS: dict[str, tuple[str, ...]] = {
 }
 
 
+# Section C boxes that count as a concern: "Yes", and "Maybe" (the condition
+# may affect driving -- a concern for triage too).
+_SECTION_C_CONCERN_BOXES = ("opinion.yes", "opinion.maybe")
+
+
 def apply_section_c_concerns(dmer: dict, source: dict) -> list[dict]:
-    """Section C "Yes" is a concern for every condition on the DMER.
+    """Section C "Yes" or "Maybe" is a concern for every condition on the DMER.
 
     The procedures (Triage Sort Procedures, p.1): "With concerns: May be
     written in section D or they could be the box checked in section C."
     The analysis prompt asks the model for this, but the evidence check can
-    revert it -- so when extraction read ``opinion.yes`` as ticked, every
-    condition present gets its concern flag set here, deterministically and
-    after the evidence check. Returns one ``section_c`` flag per concern set.
+    revert it -- so when extraction read ``opinion.yes`` or ``opinion.maybe``
+    as ticked, every condition present gets its concern flag set here,
+    deterministically and after the evidence check. Returns one ``section_c``
+    flag per concern set.
     """
-    if source.get("opinion.yes") is not True:
+    box = next((b for b in _SECTION_C_CONCERN_BOXES if source.get(b) is True), None)
+    if box is None:
         return []
     flags = []
     known = set(CONDITIONS)
@@ -2261,12 +2273,12 @@ def apply_section_c_concerns(dmer: dict, source: dict) -> list[dict]:
         if not any(dmer.get(p) is True for p in parents):
             continue
         dmer[field] = True
-        dmer[f"{field}_evidence"] = "opinion.yes: true"
+        dmer[f"{field}_evidence"] = f"{box}: true"
         flags.append(
             {
                 "field": field,
                 "check": "section_c",
-                "reason": "Section C 'Yes' is a concern for each condition present",
+                "reason": "Section C 'Yes' or 'Maybe' is a concern for each condition present",
                 "action": "applied",
             }
         )
@@ -2304,6 +2316,110 @@ def revert_unsupported_concerns(
         # keep their own action.
         if "action" not in flag:
             flag["action"] = "reverted" if flag["field"] in reverted else "kept"
+
+
+_MASKED_EVIDENCE_REASON = (
+    "evidence cites a masked field name, not a source field; the value was set "
+    "back to false"
+)
+
+
+def revert_masked_evidence(dmer: dict, source: dict, updates: dict) -> list[dict]:
+    """Set back a true value the analysis model set when its evidence cites
+    only masked field names that match no field on the form
+    ('**********: true') -- the deployment masked a word, and the model read
+    the asterisks as a ticked field (dev 2026-10-20: ICDs and road tests set
+    this way).
+
+    A masked label that is exactly one source field with a value
+    (:func:`resolve_masked_label`) is a real citation: it is written back
+    unmasked and the value stands. So does evidence that also names a real
+    source field, and a value the form itself ticked. One
+    ``masked_evidence`` flag per value set back.
+    """
+    flags = []
+    for field, cfg in CONDITIONS.items():
+        evidence = dmer.get(f"{field}_evidence")
+        if (
+            cfg["type"] != "bool"
+            or field not in updates
+            or dmer.get(field) is not True
+            or source.get(field) is True
+            or not isinstance(evidence, str)
+            or not masked_evidence_labels(evidence)
+        ):
+            continue
+        resolved = False
+        for label in masked_evidence_labels(evidence):
+            name = resolve_masked_label(label, source)
+            if name:
+                evidence = evidence.replace(f"{label}:", f"{name}:", 1)
+                resolved = True
+        if resolved or evidence_labels(evidence):
+            dmer[f"{field}_evidence"] = evidence
+            continue
+        dmer[field] = False
+        dmer.pop(f"{field}_evidence", None)
+        flags.append(
+            {
+                "field": field,
+                "check": "masked_evidence",
+                "reason": _MASKED_EVIDENCE_REASON,
+                "action": "reverted",
+            }
+        )
+        _log.warning("masked evidence reverted", extra={"field": field})
+    return flags
+
+
+_PARENT_ONLY_CONCERN_REASON = (
+    "the only evidence for the concern is its own condition's checkbox; a "
+    "condition's existence is not a concern, so the value was set back to false"
+)
+
+
+def revert_parent_only_concerns(dmer: dict, source: dict, updates: dict) -> list[dict]:
+    """Set back a concern the analysis model set when its only evidence is
+    its own condition's checkbox ('cns.progressive_deficit: true') -- the
+    prompt's rule that a condition's mere existence is not a concern, made
+    deterministic (dev 2026-10-20: DMER12, where "progressive deficit"
+    alone read as worsening, gave PU instead of IN in 4 of 34 runs).
+
+    A concern the form ticked stands, and a Section C "Yes"/"Maybe" concern
+    is applied after this (:func:`apply_section_c_concerns`). One
+    ``parent_only_concern`` flag per value set back.
+    """
+    flags = []
+    for field in CONDITIONS:
+        if (
+            not _is_concern_field(field)
+            or field not in updates
+            or dmer.get(field) is not True
+            or source.get(field) is True
+        ):
+            continue
+        parent = field.removesuffix("_has_concerns").removesuffix("_has_concern")
+        evidence = dmer.get(f"{field}_evidence")
+        if parent == field or not isinstance(evidence, str):
+            continue
+        if not re.fullmatch(
+            rf"\s*{re.escape(parent)}:\s*(?:true|yes|selected|checked|x)\s*",
+            evidence,
+            re.IGNORECASE,
+        ):
+            continue
+        dmer[field] = False
+        dmer.pop(f"{field}_evidence", None)
+        flags.append(
+            {
+                "field": field,
+                "check": "parent_only_concern",
+                "reason": _PARENT_ONLY_CONCERN_REASON,
+                "action": "reverted",
+            }
+        )
+        _log.warning("parent-only concern reverted", extra={"field": field})
+    return flags
 
 
 # Conditions the analysis model reliably fails to return -- some because the
@@ -2489,12 +2605,15 @@ def field_sources(
     - ``di``: the DI extraction, as read (formats standardized).
     - ``model``: the analysis model.
     - ``model_reverted``: the model set a concern that failed its evidence
-      check and was set back to false.
+      check, or a value whose evidence cites only a masked field name
+      (:func:`revert_masked_evidence`) or, for a concern, only its own
+      condition's checkbox (:func:`revert_parent_only_concerns`), and it was
+      set back to false.
     - ``text_fallback``: set from the source text because the model returned
       nothing for it (:func:`apply_text_fallbacks`).
     - ``rule``: a deterministic rule set or changed it (e.g. an alcohol
       withdrawal seizure -> provoked seizure, no_other_conditions, a
-      Section C "Yes" concern -- :func:`apply_section_c_concerns`).
+      Section C "Yes"/"Maybe" concern -- :func:`apply_section_c_concerns`).
     - ``default``: nothing set it; the schema default.
     """
     fallback = {f["field"] for f in flags if f["check"] == "text_fallback"}
@@ -2588,6 +2707,13 @@ def normalize_document(
     keep_extracted_acuity(updates["dmer"])
     source_kept_flags = drop_model_removals(dmer_input["dmer"], updates["dmer"])
     result = apply_updates(dmer_input, updates)
+    # Before the derived checks, so nothing is built on a reverted value.
+    early_revert_flags = revert_masked_evidence(
+        result["dmer"], dmer_input["dmer"], updates["dmer"]
+    )
+    early_revert_flags += revert_parent_only_concerns(
+        result["dmer"], dmer_input["dmer"], updates["dmer"]
+    )
     fallback_flags = apply_text_fallbacks(
         result["dmer"], dmer_input["dmer"], updates["dmer"]
     )
@@ -2625,6 +2751,7 @@ def normalize_document(
         }
         for field in missing_evidence(dmer)
     ]
+    flags += early_revert_flags
     flags += fallback_flags
     flags += source_kept_flags
     flags += updates.get("masked_flags", [])

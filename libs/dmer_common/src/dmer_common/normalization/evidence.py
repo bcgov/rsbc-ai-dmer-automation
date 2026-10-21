@@ -47,8 +47,9 @@ A true checkbox is affirmative source evidence. An unchecked checkbox alone is
 not evidence that a condition is absent; explicit source narrative may support it.
 For concern fields, a condition name, a measurement/date/score alone, or statements
 such as stable/controlled/compliant or absence of symptoms do not establish concern.
-Qualitative concerns must apply to that condition; opinion.yes also supports the
-concern when the parent condition is present, per the normalization specification.
+Qualitative concerns must apply to that condition; opinion.yes or opinion.maybe
+also supports the concern when the parent condition is present, per the
+normalization specification.
 Return ONLY JSON: {"supported": {"exact.candidate_field": true_or_false}}.
 Use actual JSON booleans. Include every candidate exactly once, with no other keys.
 Return false when support is ambiguous. Do not rewrite candidates or source text.
