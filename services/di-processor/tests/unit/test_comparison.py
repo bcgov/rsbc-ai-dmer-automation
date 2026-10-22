@@ -15,6 +15,7 @@ from di_processor.extraction.comparison import (
     comparison_hash,
 )
 from di_processor.extraction.schemas import TopLevelExtraction, TopLevelField
+from di_processor.extraction.top_level import map_di_fields
 
 
 def _top(**values: str) -> TopLevelExtraction:
@@ -131,6 +132,49 @@ def test_different_exam_date_changes_the_hash():
 
 def test_different_issued_date_changes_the_hash():
     assert _hash(_form()) != _hash(_form(medical_issued_date="02JUN2025"))
+
+
+# --- through the real custom-model mapping --------------------------------------
+
+
+def _di_form(ticked: set[str], **extra: dict) -> TopLevelExtraction:
+    """A raw DI custom-model response, mapped by top_level as in the pipeline."""
+    raw = {
+        key: {
+            "type": "selectionMark",
+            "valueSelectionMark": "selected" if key in ticked else "unselected",
+            "confidence": 0.9,
+        }
+        for key in CHECKBOX_FIELDS
+    }
+    raw["medical_examination_date"] = {"valueString": "July 3 2025", "confidence": 0.9}
+    raw["medical_issued_date"] = {"valueString": "27MAY2025", "confidence": 0.9}
+    raw.update(extra)
+    return TopLevelExtraction(fields=map_di_fields(raw))
+
+
+def test_ticked_boxes_count_after_top_level_mapping():
+    # top_level turns a selected mark into "true"; the hash must still see it.
+    fields = comparison_fields(_di_form({"opinion.yes", "visual_field.normal"}))
+    assert fields["opinion.yes"] is True
+    assert fields["visual_field.normal"] is True
+    assert fields["opinion.no"] is False
+
+
+def test_boolean_checkbox_counts_after_top_level_mapping():
+    top = _di_form(set(), **{"sleep.cpap": {"valueBoolean": True, "confidence": 0.9}})
+    assert comparison_fields(top)["sleep.cpap"] is True
+
+
+def test_forms_differing_only_in_checkboxes_hash_differently():
+    # Same dates, different answers: not a duplicate.
+    first = _di_form({"opinion.yes"})
+    second = _di_form({"opinion.no"})
+    assert _hash(first) != _hash(second)
+
+
+def test_same_answers_hash_the_same_after_top_level_mapping():
+    assert _hash(_di_form({"opinion.yes"})) == _hash(_di_form({"opinion.yes"}))
 
 
 # --- hash ----------------------------------------------------------------------

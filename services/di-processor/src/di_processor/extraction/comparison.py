@@ -11,7 +11,9 @@ The comparison set follows the business sign-off ("exam date, physician
 details, and checkbox answers"):
 
 - the two dates, normalized to ``YYYY-MM-DD`` when they parse;
-- every checkbox (selection-mark) field, as ``true``/``false``.
+- every checkbox (selection-mark) field, as ``true``/``false``. ``top_level``
+  normalizes a ticked box to the string ``"true"``; DI's raw ``"selected"`` is
+  accepted too.
 
 Physician details are left out: the custom model's
 ``relationship_with_patient.name_and_address`` read is unreliable (stamp or
@@ -33,7 +35,10 @@ from typing import Any
 from .schemas import TopLevelExtraction
 
 # Bump whenever the field set or a normalization rule changes.
-COMPARISON_VERSION = 1
+# 2: checkboxes counted from top_level's "true" (version 1 compared against
+#    "selected" only, so every box read as unticked and the hash covered the
+#    two dates alone).
+COMPARISON_VERSION = 2
 
 # Exam date is handwritten; issued date is printed by RoadSafetyBC on the notice
 # (same for every copy of one request, different for a new request).
@@ -157,7 +162,9 @@ CHECKBOX_FIELDS: tuple[str, ...] = (
     "visual_field.normal",
 )
 
-_SELECTED = "selected"
+# Ticked-box values: top_level maps DI selection marks (and booleans) to "true";
+# DI's own "selected" is accepted so a raw value still counts.
+_TICKED = frozenset({"true", "selected"})
 _MONTHS = {
     m: i
     for i, m in enumerate(
@@ -220,7 +227,7 @@ def comparison_fields(top: TopLevelExtraction) -> dict[str, Any]:
         out[key] = canonical_date(field.value) if field else None
     for key in CHECKBOX_FIELDS:
         field = fields.get(key)
-        out[key] = bool(field) and field.value.strip().lower() == _SELECTED
+        out[key] = bool(field) and field.value.strip().lower() in _TICKED
     return out
 
 
