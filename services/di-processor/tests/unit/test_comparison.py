@@ -93,11 +93,36 @@ def test_same_form_with_harmless_differences_has_the_same_hash():
     second = _form(
         medical_examination_date="Jul 3, 2025",  # date written/read differently
         **{"opinion.yes": " Selected "},  # case and spacing
-        details_of_condition="different FAKE reading",  # not compared
-        dl_number="01234568",  # not compared
+        details_of_condition="  fake   HANDWRITING ",  # case and spacing only
     )
     # confidence is ignored
     second.fields["visual_field.normal"].confidence = 0.4
+    second.fields["dl_number"].confidence = 0.1
+    assert _hash(first) == _hash(second)
+
+
+def test_every_custom_model_field_is_compared():
+    fields = comparison_fields(_form())
+    assert fields["dl_number"] == "01234567"
+    assert fields["details_of_condition"] == "fake handwriting"
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"dl_number": "01234568"},
+        {"details_of_condition": "different FAKE reading"},
+        {"relationship_with_patient.name_and_address": "FAKE clinic"},
+    ],
+)
+def test_a_different_text_field_changes_the_hash(override):
+    assert _hash(_form()) != _hash(_form(**override))
+
+
+def test_empty_text_field_equals_a_missing_one():
+    first = _form()
+    second = _form(**{"cns.other": "   "})
+    assert "cns.other" not in comparison_fields(second)
     assert _hash(first) == _hash(second)
 
 
