@@ -71,6 +71,7 @@ from .schema import (
     ConditionCategory,
 )
 from .unmask import (
+    MAX_LOGGED_CHARS,
     evidence_labels,
     has_mask,
     masked_evidence_labels,
@@ -422,7 +423,9 @@ def analyze_condition_category(
 
     The result also carries ``masked_inputs`` (the input fields the model
     reports it received masked, checked against what was sent) and
-    ``masked_flags`` (what :func:`restore_masked_inputs` did about them).
+    ``masked_flags`` (what :func:`restore_masked_inputs` did about them,
+    plus one ``masked_field_name`` flag per field name that was still masked
+    after restoration and so was dropped).
     """
     if not CATEGORY_CONDITIONS[category]:
         return {"dmer": {}}
@@ -430,9 +433,11 @@ def analyze_condition_category(
     category_json = filter_fields_for_category(slim_json, category)
     json_str = json.dumps(category_json, indent=2)
     reported: list = []
+    dropped: list = []
 
     def accept(result: dict) -> dict:
         reported[:] = _reported_masked_inputs(result)
+        dropped[:] = _masked_field_names(result)
         return accept_analysis_output(category, result)
 
     output = call_model(
@@ -451,7 +456,7 @@ def analyze_condition_category(
     output["masked_inputs"] = masked
     output["masked_flags"] = restore_masked_inputs(
         output["dmer"], category_json["dmer"], masked
-    )
+    ) + _masked_field_name_flags(dropped, f"analyze:{category.value}")
     if reported or masked:
         _log.info(
             "masked inputs reported",
@@ -467,6 +472,52 @@ def analyze_condition_category(
             },
         )
     return output
+
+
+_MASKED_FIELD_NAME_REASON = (
+    "the model returned a masked field name that matches no single field; "
+    "its value was dropped"
+)
+
+
+def _masked_field_names(result: object) -> list[dict]:
+    """Field names in an analysis response that are still masked after
+    restoration ('**********': true) -- validation drops them, so the
+    model's value for that field is lost. Each with the value it carried."""
+    fields = result.get("dmer", result) if isinstance(result, dict) else None
+    if not isinstance(fields, dict):
+        return []
+    return [
+        {"field": name, "value": value}
+        for name, value in fields.items()
+        if isinstance(name, str) and has_mask(name)
+    ]
+
+
+def _masked_field_name_flags(dropped: list[dict], step: str) -> list[dict]:
+    """One ``masked_field_name`` flag (action "dropped") per masked field
+    name, each also logged with the value that was lost."""
+    flags = []
+    for item in dropped:
+        _log.warning(
+            "masked field name dropped",
+            extra={
+                "step": step,
+                "field": item["field"],
+                "value": json.dumps(item["value"], ensure_ascii=False)[
+                    :MAX_LOGGED_CHARS
+                ],
+            },
+        )
+        flags.append(
+            {
+                "field": item["field"],
+                "check": "masked_field_name",
+                "reason": _MASKED_FIELD_NAME_REASON,
+                "action": "dropped",
+            }
+        )
+    return flags
 
 
 def _reported_masked_inputs(result: object) -> list[str]:
@@ -697,7 +748,8 @@ def resolve_conflicts(dmer_result: dict) -> dict:
       and ``cns.provoked_seizure`` are forced to ``True``. An alcohol
       withdrawal seizure is still a seizure -- it must not be recorded only
       under its cause and left invisible to every seizure-related field
-      that matters for a driving-fitness decision.
+      that matters for a driving-fitness decision. Its date also fills a
+      blank ``cns.seizure_date``.
     - ``psychiatric.compliant_with_treatment`` / ``non_compliant_with_treatment``
       → the matching ``psychotropic_drugs.perscribed_drugs_(non_)compliant``.
     """
@@ -737,6 +789,16 @@ def resolve_conflicts(dmer_result: dict) -> dict:
                 "psychotropic_drugs.alcohol_withdrawal_seizure: true — "
                 "alcohol withdrawal is the provoking cause, so this seizure "
                 "is provoked rather than unprovoked/idiopathic epilepsy"
+            )
+        # The seizure rules date the seizure from cns.seizure_date only; left
+        # blank, a dated withdrawal seizure reads as "no date provided".
+        withdrawal_date = dmer.get("psychotropic_drugs.alcohol_withdrawal_seizure_date")
+        if _is_empty_value(dmer.get("cns.seizure_date")) and not _is_empty_value(
+            withdrawal_date
+        ):
+            dmer["cns.seizure_date"] = withdrawal_date
+            dmer["cns.seizure_date_evidence"] = (
+                f'psychotropic_drugs.alcohol_withdrawal_seizure_date: "{withdrawal_date}"'
             )
 
     # Treatment compliance is ticked in the psychiatric section as often as in

@@ -241,6 +241,65 @@ def test_alcohol_withdrawal_seizure_rule_does_not_fire_when_false():
     assert result["dmer"]["cns.epilepsy"] is False
 
 
+def test_alcohol_withdrawal_seizure_date_fills_blank_seizure_date():
+    result = resolve_conflicts(
+        {
+            "dmer": {
+                "psychotropic_drugs.alcohol_withdrawal_seizure": True,
+                "psychotropic_drugs.alcohol_withdrawal_seizure_date": "2015",
+                "cns.seizure_date": "",
+            }
+        }
+    )
+    assert result["dmer"]["cns.seizure_date"] == "2015"
+    assert (
+        "alcohol_withdrawal_seizure_date" in result["dmer"]["cns.seizure_date_evidence"]
+    )
+
+
+def test_alcohol_withdrawal_seizure_date_keeps_existing_seizure_date():
+    result = resolve_conflicts(
+        {
+            "dmer": {
+                "psychotropic_drugs.alcohol_withdrawal_seizure": True,
+                "psychotropic_drugs.alcohol_withdrawal_seizure_date": "2015",
+                "cns.seizure_date": "2024-03-01",
+            }
+        }
+    )
+    assert result["dmer"]["cns.seizure_date"] == "2024-03-01"
+
+
+def test_alcohol_withdrawal_seizure_date_ignored_when_not_a_seizure():
+    result = resolve_conflicts(
+        {
+            "dmer": {
+                "psychotropic_drugs.alcohol_withdrawal_seizure": False,
+                "psychotropic_drugs.alcohol_withdrawal_seizure_date": "2015",
+                "cns.seizure_date": "",
+            }
+        }
+    )
+    assert result["dmer"]["cns.seizure_date"] == ""
+
+
+def test_alcohol_withdrawal_seizure_date_is_normalized_end_to_end(monkeypatch):
+    from unittest.mock import Mock
+
+    from dmer_common.normalization import pipeline
+
+    monkeypatch.setattr(pipeline, "analyze_conditions", lambda *_: {"dmer": {}})
+    result = pipeline.normalize_document(
+        Mock(),
+        {
+            "psychotropic_drugs.alcohol_withdrawal_seizure": "selected",
+            "psychotropic_drugs.alcohol_withdrawal_seizure_date": "2015",
+        },
+    )
+    assert result["cns.seizure_date"] == "2015-12-31"
+    assert result["field_sources"]["cns.seizure_date"] == "rule"
+
+
 # ---------------------------------------------------------------------------
 # no_other_conditions
 # ---------------------------------------------------------------------------
@@ -2828,6 +2887,73 @@ def test_analysis_reads_the_models_masked_inputs_list():
     assert [(f["field"], f["action"]) for f in out["masked_flags"]] == [
         ("cns.moca_score", "restored")
     ]
+
+
+def test_masked_field_name_that_cant_be_restored_is_dropped_and_flagged(caplog):
+    # Dev 2026-10-21: analysis output '"**********_evidence": "**********: true"'
+    # was dropped by validation with no trace in the result.
+    import json
+    import logging
+    from unittest.mock import Mock
+
+    from dmer_common.normalization.pipeline import analyze_condition_category
+    from dmer_common.normalization.schema import ConditionCategory
+
+    client = Mock()
+    client.complete.return_value = json.dumps(
+        {
+            "dmer": {
+                "general.general_debility": True,
+                "general.general_debility_evidence": 'general.other: "frailty"',
+                "**********": True,
+            }
+        }
+    )
+    with caplog.at_level(logging.WARNING):
+        out = analyze_condition_category(
+            client,
+            {"dmer": {"general.other": "frailty"}},
+            ConditionCategory.GENERAL,
+        )
+    assert "**********" not in out["dmer"]
+    assert out["dmer"]["general.general_debility"] is True
+    assert out["masked_flags"] == [
+        {
+            "field": "**********",
+            "check": "masked_field_name",
+            "reason": (
+                "the model returned a masked field name that matches no single "
+                "field; its value was dropped"
+            ),
+            "action": "dropped",
+        }
+    ]
+    logged = [
+        r for r in caplog.records if r.getMessage() == "masked field name dropped"
+    ]
+    assert len(logged) == 1
+    assert logged[0].field == "**********"
+    assert logged[0].value == "true"
+
+
+def test_masked_field_name_that_is_restored_is_not_flagged():
+    from unittest.mock import Mock
+
+    from dmer_common.normalization.pipeline import analyze_condition_category
+    from dmer_common.normalization.schema import ConditionCategory
+
+    client = Mock()
+    client.complete.return_value = (
+        '{"dmer": {"cardiovascular.*********": true, '
+        '"cardiovascular.*********_evidence": "details_of_condition: \\"Permanent *********.\\""}}'
+    )
+    out = analyze_condition_category(
+        client,
+        {"dmer": {"details_of_condition": "Permanent pacemaker."}},
+        ConditionCategory.CARDIOVASCULAR,
+    )
+    assert out["dmer"]["cardiovascular.pacemaker"] is True
+    assert out["masked_flags"] == []
 
 
 def test_concern_revert_keeps_the_action_a_masked_input_flag_already_has():
