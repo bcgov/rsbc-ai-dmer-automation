@@ -241,6 +241,65 @@ def test_alcohol_withdrawal_seizure_rule_does_not_fire_when_false():
     assert result["dmer"]["cns.epilepsy"] is False
 
 
+def test_alcohol_withdrawal_seizure_date_fills_blank_seizure_date():
+    result = resolve_conflicts(
+        {
+            "dmer": {
+                "psychotropic_drugs.alcohol_withdrawal_seizure": True,
+                "psychotropic_drugs.alcohol_withdrawal_seizure_date": "2015",
+                "cns.seizure_date": "",
+            }
+        }
+    )
+    assert result["dmer"]["cns.seizure_date"] == "2015"
+    assert (
+        "alcohol_withdrawal_seizure_date" in result["dmer"]["cns.seizure_date_evidence"]
+    )
+
+
+def test_alcohol_withdrawal_seizure_date_keeps_existing_seizure_date():
+    result = resolve_conflicts(
+        {
+            "dmer": {
+                "psychotropic_drugs.alcohol_withdrawal_seizure": True,
+                "psychotropic_drugs.alcohol_withdrawal_seizure_date": "2015",
+                "cns.seizure_date": "2024-03-01",
+            }
+        }
+    )
+    assert result["dmer"]["cns.seizure_date"] == "2024-03-01"
+
+
+def test_alcohol_withdrawal_seizure_date_ignored_when_not_a_seizure():
+    result = resolve_conflicts(
+        {
+            "dmer": {
+                "psychotropic_drugs.alcohol_withdrawal_seizure": False,
+                "psychotropic_drugs.alcohol_withdrawal_seizure_date": "2015",
+                "cns.seizure_date": "",
+            }
+        }
+    )
+    assert result["dmer"]["cns.seizure_date"] == ""
+
+
+def test_alcohol_withdrawal_seizure_date_is_normalized_end_to_end(monkeypatch):
+    from unittest.mock import Mock
+
+    from dmer_common.normalization import pipeline
+
+    monkeypatch.setattr(pipeline, "analyze_conditions", lambda *_: {"dmer": {}})
+    result = pipeline.normalize_document(
+        Mock(),
+        {
+            "psychotropic_drugs.alcohol_withdrawal_seizure": "selected",
+            "psychotropic_drugs.alcohol_withdrawal_seizure_date": "2015",
+        },
+    )
+    assert result["cns.seizure_date"] == "2015-12-31"
+    assert result["field_sources"]["cns.seizure_date"] == "rule"
+
+
 # ---------------------------------------------------------------------------
 # no_other_conditions
 # ---------------------------------------------------------------------------
@@ -1434,6 +1493,177 @@ def test_unsupported_llm_concern_is_reverted_condition_is_kept(monkeypatch):
     ]
 
 
+def test_condition_whose_evidence_is_a_masked_field_name_is_reverted(monkeypatch):
+    from unittest.mock import Mock
+
+    from dmer_common.normalization import pipeline
+
+    # dev 2026-10-20 (DMER17): the deployment masked "impairment", and the
+    # model cited the asterisks as a ticked field to set an ICD.
+    monkeypatch.setattr(
+        pipeline,
+        "analyze_conditions",
+        lambda *_: {
+            "dmer": {
+                "cardiovascular.icd": True,
+                "cardiovascular.icd_evidence": "**********: true",
+            }
+        },
+    )
+    client = Mock()
+    result = pipeline.normalize_document(
+        client, {"cardiovascular.icd": "unselected", "details_of_condition": "Stable."}
+    )
+    assert result["cardiovascular.icd"] is False
+    assert "cardiovascular.icd_evidence" not in result
+    assert result["field_sources"]["cardiovascular.icd"] == "model_reverted"
+    assert result["evidence_flags"] == [
+        {
+            "field": "cardiovascular.icd",
+            "check": "masked_evidence",
+            "reason": pipeline._MASKED_EVIDENCE_REASON,
+            "action": "reverted",
+        }
+    ]
+    client.complete.assert_not_called()  # nothing left for the support check
+
+
+@pytest.mark.parametrize(
+    "evidence",
+    [
+        # Also names a real source field.
+        "**********: true; cardiovascular.icd_therapy: true",
+        # A masked value, not a masked field name.
+        'details_of_condition: "Prophylactic ********** defibrillator"',
+        # Asterisks in the text, not as a label.
+        'details_of_condition: "ICD **"',
+    ],
+)
+def test_evidence_that_names_a_real_source_is_not_reverted(evidence):
+    from dmer_common.normalization.pipeline import revert_masked_evidence
+
+    dmer = {"cardiovascular.icd": True, "cardiovascular.icd_evidence": evidence}
+    flags = revert_masked_evidence(dmer, {}, {"cardiovascular.icd": True})
+    assert flags == []
+    assert dmer["cardiovascular.icd"] is True
+
+
+def test_masked_label_that_is_one_source_field_is_restored_and_kept():
+    from dmer_common.normalization.pipeline import revert_masked_evidence
+
+    # dev 2026-10-20 (DMER25): only the category word was masked.
+    field = "psychiatric.non_compliant_with_treatment"
+    dmer = {field: True, f"{field}_evidence": "***********.other_psych_diagnosis: true"}
+    source = {"psychiatric.other_psych_diagnosis": True}
+    flags = revert_masked_evidence(dmer, source, {field: True})
+    assert flags == []
+    assert dmer[field] is True
+    assert dmer[f"{field}_evidence"] == "psychiatric.other_psych_diagnosis: true"
+
+
+def test_masked_label_that_fits_several_source_fields_is_reverted():
+    from dmer_common.normalization.pipeline import revert_masked_evidence
+
+    # "**********" is as long as both "first_name" and "opinion.no".
+    dmer = {
+        "cardiovascular.icd": True,
+        "cardiovascular.icd_evidence": "**********: true",
+    }
+    source = {"first_name": "Pat", "opinion.no": True}
+    flags = revert_masked_evidence(dmer, source, {"cardiovascular.icd": True})
+    assert [f["check"] for f in flags] == ["masked_evidence"]
+    assert dmer["cardiovascular.icd"] is False
+
+
+def test_concern_whose_only_evidence_is_its_own_condition_is_reverted(monkeypatch):
+    from unittest.mock import Mock
+
+    from dmer_common.normalization import pipeline
+
+    # dev 2026-10-20 (DMER12): only the "progressive deficit" box is ticked.
+    monkeypatch.setattr(
+        pipeline,
+        "analyze_conditions",
+        lambda *_: {
+            "dmer": {
+                "cns.progressive_deficit_has_concerns": True,
+                "cns.progressive_deficit_has_concerns_evidence": "cns.progressive_deficit: true",
+            }
+        },
+    )
+    client = Mock()
+    result = pipeline.normalize_document(
+        client, {"cns.progressive_deficit": "selected"}
+    )
+    assert result["cns.progressive_deficit"] is True
+    assert result["cns.progressive_deficit_has_concerns"] is False
+    assert "cns.progressive_deficit_has_concerns_evidence" not in result
+    assert (
+        result["field_sources"]["cns.progressive_deficit_has_concerns"]
+        == "model_reverted"
+    )
+    assert result["evidence_flags"] == [
+        {
+            "field": "cns.progressive_deficit_has_concerns",
+            "check": "parent_only_concern",
+            "reason": pipeline._PARENT_ONLY_CONCERN_REASON,
+            "action": "reverted",
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    "evidence",
+    [
+        'details_of_condition: "Progressive weakness, falls twice this year."',
+        'cns.progressive_deficit: true; details_of_condition: "worsening gait"',
+        "opinion.yes: true",
+    ],
+)
+def test_concern_with_other_evidence_is_not_reverted(evidence):
+    from dmer_common.normalization.pipeline import revert_parent_only_concerns
+
+    field = "cns.progressive_deficit_has_concerns"
+    dmer = {field: True, f"{field}_evidence": evidence}
+    assert revert_parent_only_concerns(dmer, {}, {field: True}) == []
+    assert dmer[field] is True
+
+
+def test_section_c_still_sets_the_concern_after_a_parent_only_revert(monkeypatch):
+    from unittest.mock import Mock
+
+    from dmer_common.normalization import pipeline
+
+    monkeypatch.setattr(
+        pipeline,
+        "analyze_conditions",
+        lambda *_: {
+            "dmer": {
+                "cns.progressive_deficit_has_concerns": True,
+                "cns.progressive_deficit_has_concerns_evidence": "cns.progressive_deficit: true",
+            }
+        },
+    )
+    result = pipeline.normalize_document(
+        Mock(), {"cns.progressive_deficit": "selected", "opinion.maybe": "selected"}
+    )
+    assert result["cns.progressive_deficit_has_concerns"] is True
+    assert (
+        result["cns.progressive_deficit_has_concerns_evidence"] == "opinion.maybe: true"
+    )
+
+
+def test_masked_evidence_does_not_revert_a_box_the_form_ticked():
+    from dmer_common.normalization.pipeline import revert_masked_evidence
+
+    dmer = {"cardiovascular.icd": True, "cardiovascular.icd_evidence": "*****: true"}
+    flags = revert_masked_evidence(
+        dmer, {"cardiovascular.icd": True}, {"cardiovascular.icd": True}
+    )
+    assert flags == []
+    assert dmer["cardiovascular.icd"] is True
+
+
 def test_concern_the_support_check_could_not_judge_is_kept():
     from dmer_common.normalization.pipeline import revert_unsupported_concerns
 
@@ -1665,6 +1895,39 @@ def test_analysis_call_restores_masked_output_before_validating_it():
         == 'details_of_condition: "Permanent pacemaker."'
     )
     assert client.complete.call_count == 1
+
+
+def test_asterisks_that_are_really_in_the_source_do_not_loop_forever():
+    # Dev 2026-10-20 (DMER29): extraction read 'Qlhp *****' (real asterisks);
+    # restoring the model's quote of it substituted '*****' back each time and
+    # one normalization looped for 27 minutes.
+    import threading
+
+    from dmer_common.normalization import unmask
+
+    result = {}
+
+    def run():
+        result["out"] = unmask.restore_masked(
+            {
+                "musculoskeletal.range_of_motion_loss_evidence": (
+                    'musculoskeletal.range_of_motion_loss_details: "Qlhp *****"'
+                ),
+                "musculoskeletal.range_of_motion_loss_details": "Qlhp *****",
+            },
+            ["Qlhp *****", "back pain"],
+            {"musculoskeletal.range_of_motion_loss_evidence"},
+            step="analyze:musculoskeletal",
+        )
+
+    worker = threading.Thread(target=run, daemon=True)
+    worker.start()
+    worker.join(timeout=5)
+    assert not worker.is_alive(), "restore_masked looped"
+    assert result["out"]["musculoskeletal.range_of_motion_loss_details"] == "Qlhp *****"
+    assert result["out"]["musculoskeletal.range_of_motion_loss_evidence"].endswith(
+        '"Qlhp *****"'
+    )
 
 
 def test_mask_logs_record_each_masked_value_before_and_after(monkeypatch):
@@ -2316,6 +2579,27 @@ def test_bad_eye_20_100_or_worse_marks_monocular_with_evidence():
     assert "vision.monocular" not in unaffected["dmer"]
 
 
+def test_uncorrected_bad_eye_is_not_monocular_when_corrected_both_is_given():
+    from dmer_common.normalization.pipeline import flag_monocular_from_bad_eye
+
+    # Triage Sort Procedures 26Jun2026: "if uncorrected 20/100 but corrected
+    # meets, follow normal VA rules".
+    result = flag_monocular_from_bad_eye(
+        {
+            "dmer": {
+                "visual_acuity.corrected_both": "20/20",
+                "visual_acuity.uncorrected_left": "20/100",
+                "visual_acuity.uncorrected_right": "20/30",
+            }
+        }
+    )
+    assert "vision.monocular" not in result["dmer"]
+    only_uncorrected = flag_monocular_from_bad_eye(
+        {"dmer": {"visual_acuity.uncorrected_left": "20/100"}}
+    )
+    assert only_uncorrected["dmer"]["vision.monocular"] is True
+
+
 def test_monocular_from_acuity_reaches_the_concerns_analysis(monkeypatch):
     from unittest.mock import Mock
 
@@ -2455,6 +2739,17 @@ def test_section_c_excludes_priority_and_dwarfism_and_needs_yes():
     assert not_yes.get("cardiovascular.cad_has_concerns") is not True
 
 
+def test_section_c_maybe_is_a_concern_too():
+    from dmer_common.normalization import pipeline
+
+    dmer = {"cardiovascular.cad": True, "hearing.hearing_loss": False}
+    flags = pipeline.apply_section_c_concerns(dmer, {"opinion.maybe": True})
+    assert dmer["cardiovascular.cad_has_concerns"] is True
+    assert dmer["cardiovascular.cad_has_concerns_evidence"] == "opinion.maybe: true"
+    assert dmer.get("hearing.hearing_loss_has_concerns") is not True
+    assert flags and all(f["check"] == "section_c" for f in flags)
+
+
 def test_section_c_concern_survives_the_evidence_check(monkeypatch):
     # Dev batch 2026-10-08: with Section C "Yes", the evidence check reverted
     # 14 concerns the model had set from it (e.g. DMER8's CAD).
@@ -2592,6 +2887,78 @@ def test_analysis_reads_the_models_masked_inputs_list():
     assert [(f["field"], f["action"]) for f in out["masked_flags"]] == [
         ("cns.moca_score", "restored")
     ]
+
+
+def test_masked_field_name_that_cant_be_restored_is_dropped_and_flagged(monkeypatch):
+    # Dev 2026-10-21: analysis output '"**********_evidence": "**********: true"'
+    # was dropped by validation with no trace in the result.
+    import json
+    from unittest.mock import Mock
+
+    from dmer_common.normalization import pipeline
+    from dmer_common.normalization.pipeline import analyze_condition_category
+    from dmer_common.normalization.schema import ConditionCategory
+
+    # A mock logger, not caplog: the JSON log setup other tests run turns off
+    # propagation, so caplog sees nothing when the whole suite runs.
+    log = Mock()
+    monkeypatch.setattr(pipeline, "_log", log)
+    client = Mock()
+    client.complete.return_value = json.dumps(
+        {
+            "dmer": {
+                "general.general_debility": True,
+                "general.general_debility_evidence": 'general.other: "frailty"',
+                "**********": True,
+            }
+        }
+    )
+    out = analyze_condition_category(
+        client,
+        {"dmer": {"general.other": "frailty"}},
+        ConditionCategory.GENERAL,
+    )
+    assert "**********" not in out["dmer"]
+    assert out["dmer"]["general.general_debility"] is True
+    assert out["masked_flags"] == [
+        {
+            "field": "**********",
+            "check": "masked_field_name",
+            "reason": (
+                "the model returned a masked field name that matches no single "
+                "field; its value was dropped"
+            ),
+            "action": "dropped",
+        }
+    ]
+    logged = [
+        c.kwargs["extra"]
+        for c in log.warning.call_args_list
+        if c.args[0] == "masked field name dropped"
+    ]
+    assert len(logged) == 1
+    assert logged[0]["field"] == "**********"
+    assert logged[0]["value"] == "true"
+
+
+def test_masked_field_name_that_is_restored_is_not_flagged():
+    from unittest.mock import Mock
+
+    from dmer_common.normalization.pipeline import analyze_condition_category
+    from dmer_common.normalization.schema import ConditionCategory
+
+    client = Mock()
+    client.complete.return_value = (
+        '{"dmer": {"cardiovascular.*********": true, '
+        '"cardiovascular.*********_evidence": "details_of_condition: \\"Permanent *********.\\""}}'
+    )
+    out = analyze_condition_category(
+        client,
+        {"dmer": {"details_of_condition": "Permanent pacemaker."}},
+        ConditionCategory.CARDIOVASCULAR,
+    )
+    assert out["dmer"]["cardiovascular.pacemaker"] is True
+    assert out["masked_flags"] == []
 
 
 def test_concern_revert_keeps_the_action_a_masked_input_flag_already_has():

@@ -114,6 +114,12 @@ def _restore_segment(segment: str, texts: list[str], step: str, field: str) -> s
                 break
             words = [parts[i] for i in word_slots]
             replacement, outcome, context = _match_run(words, position, run, texts)
+            if replacement is not None and has_mask(replacement):
+                # The source itself has asterisks there (OCR read "*****"):
+                # nothing to restore, and substituting it back would find the
+                # same run forever (dev 2026-10-20: one normalization looped
+                # for 27 minutes).
+                replacement, outcome = None, "in_source"
             width = len(runs[run].group())
             log = _log.info if replacement is not None else _log.warning
             log(
@@ -220,6 +226,37 @@ _EVIDENCE_LABEL_RE = re.compile(r"(?:^|(?<=[\s;]))([A-Za-z_][\w./]*):(?=\s|$)")
 def evidence_labels(evidence: str) -> list[str]:
     """The ``field.name:`` labels an evidence string cites."""
     return _EVIDENCE_LABEL_RE.findall(evidence)
+
+
+# Labels the deployment masked ("**********: true"): a word with a masked run.
+_MASKED_LABEL_RE = re.compile(r'(?:^|(?<=[\s;]))([^\s;:"]*\*{2,}[^\s;:"]*):(?=\s|$)')
+
+
+def masked_evidence_labels(evidence: str) -> list[str]:
+    """The masked ``*****:`` labels an evidence string cites -- a field name
+    the model saw (partly) as asterisks."""
+    return _MASKED_LABEL_RE.findall(evidence)
+
+
+def resolve_masked_label(label: str, source: Mapping[str, object]) -> str | None:
+    """The one source field a masked evidence label can be -- same length,
+    unmasked parts equal ("***********.other_psych_diagnosis" is
+    psychiatric.other_psych_diagnosis), and a value on the form (ticked or
+    filled in). None when no field, or more than one, fits."""
+    out, pos = [], 0
+    for match in MASK_RE.finditer(label):
+        out.append(re.escape(label[pos : match.start()]))
+        out.append(f".{{{len(match.group())}}}")
+        pos = match.end()
+    out.append(re.escape(label[pos:]))
+    regex = re.compile("".join(out))
+    candidates = [
+        name
+        for name, value in source.items()
+        if regex.fullmatch(name)
+        and (value is True or (isinstance(value, str) and value.strip()))
+    ]
+    return candidates[0] if len(candidates) == 1 else None
 
 
 def _field_texts(name: str, value: str, fields: Mapping[str, str]) -> list[str]:

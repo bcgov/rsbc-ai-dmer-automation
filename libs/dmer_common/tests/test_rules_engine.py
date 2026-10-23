@@ -1868,6 +1868,49 @@ ROWS = [  # (label, table, row, licence, fields, expected)
         False,
     ),
     ("nothing marked -> catch-all does not fire", "Priority", 11, N, {}, False),
+    # dev 2026-10-21 (DMER9): an HbA1C of 12 or less is a clean pass -- it
+    # used to fall through to the catch-all IN.
+    (
+        "HbA1C 6.5, no concerns -> R24 CP",
+        "Diabetes",
+        24,
+        N,
+        {"endocrine.HbA1C": 6.5},
+        True,
+    ),
+    (
+        "HbA1C 6.5, HIGH, no concerns -> R24 CP",
+        "Diabetes",
+        24,
+        H,
+        {"endocrine.HbA1C": 6.5},
+        True,
+    ),
+    ("HbA1C exactly 12 -> R24 CP", "Diabetes", 24, N, {"endocrine.HbA1C": 12}, True),
+    (
+        "HbA1C 12.5 -> R24 doesn't fire",
+        "Diabetes",
+        24,
+        N,
+        {"endocrine.HbA1C": 12.5},
+        False,
+    ),
+    (
+        "HbA1C 6.5 with concerns -> R24 doesn't fire",
+        "Diabetes",
+        24,
+        N,
+        {"endocrine.HbA1C": 6.5, "endocrine.HbA1C_has_concerns": True},
+        False,
+    ),
+    (
+        "HbA1C 6.5 only -> catch-all does not fire",
+        "Priority",
+        11,
+        N,
+        {"endocrine.HbA1C": 6.5},
+        False,
+    ),
     (
         "persistent hypo unawareness, NORMAL, no date -> TCM",
         "Diabetes",
@@ -2431,6 +2474,54 @@ EDGE_ROWS = [  # (label, table, row, licence, fields, expected)
         },
         True,
     ),
+    # Triage Sort Procedures 26Jun2026: abnormal VF + BIG BOX YES + acuity not met -> IN.
+    (
+        "abnormal VF + YES + corrected 20/60 (NORMAL) -> R37 IN",
+        "Vision Impairment",
+        37,
+        N,
+        {
+            "visual_field.abnormal": True,
+            "visual_field.meet_criteria_for_licence_class_yes": True,
+            "visual_acuity.corrected_both": "20/60",
+        },
+        True,
+    ),
+    (
+        "abnormal VF + YES + corrected 20/50 (NORMAL meets) -> R37 does not fire",
+        "Vision Impairment",
+        37,
+        N,
+        {
+            "visual_field.abnormal": True,
+            "visual_field.meet_criteria_for_licence_class_yes": True,
+            "visual_acuity.corrected_both": "20/50",
+        },
+        False,
+    ),
+    (
+        "abnormal VF + YES + corrected 20/40 (HIGH) -> R38 IN",
+        "Vision Impairment",
+        38,
+        H,
+        {
+            "visual_field.abnormal": True,
+            "visual_field.meet_criteria_for_licence_class_yes": True,
+            "visual_acuity.corrected_both": "20/40",
+        },
+        True,
+    ),
+    (
+        "abnormal VF + YES, no acuity -> R13 CP",
+        "Vision Impairment",
+        13,
+        N,
+        {
+            "visual_field.abnormal": True,
+            "visual_field.meet_criteria_for_licence_class_yes": True,
+        },
+        True,
+    ),
     (
         "bad eye 20/80 is not monocular -> R22 does not fire",
         "Vision Impairment",
@@ -2615,3 +2706,46 @@ def test_edge_case_selected_outcome(label, fields, engine, selected):
         engine,
         selected,
     )
+
+
+# ------------------------------------------- cognitive: a test score is enough
+# A score runs through the cognitive procedures with or without a diagnosis
+# (DMER13: MoCA 24, Section D "No concerns"); the diagnosis is still required
+# on the branches with no score to go on.
+COGNITIVE_SCORE_ONLY = [
+    ("no diagnosis, MoCA 24 -> PU (DMER13)", 7, {"cns.moca_score": 24}, True),
+    ("no diagnosis, Simard 50 -> PU (DMER21)", 7, {"cns.simard_score": 50}, True),
+    ("no diagnosis, Trails B 120s -> PU", 7, {"cns.trails_b_seconds": 120}, True),
+    ("no diagnosis, MoCA 12 -> CR", 9, {"cns.moca_score": 12}, True),
+    ("no diagnosis, Trails B 200s -> CR", 9, {"cns.trails_b_seconds": 200}, True),
+    ("no diagnosis, MoCA 26 -> IN", 5, {"cns.moca_score": 26}, True),
+    ("no diagnosis, no scores -> no IN row", 5, {}, False),
+    (
+        "no diagnosis, concerns only -> no PU row",
+        7,
+        {"cns.cognitiveimpairment_has_concerns": True},
+        False,
+    ),
+    (
+        "no diagnosis, severe flag, no scores -> no CR row",
+        9,
+        {"cns.cognitiveimpairment_is_severe": True},
+        False,
+    ),
+    ("diagnosis, no scores -> IN", 5, {"cns.cognitiveimpairment": True}, True),
+    (
+        "diagnosis with concerns, no scores -> PU",
+        7,
+        {"cns.cognitiveimpairment": True, "cns.cognitiveimpairment_has_concerns": True},
+        True,
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("label", "row", "fields", "expected"),
+    COGNITIVE_SCORE_ONLY,
+    ids=[c[0] for c in COGNITIVE_SCORE_ONLY],
+)
+def test_cognitive_rows_need_a_score_or_a_diagnosis(label, row, fields, expected):
+    assert row_fired(evaluate(N, fields), "CognitiveImpairment", row) is expected
