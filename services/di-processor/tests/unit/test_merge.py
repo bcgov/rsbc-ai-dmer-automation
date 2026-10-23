@@ -1,16 +1,18 @@
 """Unit tests for merging handwritten values onto the custom-model base (Req 6.4).
 
 Semantics: the custom-model output defines the keys. For every handwritten key
-it also output, the handwritten value replaces the custom-model value, even when
-the handwritten value is empty. Handwritten keys the custom model did not output
-are never added.
+it also output: a high-confidence handwritten value wins; a low-confidence one
+wins unless the custom model read the field with confidence above 0.75, in which
+case the custom-model value is kept. The handwritten value used can be empty.
+Handwritten keys the custom model did not output are never added.
 """
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from di_processor.extraction.merge import merge
+import pytest
+from di_processor.extraction.merge import CUSTOM_MODEL_KEEP_CONFIDENCE, merge
 from di_processor.extraction.schemas import (
     Confidence,
     HandwrittenExtraction,
@@ -25,6 +27,51 @@ def _top_level(**fields: str) -> TopLevelExtraction:
     return TopLevelExtraction(
         fields={k: TopLevelField(value=v) for k, v in fields.items()}
     )
+
+
+def _one(custom_value, custom_conf, hw_value, hw_conf, hw_source=Source.IMAGE):
+    """Merge one field: custom (value, confidence) vs handwritten (value, conf)."""
+    top = TopLevelExtraction(
+        fields={
+            "cns.moca_score": TopLevelField(value=custom_value, confidence=custom_conf)
+        }
+    )
+    if hw_conf is Confidence.HIGH:
+        hw_source = Source.BOTH  # the schema allows high only with source both
+    hw = HandwrittenExtraction(
+        fields={
+            "cns.moca_score": HandwrittenField(
+                value=hw_value, confidence=hw_conf, source=hw_source
+            )
+        }
+    )
+    return merge("doc-1", top, hw).fields["cns.moca_score"]
+
+
+def test_threshold_is_075():
+    assert CUSTOM_MODEL_KEEP_CONFIDENCE == 0.75
+
+
+def test_high_handwritten_wins_even_over_a_confident_custom_value():
+    assert _one("24/30", 0.99, "26/30", Confidence.HIGH) == "26/30"
+
+
+def test_low_handwritten_does_not_replace_a_confident_custom_value():
+    assert _one("24/30", 0.9, "26/30", Confidence.LOW) == "24/30"
+
+
+def test_low_blank_handwritten_does_not_blank_a_confident_custom_value():
+    assert _one("24/30", 0.76, "", Confidence.LOW, Source.NONE) == "24/30"
+
+
+@pytest.mark.parametrize("custom_conf", [0.75, 0.5, 0.0, None])
+def test_low_handwritten_replaces_a_custom_value_at_or_below_threshold(custom_conf):
+    # exactly 0.75 is not "above", and a missing confidence counts as not confident
+    assert _one("24/30", custom_conf, "26/30", Confidence.LOW) == "26/30"
+
+
+def test_low_blank_handwritten_blanks_an_unconfident_custom_value():
+    assert _one("24/30", 0.6, "", Confidence.LOW, Source.NONE) == ""
 
 
 def test_base_is_all_custom_model_fields():
