@@ -77,6 +77,43 @@ def test_tiles_to_rows_remaps_offsets_and_bands():
     assert rows[0]["segments"][0]["avg_score"] == 0.8
 
 
+def _one_tile(content, lines):
+    return [
+        {
+            "tile_number": 1,
+            "pass_num": 1,
+            "segment": "full",
+            "offset_x": 0,
+            "offset_y": 0,
+            "pages": [_page(lines)],
+            "content": content,
+        }
+    ]
+
+
+def test_segment_text_is_di_content_in_di_reading_order():
+    # DI reads "Uncorrected R 20/40" then the next row "Corrected R 20/30"; a
+    # left-edge sort would put both labels first and both values after them.
+    lines = [
+        ("Uncorrected R", 10, 0, 0.9),
+        ("20/40", 300, 0, 0.9),
+        ("Corrected R", 12, 40, 0.9),
+        ("20/30", 290, 40, 0.9),
+    ]
+    content = "Uncorrected R 20/40\nCorrected R 20/30"
+    segment = tiles_to_rows(_one_tile(content, lines))[0]["segments"][0]
+    assert segment["text"] == content
+    # lines still give the block count and the scores
+    assert segment["block_count"] == 4
+    assert segment["avg_score"] == 0.9
+
+
+def test_segment_text_falls_back_to_lines_without_content():
+    lines = [("B", 50, 0, None), ("A", 5, 0, None)]
+    segment = tiles_to_rows(_one_tile("", lines))[0]["segments"][0]
+    assert segment["text"] == "A\nB"
+
+
 def test_tiles_in_same_band_grouped_together():
     tile_results = [
         {
@@ -119,7 +156,7 @@ class _FakeClient:
             self.calls += 1
         if idx == self.fail_tile_index:
             raise RuntimeError("DI throttled")
-        return DIResult(content="x", pages=[_page([(f"L{idx}", 2, 2, 0.7)])])
+        return DIResult(content=f"L{idx}", pages=[_page([(f"L{idx}", 2, 2, 0.7)])])
 
 
 def _tiles(n):
@@ -203,7 +240,7 @@ class _SlowWidthClient:
         time.sleep(self.delay * (1 + (100 - width) / 100))
         with self._lock:
             self.in_flight -= 1
-        return DIResult(content="x", pages=[_page([(f"W{width}", 2, 2, 0.9)])])
+        return DIResult(content=f"W{width}", pages=[_page([(f"W{width}", 2, 2, 0.9)])])
 
 
 def _distinct_tiles(n):

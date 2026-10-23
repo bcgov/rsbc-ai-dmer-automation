@@ -2,9 +2,14 @@
 
 Runs the ``prebuilt-read`` model over each tile via
 ``dmer_common.doc_intelligence`` (Managed Identity, private endpoint, retry +
-breaker), then remaps each tile's line coordinates back to full-page pixels and
-groups them into vertical "row bands" — producing the ``rows[].segments[]`` JSON
-shape the LLM reconstruction step consumes.
+breaker), then groups the tiles into vertical "row bands" by their full-page
+offset — producing the ``rows[].segments[]`` JSON shape the LLM reconstruction
+step consumes.
+
+A segment's ``text`` is the tile's DI ``content`` exactly as returned, in DI's
+own reading order. It used to be rebuilt by sorting the tile's lines by their
+left edge only, which ignored their vertical position and interleaved lines
+from different rows of the form (labels separated from their values).
 
 The DI client returns a normalized :class:`DIResult` whose ``pages`` are plain
 dicts, so line/word parsing here operates on dicts (not raw SDK objects).
@@ -18,7 +23,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
-from dmer_common.doc_intelligence import DocumentIntelligenceClient
+from dmer_common.doc_intelligence import DIResult, DocumentIntelligenceClient
 from dmer_common.telemetry import get_logger
 
 from ..failures import FailureCode, PipelineFailure
@@ -87,8 +92,9 @@ def tiles_to_rows(
     """Group per-tile DI lines by vertical band into the rows/segments shape.
 
     Each entry in ``tile_results`` is ``{tile_number, pass_num, segment,
-    offset_x, offset_y, pages}`` where ``pages`` is the tile's DIResult pages.
-    Tile-relative line coordinates are remapped to full-page pixels before binning.
+    offset_x, offset_y, pages, content}`` where ``pages`` and ``content`` are the
+    tile's DIResult pages and text. The segment text is ``content`` as DI returned
+    it; the lines (``pages``) still give the block count and confidence scores.
     """
     rows: dict[int, dict[str, Any]] = {}
 
@@ -100,6 +106,10 @@ def tiles_to_rows(
         texts = [(offset_x + x_rel, text) for text, x_rel, _y_rel, _c in lines]
         confs = [c for _t, _x, _y, c in lines if c is not None]
         row_lines = sorted(texts, key=lambda t: t[0])
+        # DI's own reading order; the left-edge sort is only the fallback for a
+        # result without content.
+        content = (tr.get("content") or "").strip()
+        text = content or "\n".join(t[1] for t in row_lines)
 
         segment_entry = {
             "tile_number": tr["tile_number"],
@@ -107,7 +117,7 @@ def tiles_to_rows(
             "segment": tr["segment"],
             "offset_x": offset_x,
             "offset_y": offset_y,
-            "text": "\n".join(t[1] for t in row_lines),
+            "text": text,
             "block_count": len(row_lines),
             "scores": [round(c, 3) for c in confs],
             "avg_score": round(sum(confs) / len(confs), 3) if confs else 0.0,
@@ -126,10 +136,10 @@ def tiles_to_rows(
     return ordered
 
 
-def _ocr_tile(client: DocumentIntelligenceClient, tile: Tile) -> list | None:
-    """Analyze one tile; its result pages, or None if it failed (logged)."""
+def _ocr_tile(client: DocumentIntelligenceClient, tile: Tile) -> DIResult | None:
+    """Analyze one tile; its DI result, or None if it failed (logged)."""
     try:
-        return client.analyze(PREBUILT_READ, image_to_png_bytes(tile.image)).pages
+        return client.analyze(PREBUILT_READ, image_to_png_bytes(tile.image))
     except Exception:  # noqa: BLE001 - one bad tile must not abort the page
         _log.warning(
             "tile OCR failed; skipping",
@@ -173,10 +183,9 @@ def ocr_tiles(
 
     tile_results: list[dict[str, Any]] = []
     failed = 0
-    for tile, pages in zip(tiles, outcomes, strict=True):
-        if pages is None:
+    for tile, result in zip(tiles, outcomes, strict=True):
+        if result is None:
             failed += 1
-            pages = []
         tile_results.append(
             {
                 "tile_number": tile.tile_number,
@@ -184,7 +193,8 @@ def ocr_tiles(
                 "segment": tile.segment,
                 "offset_x": tile.offset_x,
                 "offset_y": tile.offset_y,
-                "pages": pages,
+                "pages": result.pages if result else [],
+                "content": result.content if result else "",
             }
         )
 
