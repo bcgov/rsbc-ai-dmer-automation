@@ -7,17 +7,24 @@ model returns the same values for the same page, whereas the LLM's handwriting
 reading can differ between runs, so it would make two copies of one form look
 different.
 
-The comparison set follows the business sign-off ("exam date, physician
-details, and checkbox answers"):
+The comparison set is **every field in the custom-model response** (every key
+in ``top_level.json``), values only -- confidences and positions are ignored:
 
-- the two dates, normalized to ``YYYY-MM-DD`` when they parse;
-- every checkbox (selection-mark) field, as ``true``/``false``.
+- every checkbox (selection-mark) field, as ``true``/``false``. ``top_level``
+  normalizes a ticked box to the string ``"true"``; DI's raw ``"selected"`` is
+  accepted too. The fixed ``CHECKBOX_FIELDS`` are always present (a missing or
+  unlocated box is ``false``);
+- the two dates, normalized to ``YYYY-MM-DD`` when they parse; always present
+  (``None`` when empty);
+- every other field as text: lowercased, whitespace trimmed and collapsed. An
+  empty value is left out, so a field returned empty and a field not returned
+  at all compare equal.
 
-Physician details are left out: the custom model's
-``relationship_with_patient.name_and_address`` read is unreliable (stamp or
-handwriting, low confidence), and one wrong character would change the hash.
+Including every field (identity, physician details, free text) means one
+misread character changes the hash. That fails in the safe direction: two
+copies of the same form are judged different and go to a human, never two
+different forms judged the same.
 
-Values only — confidences, positions and every other field are ignored.
 ``comparison_fields`` is stored next to the hash so the gateway can show which
 field differed. The set is versioned (``COMPARISON_VERSION`` is inside the
 hashed payload) so changing it can never make an old and a new form match.
@@ -33,7 +40,11 @@ from typing import Any
 from .schemas import TopLevelExtraction
 
 # Bump whenever the field set or a normalization rule changes.
-COMPARISON_VERSION = 1
+# 2: checkboxes counted from top_level's "true" (version 1 compared against
+#    "selected" only, so every box read as unticked and the hash covered the
+#    two dates alone).
+# 3: every field in the custom-model response, not only checkboxes and dates.
+COMPARISON_VERSION = 3
 
 # Exam date is handwritten; issued date is printed by RoadSafetyBC on the notice
 # (same for every copy of one request, different for a new request).
@@ -157,7 +168,9 @@ CHECKBOX_FIELDS: tuple[str, ...] = (
     "visual_field.normal",
 )
 
-_SELECTED = "selected"
+# Ticked-box values: top_level maps DI selection marks (and booleans) to "true";
+# DI's own "selected" is accepted so a raw value still counts.
+_TICKED = frozenset({"true", "selected"})
 _MONTHS = {
     m: i
     for i, m in enumerate(
@@ -207,11 +220,18 @@ def canonical_date(raw: str) -> str | None:
     return _NON_ALNUM.sub("", text)
 
 
-def comparison_fields(top: TopLevelExtraction) -> dict[str, Any]:
-    """The canonicalized comparison subset of the custom-model output.
+def canonical_text(raw: str) -> str | None:
+    """Lowercased, whitespace trimmed and collapsed; empty -> ``None``."""
+    text = " ".join(raw.lower().split())
+    return text or None
 
-    Every key is always present (a missing checkbox is ``False``, a missing
-    date ``None``), so two copies of the same form produce the same shape.
+
+def comparison_fields(top: TopLevelExtraction) -> dict[str, Any]:
+    """The canonicalized comparison set: every field of the custom-model output.
+
+    Checkboxes and the two dates are always present (a missing checkbox is
+    ``False``, a missing date ``None``); any other field is present only when
+    it has a value, so "returned empty" and "not returned" compare equal.
     """
     fields = top.fields
     out: dict[str, Any] = {"version": COMPARISON_VERSION}
@@ -220,7 +240,13 @@ def comparison_fields(top: TopLevelExtraction) -> dict[str, Any]:
         out[key] = canonical_date(field.value) if field else None
     for key in CHECKBOX_FIELDS:
         field = fields.get(key)
-        out[key] = bool(field) and field.value.strip().lower() == _SELECTED
+        out[key] = bool(field) and field.value.strip().lower() in _TICKED
+    for key, field in fields.items():
+        if key in out:
+            continue  # a date or checkbox, already handled
+        text = canonical_text(field.value)
+        if text is not None:
+            out[key] = text
     return out
 
 
