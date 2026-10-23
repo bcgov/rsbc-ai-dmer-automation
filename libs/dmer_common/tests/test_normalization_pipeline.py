@@ -2889,16 +2889,20 @@ def test_analysis_reads_the_models_masked_inputs_list():
     ]
 
 
-def test_masked_field_name_that_cant_be_restored_is_dropped_and_flagged(caplog):
+def test_masked_field_name_that_cant_be_restored_is_dropped_and_flagged(monkeypatch):
     # Dev 2026-10-21: analysis output '"**********_evidence": "**********: true"'
     # was dropped by validation with no trace in the result.
     import json
-    import logging
     from unittest.mock import Mock
 
+    from dmer_common.normalization import pipeline
     from dmer_common.normalization.pipeline import analyze_condition_category
     from dmer_common.normalization.schema import ConditionCategory
 
+    # A mock logger, not caplog: the JSON log setup other tests run turns off
+    # propagation, so caplog sees nothing when the whole suite runs.
+    log = Mock()
+    monkeypatch.setattr(pipeline, "_log", log)
     client = Mock()
     client.complete.return_value = json.dumps(
         {
@@ -2909,12 +2913,11 @@ def test_masked_field_name_that_cant_be_restored_is_dropped_and_flagged(caplog):
             }
         }
     )
-    with caplog.at_level(logging.WARNING):
-        out = analyze_condition_category(
-            client,
-            {"dmer": {"general.other": "frailty"}},
-            ConditionCategory.GENERAL,
-        )
+    out = analyze_condition_category(
+        client,
+        {"dmer": {"general.other": "frailty"}},
+        ConditionCategory.GENERAL,
+    )
     assert "**********" not in out["dmer"]
     assert out["dmer"]["general.general_debility"] is True
     assert out["masked_flags"] == [
@@ -2929,11 +2932,13 @@ def test_masked_field_name_that_cant_be_restored_is_dropped_and_flagged(caplog):
         }
     ]
     logged = [
-        r for r in caplog.records if r.getMessage() == "masked field name dropped"
+        c.kwargs["extra"]
+        for c in log.warning.call_args_list
+        if c.args[0] == "masked field name dropped"
     ]
     assert len(logged) == 1
-    assert logged[0].field == "**********"
-    assert logged[0].value == "true"
+    assert logged[0]["field"] == "**********"
+    assert logged[0]["value"] == "true"
 
 
 def test_masked_field_name_that_is_restored_is_not_flagged():
