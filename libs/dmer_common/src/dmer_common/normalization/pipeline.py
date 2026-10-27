@@ -1889,12 +1889,14 @@ def _is_empty_value(value: object) -> bool:
     return False
 
 
-_PROGRESSIVE_EYE_SOURCE_FIELDS = ("vision.cataracts", "vision.retinopathy")
+_PROGRESSIVE_EYE_SOURCE_FIELDS = ("vision.cataracts",)
 
 
 def flag_progressive_eye_condition(dmer_result: dict) -> dict:
-    """Set ``vision.progressive_eye_condition`` true when cataracts or
-    retinopathy is true. Never clears an existing true."""
+    """Set ``vision.progressive_eye_condition`` true when cataracts is true.
+    Never clears an existing true. (Retinopathy has no field of its own -- it
+    is from an older form and no rule reads it; it is a progressive eye
+    condition directly.)"""
     dmer = dmer_result.get("dmer", dmer_result)
     source = next(
         (f for f in _PROGRESSIVE_EYE_SOURCE_FIELDS if dmer.get(f) is True), None

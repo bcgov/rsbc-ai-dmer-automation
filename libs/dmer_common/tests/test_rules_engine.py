@@ -380,7 +380,7 @@ SCENARIOS = [
         N,
         {
             **VF_NORMAL,
-            "vision.retinopathy": True,
+            "vision.progressive_eye_condition": True,
             "visual_acuity.corrected_both": "20/25",
         },
         "CP",

@@ -1288,14 +1288,13 @@
  {
   "chapter": "vision",
   "section_d": "Retinopathy.",
-  "expected": "vision.retinopathy"
+  "expected": "vision.progressive_eye_condition"
  },
  {
   "chapter": "vision",
   "section_d": "Diabetic retinopathy.",
   "expected": {
    "any_of": [
-    "vision.retinopathy",
     "vision.progressive_eye_condition"
    ]
   }
