@@ -25,7 +25,8 @@
 //   shared with the two orchestrator apps. Timers run as a singleton, so this
 //   app needs few instances (maximumInstanceCount).
 // - The runtime storage account (AzureWebJobsStorage + deployment package
-//   container), reached by connection string like the orchestrators'. The
+//   container), reached by this app's Managed Identity like the
+//   orchestrators'. The
 //   deployment package container must exist before the first publish.
 // - The Postgres role for this app's identity (data-plane SQL -- see
 //   services/reliability/README.md).
@@ -81,13 +82,13 @@ param publicNetworkAccess string = 'Enabled'
 @minLength(1)
 param runtimeStorageAccountName string
 
+@description('Resource group holding runtimeStorageAccountName (rsbc-dmer-ai-optimization-rg in DEV).')
+@minLength(1)
+param runtimeStorageResourceGroupName string
+
 @description('Blob container on runtimeStorageAccountName holding the Flex Consumption deployment package. Must exist before the first publish.')
 @minLength(1)
 param deploymentPackageContainerName string
-
-@secure()
-@description('Connection string (account key) for runtimeStorageAccountName -- used for both AzureWebJobsStorage and DEPLOYMENT_STORAGE_CONNECTION_STRING. Supply at deploy time, never checked into a parameters.json file.')
-param runtimeStorageConnectionString string
 
 @description('Resource ID of the Log Analytics Workspace the Application Insights component reports into.')
 @minLength(1)
@@ -233,8 +234,6 @@ module appInsights 'modules/monitor/application-insights.bicep' = {
 // the resource itself (same as the orchestrators).
 // ---------------------------------------------------------------------------
 var appSettings = {
-  AzureWebJobsStorage: runtimeStorageConnectionString
-  DEPLOYMENT_STORAGE_CONNECTION_STRING: runtimeStorageConnectionString
   APPLICATIONINSIGHTS_CONNECTION_STRING: appInsights.outputs.connectionString
   'AzureWebJobs.OutboxPublisher.Disabled': outboxPublisherEnabled ? 'false' : 'true'
   OUTBOX_PUBLISHER_SCHEDULE: outboxPublisherSchedule
@@ -284,6 +283,7 @@ module functionApp 'modules/compute/function-app.bicep' = {
     virtualNetworkSubnetId: virtualNetworkSubnetId
     publicNetworkAccess: publicNetworkAccess
     storageAccountName: runtimeStorageAccountName
+    storageAccountResourceGroupName: runtimeStorageResourceGroupName
     deploymentPackageContainerName: deploymentPackageContainerName
     pythonVersion: pythonVersion
     maximumInstanceCount: maximumInstanceCount

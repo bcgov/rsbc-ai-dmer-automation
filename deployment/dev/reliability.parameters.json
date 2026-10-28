@@ -23,6 +23,9 @@
     "runtimeStorageAccountName": {
       "value": "rsbcstorage"
     },
+    "runtimeStorageResourceGroupName": {
+      "value": "rsbc-dmer-ai-optimization-rg"
+    },
     "deploymentPackageContainerName": {
       "value": "app-package-func-rsbc-dmer-reliability-dev"
     },

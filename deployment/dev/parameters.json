@@ -22,8 +22,8 @@
     "blobContainerNames": {
       "value": ["raw", "extracted-dmer", "normalized-dmer", "rules"]
     },
-    "allowSharedKeyAccess": { "value": true },
-    "disableLocalAuthDocumentIntelligence": { "value": false },
+    "allowSharedKeyAccess": { "value": false },
+    "disableLocalAuthDocumentIntelligence": { "value": true },
     "costCenter": { "value": "RSBC" },
     "owner": { "value": "RSBC-DMER" },
     "dataClassification": { "value": "protected-b" },

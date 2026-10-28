@@ -15,10 +15,10 @@
     "privateDnsZoneIdPostgres": { "value": "" },
 
     "documentIntelligenceSku": { "value": "S0" },
-    "disableLocalAuthDocumentIntelligence": { "value": false },
+    "disableLocalAuthDocumentIntelligence": { "value": true },
     "storageSkuName": { "value": "Standard_LRS" },
     "blobContainerNames": { "value": ["raw", "extracted-dmer", "normalized-dmer", "rules"] },
-    "allowSharedKeyAccess": { "value": true },
+    "allowSharedKeyAccess": { "value": false },
     "serviceBusSkuName": { "value": "Premium" },
     "postgresAdministratorLogin": { "value": "rsbc_dmer_admin" },
     "postgresSkuName": { "value": "Standard_B2s" },
