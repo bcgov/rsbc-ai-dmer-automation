@@ -9,6 +9,7 @@ from __future__ import annotations
 import io
 import json
 import logging
+from urllib.parse import urlparse
 
 import pytest
 from dmer_common import mercury_client as client_module
@@ -127,7 +128,7 @@ def test_settings_default_from_config(monkeypatch):
     client = MercuryClient(http_get=http)
     page = client.get_page(queue="BOTH")
     assert len(page.records) == 2
-    assert "m.example.com" in http.calls[0]["url"]
+    assert urlparse(http.calls[0]["url"]).hostname == "m.example.com"
 
 
 # ---------------------------------------------------------------------------
