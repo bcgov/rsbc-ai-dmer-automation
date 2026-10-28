@@ -1,0 +1,114 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "environment": {
+      "value": "dev"
+    },
+    "location": {
+      "value": "canadacentral"
+    },
+    "functionAppName": {
+      "value": "func-rsbc-dmer-reliability-dev"
+    },
+    "hostingPlanName": {
+      "value": "asp-rsbc-dmer-reliability-dev-001"
+    },
+    "virtualNetworkSubnetId": {
+      "value": "/subscriptions/e34c5ef8-e2f1-4a67-a94f-29cb158155c2/resourceGroups/f11861-dev-networking/providers/Microsoft.Network/virtualNetworks/f11861-dev-vwan-spoke/subnets/snet-rsbc-dmer-orchestrator-dev"
+    },
+    "privateEndpointSubnetId": {
+      "value": "/subscriptions/e34c5ef8-e2f1-4a67-a94f-29cb158155c2/resourceGroups/f11861-dev-networking/providers/Microsoft.Network/virtualNetworks/f11861-dev-vwan-spoke/subnets/snet-rsbc-dmer-pe-dev-001"
+    },
+    "runtimeStorageAccountName": {
+      "value": "rsbcstorage"
+    },
+    "deploymentPackageContainerName": {
+      "value": "app-package-func-rsbc-dmer-reliability-dev"
+    },
+    "logAnalyticsWorkspaceId": {
+      "value": "/subscriptions/e34c5ef8-e2f1-4a67-a94f-29cb158155c2/resourceGroups/DefaultResourceGroup-CCAN/providers/Microsoft.OperationalInsights/workspaces/DefaultWorkspace-e34c5ef8-e2f1-4a67-a94f-29cb158155c2-CCAN"
+    },
+    "pythonVersion": {
+      "value": "3.12"
+    },
+    "maximumInstanceCount": {
+      "value": 2
+    },
+    "outboxPublisherEnabled": {
+      "value": true
+    },
+    "outboxPublisherSchedule": {
+      "value": "0 */1 * * * *"
+    },
+    "outboxBatchSize": {
+      "value": 20
+    },
+    "outboxMaxAttempts": {
+      "value": 10
+    },
+    "postgresHost": {
+      "value": "psql-rsbc-dmer-shared-dev-001.postgres.database.azure.com"
+    },
+    "postgresPort": {
+      "value": "5432"
+    },
+    "postgresDatabase": {
+      "value": "dmer"
+    },
+    "dlqDrainEnabled": {
+      "value": true
+    },
+    "dlqDrainSchedule": {
+      "value": "0 */5 * * * *"
+    },
+    "dlqRedriveMaxAttempts": {
+      "value": 3
+    },
+    "dlqRedriveBackoffSeconds": {
+      "value": 300
+    },
+    "sweeperEnabled": {
+      "value": true
+    },
+    "sweeperSchedule": {
+      "value": "0 */15 * * * *"
+    },
+    "stageSlaMinutes": {
+      "value": 30
+    },
+    "sweeperMaxRepublish": {
+      "value": 3
+    },
+    "reconciliationEnabled": {
+      "value": true
+    },
+    "reconciliationSchedule": {
+      "value": "0 0 13 * * *"
+    },
+    "mercuryApiBaseUrl": {
+      "value": "https://func-mock-mercury-api-dev.azurewebsites.net/api/mercury/documents"
+    },
+    "mercuryQueue": {
+      "value": "BOTH"
+    },
+    "serviceBusNamespaceFqdn": {
+      "value": "sb-rsbc-dmer-shared-dev-001.servicebus.windows.net"
+    },
+    "serviceBusResourceGroupName": {
+      "value": "rg-rsbc-dmer-dev"
+    },
+    "mercuryWriteApiBaseUrl": {
+      "value": "https://func-mock-mercury-api-dev.azurewebsites.net/api/mercury"
+    },
+    "costCenter": {
+      "value": "RSBC"
+    },
+    "owner": {
+      "value": "RSBC-DMER"
+    },
+    "dataClassification": {
+      "value": "protected-b"
+    }
+  }
+}

@@ -1,0 +1,259 @@
+[
+ {
+  "group": "multiple",
+  "case": "five conditions in one Section D",
+  "section_d": "Epilepsy, last seizure 2021. Type 2 diabetes on insulin. Bilateral cataracts. COPD. Parkinson's disease.",
+  "fields": {},
+  "expected": {
+   "cns.epilepsy": true,
+   "endocrine.diabetes": true,
+   "endocrine.diabetes.insulin": true,
+   "vision.cataracts": true,
+   "respiratory.copd": true,
+   "cns.parkinsons": true
+  }
+ },
+ {
+  "group": "checkbox+D",
+  "case": "diabetes ticked and written",
+  "section_d": "Diabetes, on insulin.",
+  "fields": {
+   "endocrine.diabetes": "selected"
+  },
+  "expected": {
+   "endocrine.diabetes": true,
+   "endocrine.diabetes.insulin": true
+  }
+ },
+ {
+  "group": "checkbox+D",
+  "case": "epilepsy ticked and written",
+  "section_d": "Seizure disorder, last seizure March 2023.",
+  "fields": {
+   "cns.epilepsy": "selected"
+  },
+  "expected": {
+   "cns.epilepsy": true,
+   "cns.seizure_date": "2023-03-31"
+  }
+ },
+ {
+  "group": "cutoff",
+  "case": "Type 2 diabe",
+  "section_d": "Type 2 diabe",
+  "fields": {},
+  "expected": {
+   "endocrine.diabetes": true
+  }
+ },
+ {
+  "group": "cutoff",
+  "case": "Obstructive sleep apn",
+  "section_d": "Obstructive sleep apn",
+  "fields": {},
+  "expected": {
+   "sleep.obstructive_sleep_apnea": true
+  }
+ },
+ {
+  "group": "cutoff",
+  "case": "Bilateral catara",
+  "section_d": "Bilateral catara",
+  "fields": {},
+  "expected": {
+   "vision.cataracts": true
+  }
+ },
+ {
+  "group": "cutoff",
+  "case": "Multiple scler",
+  "section_d": "Hx of multiple scler",
+  "fields": {},
+  "expected": {
+   "cns.multiple_sclerosis": true
+  }
+ },
+ {
+  "group": "misread",
+  "case": "Epilepsv",
+  "section_d": "Epilepsv, controlled on meds.",
+  "fields": {},
+  "expected": {
+   "cns.epilepsy": true
+  }
+ },
+ {
+  "group": "misread",
+  "case": "diabetis mellitis",
+  "section_d": "diabetis mellitis type 2",
+  "fields": {},
+  "expected": {
+   "endocrine.diabetes": true
+  }
+ },
+ {
+  "group": "misread",
+  "case": "cataracls",
+  "section_d": "Bilateral cataracls.",
+  "fields": {},
+  "expected": {
+   "vision.cataracts": true
+  }
+ },
+ {
+  "group": "misread",
+  "case": "C0PD",
+  "section_d": "C0PD, on inhalers.",
+  "fields": {},
+  "expected": {
+   "respiratory.copd": true
+  }
+ },
+ {
+  "group": "misread",
+  "case": "Parkinsns disase",
+  "section_d": "Parkinsns disase.",
+  "fields": {},
+  "expected": {
+   "cns.parkinsons": true
+  }
+ },
+ {
+  "group": "handwritten",
+  "case": "cns.other 'Parkinsn's'",
+  "section_d": "",
+  "fields": {
+   "cns.other": "Parkinsn's"
+  },
+  "expected": {
+   "cns.parkinsons": true
+  }
+ },
+ {
+  "group": "handwritten",
+  "case": "psychiatric.other 'bipolar d/o'",
+  "section_d": "",
+  "fields": {
+   "psychiatric.other": "bipolar d/o"
+  },
+  "expected": {
+   "psychiatric.bipolar": true
+  }
+ },
+ {
+  "group": "handwritten",
+  "case": "NYHA 'lll'",
+  "section_d": "CHF.",
+  "fields": {
+   "cardiovascular.nyha_class": "lll"
+  },
+  "expected": {
+   "cardiovascular.nyha_class": 3
+  }
+ },
+ {
+  "group": "handwritten",
+  "case": "MMSE '24 /30'",
+  "section_d": "Cognitive impairment.",
+  "fields": {
+   "cns.mmse_score": "24 /30"
+  },
+  "expected": {
+   "cns.mmse_score": 24
+  }
+ },
+ {
+  "group": "handwritten",
+  "case": "MMSE blank",
+  "section_d": "Cognitive impairment.",
+  "fields": {},
+  "expected": {
+   "cns.mmse_score": null
+  }
+ },
+ {
+  "group": "alcohol",
+  "case": "written",
+  "section_d": "Seizure during alcohol withdrawal in 2024.",
+  "fields": {},
+  "expected": {
+   "cns.epilepsy": true,
+   "cns.provoked_seizure": true
+  }
+ },
+ {
+  "group": "alcohol",
+  "case": "checkbox",
+  "section_d": "",
+  "fields": {
+   "psychotropic_drugs.alcohol_withdrawal_seizure": "selected"
+  },
+  "expected": {
+   "psychotropic_drugs.alcohol_withdrawal_seizure": true,
+   "cns.epilepsy": true,
+   "cns.provoked_seizure": true
+  }
+ },
+ {
+  "group": "compliance",
+  "case": "psych compliant ticked",
+  "section_d": "Bipolar disorder on lithium.",
+  "fields": {
+   "psychiatric.compliant_with_treatment": "selected"
+  },
+  "expected": {
+   "psychotropic_drugs.perscribed_drugs_compliant": true
+  }
+ },
+ {
+  "group": "no_other",
+  "case": "blank form",
+  "section_d": "",
+  "fields": {},
+  "expected": {
+   "no_other_conditions": true
+  }
+ },
+ {
+  "group": "no_other",
+  "case": "condition written",
+  "section_d": "Hypothyroidism.",
+  "fields": {},
+  "expected": {
+   "no_other_conditions": false
+  }
+ },
+ {
+  "group": "admin",
+  "case": "type AGE",
+  "section_d": "",
+  "fields": {
+   "type": "AGE"
+  },
+  "expected": {
+   "type": "age"
+  }
+ },
+ {
+  "group": "admin",
+  "case": "licence class '100'",
+  "section_d": "",
+  "fields": {
+   "current_license_class": "100"
+  },
+  "expected": {
+   "current_licence_class": "1"
+  }
+ },
+ {
+  "group": "admin",
+  "case": "date ':_._'",
+  "section_d": "Seizure.",
+  "fields": {
+   "cns.seizure_date": ":_._"
+  },
+  "expected": {
+   "cns.seizure_date": ""
+  }
+ }
+]

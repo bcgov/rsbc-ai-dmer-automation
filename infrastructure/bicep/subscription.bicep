@@ -82,6 +82,25 @@ param allowSharedKeyAccess bool = true
 @description('Whether to disable Document Intelligence API-key auth in favour of Azure AD/RBAC only.')
 param disableLocalAuthDocumentIntelligence bool = false
 
+@description('PostgreSQL administrator login username.')
+param postgresAdministratorLogin string = 'rsbc_dmer_admin'
+
+@secure()
+@description('PostgreSQL administrator login password. Supply via a pipeline secret, never a parameters.json file.')
+param postgresAdministratorLoginPassword string
+
+@description('PostgreSQL compute SKU name.')
+param postgresSkuName string = 'Standard_B2s'
+
+@description('PostgreSQL compute SKU tier.')
+param postgresSkuTier string = 'Burstable'
+
+@description('PostgreSQL storage size in GB.')
+param postgresStorageSizeGB int = 32
+
+@description('Optional resource ID of the platform/hub-managed Private DNS Zone for privatelink.postgres.database.azure.com. Leave empty — same confirmed-empty reasoning as other private endpoints in this landing zone.')
+param privateDnsZoneIdPostgres string = ''
+
 @description('Cost center tag value.')
 param costCenter string = 'RSBC'
 
@@ -90,6 +109,39 @@ param owner string = 'RSBC-DMER'
 
 @description('Data classification tag value — DMER content is personal/medical information (FOIPPA).')
 param dataClassification string = 'protected-b'
+
+@description('Resource ID of the shared Container Apps Environment di-processor runs in (other-workstream resource, passed in by ID). Empty = di-processor Container App not deployed.')
+param containerAppsEnvironmentId string = ''
+
+@description('Fully-qualified di-processor container image. Required when containerAppsEnvironmentId is supplied.')
+param diProcessorImage string = ''
+
+@description('Optional container registry login server for image pull via the di-processor Managed Identity. Empty = public image / no registry auth.')
+param containerRegistryServer string = ''
+
+@description('Optional Log Analytics Workspace resource ID for di-processor Container App diagnostics. Empty = diagnostics not attached.')
+param logAnalyticsWorkspaceId string = ''
+
+@description('App Configuration endpoint, e.g. https://appcs-rsbc-dmer-shared-dev-001.azconfig.io (shared resource, other workstream). Required when containerAppsEnvironmentId is supplied.')
+param appConfigurationEndpoint string = ''
+
+@description('Document Intelligence custom DMER model id di-processor analyzes with, e.g. rsbc-ocr-dmer-v9. Required when containerAppsEnvironmentId is supplied.')
+param diCustomModelId string = ''
+
+@description('Optional LLM prompt/schema version recorded on dmer_stage_run.model_version. Empty = recorded as \'unversioned\'.')
+param llmPromptVersion string = ''
+
+@description('External Azure OpenAI (AI Hub) endpoint for di-processor handwriting reconstruction. Required when containerAppsEnvironmentId is supplied.')
+param openAiEndpoint string = ''
+
+@description('Azure OpenAI deployment name, e.g. gpt-5.1. Required when containerAppsEnvironmentId is supplied.')
+param openAiDeployment string = ''
+
+@description('Azure OpenAI API version. Required when containerAppsEnvironmentId is supplied.')
+param openAiApiVersion string = ''
+
+@description('Key Vault secret URI of the external Azure OpenAI API key (the documented Managed Identity exception), e.g. https://kv-rsbc-dmer-dev-001.vault.azure.net/secrets/azure-openai-api-key. Resolved by the Container App via the di-processor identity, which needs Key Vault Secrets User on that vault (granted by the Key Vault workstream). Required when containerAppsEnvironmentId is supplied.')
+param openAiApiKeySecretUri string = ''
 
 var sharedTags = buildTags(environment, 'shared', costCenter, owner, dataClassification)
 var privateEndpointSubnetName = resourceName('snet', 'pe', environment, instance)
@@ -153,9 +205,26 @@ module workload 'main.bicep' = {
     blobContainerNames: blobContainerNames
     allowSharedKeyAccess: allowSharedKeyAccess
     disableLocalAuthDocumentIntelligence: disableLocalAuthDocumentIntelligence
+    postgresAdministratorLogin: postgresAdministratorLogin
+    postgresAdministratorLoginPassword: postgresAdministratorLoginPassword
+    postgresSkuName: postgresSkuName
+    postgresSkuTier: postgresSkuTier
+    postgresStorageSizeGB: postgresStorageSizeGB
+    privateDnsZoneIdPostgres: privateDnsZoneIdPostgres
     costCenter: costCenter
     owner: owner
     dataClassification: dataClassification
+    containerAppsEnvironmentId: containerAppsEnvironmentId
+    diProcessorImage: diProcessorImage
+    containerRegistryServer: containerRegistryServer
+    logAnalyticsWorkspaceId: logAnalyticsWorkspaceId
+    appConfigurationEndpoint: appConfigurationEndpoint
+    diCustomModelId: diCustomModelId
+    llmPromptVersion: llmPromptVersion
+    openAiEndpoint: openAiEndpoint
+    openAiDeployment: openAiDeployment
+    openAiApiVersion: openAiApiVersion
+    openAiApiKeySecretUri: openAiApiKeySecretUri
   }
   dependsOn: [
     appResourceGroup

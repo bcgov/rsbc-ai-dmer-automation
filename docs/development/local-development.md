@@ -1,6 +1,14 @@
 
 # Local Development
 
+> **Note:** the service lists below (which folders are Function-based vs. Container-App-based)
+> reflect the original architecture. Under the revised architecture, `normalizer-service` and
+> `rule-engine` are no longer independently run services (they fold into `workflow-orchestrator` as
+> Durable activities), and a new driver-orchestration service exists with no folder yet — see
+> [`README.md`](README.md#open-questions--decisions-required) for the proposed mapping. `di-processor`
+> (Container App) and `intake-processor` (Functions) are unaffected by this change and the commands
+> below still apply to them as written.
+
 ## Prerequisites
 
 - Python 3.12+

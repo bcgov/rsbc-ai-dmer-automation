@@ -5,6 +5,17 @@
     "AzureWebJobsStorage": "UseDevelopmentStorage=true",
     "APP_CONFIGURATION_ENDPOINT": "",
     "SERVICE_BUS_NAMESPACE_FQDN": "",
-    "POSTGRES_HOST": ""
+    "POSTGRES_HOST": "",
+    "POSTGRES_PORT": "5432",
+    "POSTGRES_DATABASE": "dmer",
+    "POSTGRES_USER": "",
+    "POSTGRES_PASSWORD": "",
+    "POSTGRES_SSLMODE": "require",
+    "DMER_RAW_CONTAINER": "raw",
+    "DMER_POLL_SCHEDULE": "0 */5 * * * *",
+    "MERCURY_API_BASE_URL": "",
+    "MERCURY_API_KEY": "",
+    "MERCURY_QUEUE": "BOTH",
+    "MERCURY_PAGE_SIZE": "50"
   }
 }

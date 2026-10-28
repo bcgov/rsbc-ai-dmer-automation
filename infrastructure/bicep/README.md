@@ -1,7 +1,7 @@
 
 # Infrastructure (Bicep)
 
-Two entry points:
+Three entry points:
 
 - `subscription.bicep` (subscription scope) — creates the application resource group and the
   private-endpoint subnet (+ NSG) inside the existing platform VNet, then deploys `main.bicep`
@@ -9,6 +9,15 @@ Two entry points:
 - `main.bicep` (resource group scope) — the workload itself (Managed Identity, Document
   Intelligence, Storage). Deployable standalone once the resource group and subnet already
   exist.
+- `intake-processor.bicep` (resource group scope) — intake-processor's own Function App +
+  hosting plan + Application Insights. Deployed separately from `main.bicep` because DEV's
+  intake-processor resources already live in a different resource group
+  (`rsbc-dmer-ai-optimization-rg`) than `main.bicep`'s usual target (`rg-rsbc-dmer-dev`) — see
+  the header comment in `intake-processor.bicep` for the full reasoning and what would change if
+  these resource groups are ever consolidated. Uses the same shared `modules/compute/function-app.bicep`
+  and `modules/monitor/application-insights.bicep` that every other service's compute eventually
+  will (docs/architecture/repository-design.md §10) — only the top-level orchestration is
+  separate, not the modules.
 
 Both compose the reusable modules in `modules/`. Per-environment values live in
 `deployment/<env>/parameters.json` (not here) — this folder contains templates only, per
@@ -69,4 +78,22 @@ az deployment sub what-if \
   --location canadacentral \
   --template-file subscription.bicep \
   --parameters ../../deployment/dev/parameters.json
+```
+
+For `intake-processor.bicep` (resource-group scope — no `--location` flag, and the two
+`@secure()` parameters are never in the parameters file, only passed inline from a pipeline
+secret or your own shell):
+
+```bash
+az bicep build --file intake-processor.bicep
+az bicep lint --file intake-processor.bicep
+
+STORAGE_CS=$(az storage account show-connection-string -n rsbcstorage \
+  -g rsbc-dmer-ai-optimization-rg --query connectionString -o tsv)
+
+az deployment group what-if \
+  --resource-group rsbc-dmer-ai-optimization-rg \
+  --template-file intake-processor.bicep \
+  --parameters @../../deployment/dev/intake-processor.parameters.json \
+  --parameters storageAccountConnectionString="$STORAGE_CS" mercuryApiKey="<the real key>"
 ```

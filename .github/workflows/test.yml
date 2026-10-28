@@ -1,20 +1,164 @@
 
 # test.yml
 #
-# Purpose: Run unit + integration tests per service with coverage gates
+# Purpose: Run unit tests per service, with coverage reporting.
 #
-# NOTE: This is a structural placeholder. Implementation (steps, actions,
-# matrix strategy per service) is intentionally deferred until the
-# repository skeleton is approved. See docs/deployment/deployment-guide.md
-# for the intended trigger/approval flow.
+# Covers intake, the shared library, the Normalize activity and the Driver
+# Orchestration (Decision Gateway) and the reliability app (Outbox Publisher). No coverage *gate* (hard
+# failure threshold) yet; add one once there's enough test surface for a
+# threshold to mean something rather than just chasing a number.
 
 name: Test
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'services/intake-processor/**'
+      - 'services/workflow-orchestrator/**'
+      - 'services/driver-orchestrator/**'
+      - 'services/reliability/**'
+      - 'libs/dmer_common/**'
+      - 'database/migrations/**'
+      - 'requirements-dev.txt'
+      - '.github/workflows/test.yml'
+  pull_request:
+    paths:
+      - 'services/intake-processor/**'
+      - 'services/workflow-orchestrator/**'
+      - 'services/driver-orchestrator/**'
+      - 'services/reliability/**'
+      - 'libs/dmer_common/**'
+      - 'database/migrations/**'
+      - 'requirements-dev.txt'
+      - '.github/workflows/test.yml'
   workflow_dispatch: {}
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
 jobs:
-  placeholder:
+  intake-processor:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/intake-processor
     steps:
-      - run: 'echo "TODO: implement Run unit + integration tests per service with coverage gates"'
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Build the dmer_common wheel requirements.txt points at
+        # Not committed (a derived artifact) -- built from libs/dmer_common.
+        run: pip wheel ../../libs/dmer_common --no-deps -w .
+
+      - name: Install service + test dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pytest==8.3.4 pytest-cov==6.0.0
+
+      - name: Run unit tests
+        run: pytest tests/unit --cov=. --cov-report=term-missing -v
+
+  normalization:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/workflow-orchestrator
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres # pragma: allowlist secret -- disposable CI database
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build the dmer_common wheel requirements.txt points at
+        # Not committed (a derived artifact) -- built from libs/dmer_common.
+        run: pip wheel ../../libs/dmer_common --no-deps -w .
+
+      - name: Install runtime and test dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pytest==8.3.4 pytest-cov==6.0.0
+      - name: Test shared source and activity
+        env:
+          PYTHONPATH: ../../libs/dmer_common/src:src
+          NORMALIZATION_TEST_DSN: postgresql+asyncpg://postgres:postgres@localhost:5432/postgres # pragma: allowlist secret
+        run: pytest ../../libs/dmer_common/tests tests/unit --cov=dmer_common --cov=workflow_orchestrator --cov-report=term-missing -v
+      - name: Verify packaged normalization behavior
+        env:
+          PYTHONPATH: src
+        run: pytest ../../libs/dmer_common/tests/test_normalization_pipeline.py tests/unit -q
+
+  driver-orchestrator:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/driver-orchestrator
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres # pragma: allowlist secret -- disposable CI database
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build the dmer_common wheel requirements.txt points at
+        # Not committed (a derived artifact) -- built from libs/dmer_common.
+        run: pip wheel ../../libs/dmer_common --no-deps -w .
+
+      - name: Install runtime and test dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pytest==8.3.4 pytest-cov==6.0.0
+      - name: Unit and integration tests (integration against the CI database)
+        env:
+          PYTHONPATH: src
+          NORMALIZATION_TEST_DSN: postgresql+asyncpg://postgres:postgres@localhost:5432/postgres # pragma: allowlist secret
+        run: pytest tests --cov=driver_orchestrator --cov-report=term-missing -v
+
+  reliability:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/reliability
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build the dmer_common wheel requirements.txt points at
+        # Not committed (a derived artifact) -- built from libs/dmer_common.
+        run: pip wheel ../../libs/dmer_common --no-deps -w .
+
+      - name: Install runtime and test dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pytest==8.3.4 pytest-cov==6.0.0
+      - name: Unit tests
+        # The publisher's database behaviour runs with dmer_common's
+        # integration tests, against the CI database.
+        env:
+          PYTHONPATH: src
+        run: pytest tests --cov=reliability --cov-report=term-missing -v

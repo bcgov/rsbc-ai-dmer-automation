@@ -15,14 +15,19 @@
 #   1. The application resource group (rg-rsbc-dmer-<env> by default) and
 #      EVERYTHING inside it:
 #        - Document Intelligence account (di-rsbc-dmer-shared-<env>-<instance>)
-#        - Storage account + its "raw" blob container
-#          (stdmer<env><region>-<instance>)
+#        - Storage account + its "raw" and "extracted-dmer" blob containers
+#          (stdmer<env><region><instance>)
 #        - Managed identity (id-rsbc-dmer-di-processor-<env>-<instance>)
 #        - Both private endpoints (pe-di-..., pe-st-...)
-#        - The two RBAC role assignments (they're scoped to the DI account
-#          and storage account, both inside this resource group, so they're
+#        - The three RBAC role assignments (scoped to the DI account and the
+#          two containers, all inside this resource group, so they're
 #          removed automatically when those resources are deleted — no
 #          separate role-assignment cleanup is needed)
+#        - The di-processor Container App, if it was deployed (its shared
+#          Container Apps Environment lives elsewhere and is not touched)
+#      Roles other workstreams granted the identity on shared resources
+#      (Key Vault, Service Bus, App Configuration, PostgreSQL) are NOT
+#      removed — see docs/deployment/rollback-guide.md.
 #      This is a single `az group delete` — the safest way to guarantee
 #      nothing inside is missed.
 #

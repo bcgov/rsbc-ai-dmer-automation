@@ -13,7 +13,7 @@ pip install -e ../../libs/dmer_common
 | Module | Purpose |
 |---|---|
 | `dto` | Shared message/data-transfer objects (queue envelopes, domain models) |
-| `messaging` | Service Bus client wrapper, correlation ID + idempotency helpers |
+| `messaging` | Service Bus client wrapper, document ID (tracing) + idempotency helpers |
 | `storage` | Blob Storage client + container path builders |
 | `db` | PostgreSQL access layer, Managed Identity auth |
 | `telemetry` | Structured logging + OpenTelemetry/App Insights setup |
@@ -21,6 +21,9 @@ pip install -e ../../libs/dmer_common
 | `retry` | Standardized retry/circuit-breaker policies |
 | `mercury_client` | Anti-corruption layer for Mercury (Dynamics) integration |
 | `config` | App Configuration / Key Vault reference loader |
+| `doc_intelligence` | Document Intelligence client (Managed Identity, private endpoint) |
+| `openai_client` | External Azure OpenAI client (public endpoint, Key Vault API key) |
+| `rules` | Rule Engine: evaluates a normalized DMER against `rules.json` (GoRules ZEN) and selects the outcome |
 
 No service should import the raw Azure SDKs directly for these concerns — always go
 through `dmer_common` so retry, auth, and telemetry behavior stay consistent.
