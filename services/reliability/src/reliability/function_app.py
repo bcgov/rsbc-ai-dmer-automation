@@ -260,14 +260,31 @@ def report_settings() -> ReportSettings:
     )
 
 
+def _runtime_blob_service():
+    """The runtime storage account (AzureWebJobsStorage). In Azure it's
+    identity-based -- AzureWebJobsStorage__accountName plus this app's Managed
+    Identity, so the account can run with shared key access disabled (see
+    modules/compute/function-app.bicep). Locally, local.settings.json's
+    AzureWebJobsStorage connection string (Azurite) is used instead.
+    """
+    from azure.storage.blob import BlobServiceClient
+
+    account_name = os.environ.get("AzureWebJobsStorage__accountName")
+    if account_name:
+        from azure.identity import DefaultAzureCredential
+
+        return BlobServiceClient(
+            f"https://{account_name}.blob.core.windows.net",
+            credential=DefaultAzureCredential(),
+        )
+    return BlobServiceClient.from_connection_string(os.environ["AzureWebJobsStorage"])
+
+
 def _report_saver():
     """Saves a report blob to RECONCILIATION_CONTAINER on the runtime storage."""
     from azure.core.exceptions import ResourceExistsError
-    from azure.storage.blob import BlobServiceClient
 
-    service = BlobServiceClient.from_connection_string(
-        os.environ["AzureWebJobsStorage"]
-    )
+    service = _runtime_blob_service()
     container = service.get_container_client(
         os.environ.get("RECONCILIATION_CONTAINER", "reconciliation-reports")
     )

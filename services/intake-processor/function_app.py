@@ -152,25 +152,32 @@ def _download_source_pdf(document_url: str) -> bytes:
         return response.read()
 
 
+def _runtime_blob_service() -> BlobServiceClient:
+    """The runtime storage account (AzureWebJobsStorage). In Azure it's
+    identity-based -- AzureWebJobsStorage__accountName plus this app's Managed
+    Identity, so the account can run with shared key access disabled (see
+    modules/compute/function-app.bicep). Locally, local.settings.json's
+    AzureWebJobsStorage connection string (Azurite) is used instead.
+    """
+    account_name = os.environ.get("AzureWebJobsStorage__accountName")
+    if account_name:
+        return BlobServiceClient(
+            f"https://{account_name}.blob.core.windows.net",
+            credential=DefaultAzureCredential(),
+        )
+    return BlobServiceClient.from_connection_string(os.environ["AzureWebJobsStorage"])
+
+
 def _upload_raw_dmer_blob(
     content: bytes, document_guid: str, container_name: str
 ) -> str:
     """Uploads to the deterministic path raw-dmer/{yyyy}/{MM}/{document_guid}.pdf
     (see 01-ingest.md) -- a retry overwrites the same blob rather than
     creating a second copy. Returns the blob's full HTTPS URL.
-
-    Connection-string auth (AzureWebJobsStorage), not Managed Identity,
-    matching this Function App's existing deployment-storage link -- see
-    modules/compute/function-app.bicep's header for why that's deliberate,
-    not yet switched over. dmer_common.storage.BlobClient is Managed-Identity
-    -only, so it doesn't fit here without changing that decision too --
-    not done in this pass.
     """
     now = datetime.now(UTC)
     blob_name = f"{now:%Y}/{now:%m}/{document_guid}.pdf"
-    blob_service = BlobServiceClient.from_connection_string(
-        os.environ["AzureWebJobsStorage"]
-    )
+    blob_service = _runtime_blob_service()
     blob_client = blob_service.get_container_client(container_name).get_blob_client(
         blob_name
     )

@@ -80,20 +80,18 @@ az deployment sub what-if \
   --parameters ../../deployment/dev/parameters.json
 ```
 
-For `intake-processor.bicep` (resource-group scope — no `--location` flag, and the two
-`@secure()` parameters are never in the parameters file, only passed inline from a pipeline
-secret or your own shell):
+For `intake-processor.bicep` (resource-group scope — no `--location` flag, and the
+`@secure()` parameter is never in the parameters file, only passed inline from a pipeline
+secret or your own shell). The Function Apps reach their runtime storage by Managed Identity,
+so no storage connection string is passed:
 
 ```bash
 az bicep build --file intake-processor.bicep
 az bicep lint --file intake-processor.bicep
 
-STORAGE_CS=$(az storage account show-connection-string -n rsbcstorage \
-  -g rsbc-dmer-ai-optimization-rg --query connectionString -o tsv)
-
 az deployment group what-if \
   --resource-group rsbc-dmer-ai-optimization-rg \
   --template-file intake-processor.bicep \
   --parameters @../../deployment/dev/intake-processor.parameters.json \
-  --parameters storageAccountConnectionString="$STORAGE_CS" mercuryApiKey="<the real key>"
+  --parameters mercuryApiKey="<the real key>"
 ```

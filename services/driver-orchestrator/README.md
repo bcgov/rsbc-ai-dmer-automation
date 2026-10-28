@@ -81,7 +81,7 @@ The `DriverDecision` trigger deploys **disabled** (`driverDecisionTriggerEnabled
 signals wait on `driver-decision` until it is switched on.
 
 ```bash
-az deployment group create -g rg-rsbc-dmer-dev   -f infrastructure/bicep/driver-orchestrator.bicep   -p @deployment/dev/driver-orchestrator.parameters.json   -p runtimeStorageConnectionString="$(az storage account show-connection-string -n rsbcstorage -g rsbc-dmer-ai-optimization-rg --query connectionString -o tsv)"   -p mercuryApiKey="$(az functionapp config appsettings list -g rg-rsbc-dmer-dev -n func-rsbc-dmer-workflow-orchestrator-dev --query "[?name=='MERCURY_API_KEY'].value" -o tsv)"
+az deployment group create -g rg-rsbc-dmer-dev   -f infrastructure/bicep/driver-orchestrator.bicep   -p @deployment/dev/driver-orchestrator.parameters.json   -p mercuryApiKey="$(az functionapp config appsettings list -g rg-rsbc-dmer-dev -n func-rsbc-dmer-workflow-orchestrator-dev --query "[?name=='MERCURY_API_KEY'].value" -o tsv)"
 ```
 
 `mercuryApiKey` must be supplied on every deploy: it defaults to empty, and an empty

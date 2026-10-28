@@ -36,8 +36,7 @@ but doesn't create:
 ```bash
 az deployment group create -g rg-rsbc-dmer-dev \
   -f infrastructure/bicep/workflow-orchestrator.bicep \
-  -p @deployment/dev/workflow-orchestrator.parameters.json \
-  -p runtimeStorageConnectionString="$(az storage account show-connection-string -n rsbcstorage -g rsbc-dmer-ai-optimization-rg --query connectionString -o tsv)"
+  -p @deployment/dev/workflow-orchestrator.parameters.json
 ```
 
 Then the Postgres role (once per environment): run `services/intake-processor/create-principal.sql`

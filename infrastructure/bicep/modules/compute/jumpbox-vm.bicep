@@ -80,6 +80,19 @@ resource vm 'Microsoft.Compute/virtualMachines@2023-09-01' = {
     hardwareProfile: {
       vmSize: vmSize
     }
+    // Trusted Launch (matches the live VM) plus encryption at host, so the
+    // temp disk and disk caches are encrypted too (MCSB DP.4). Encryption at
+    // host needs the subscription's Microsoft.Compute/EncryptionAtHost
+    // feature registered, and can only be changed while the VM is
+    // deallocated.
+    securityProfile: {
+      securityType: 'TrustedLaunch'
+      uefiSettings: {
+        secureBootEnabled: true
+        vTpmEnabled: true
+      }
+      encryptionAtHost: true
+    }
     osProfile: {
       computerName: name
       adminUsername: adminUsername
@@ -87,7 +100,9 @@ resource vm 'Microsoft.Compute/virtualMachines@2023-09-01' = {
       linuxConfiguration: {
         // Password auth stays enabled -- RDP needs it. SSH access is
         // expected to go through the AADSSHLoginForLinux extension below
-        // instead, not a traditional SSH keypair.
+        // instead, not a traditional SSH keypair; jumpbox-setup.sh turns
+        // off password login for sshd itself (MCSB IM.6), which doesn't
+        // affect xrdp's own PAM login.
         disablePasswordAuthentication: false
       }
     }
@@ -129,6 +144,22 @@ resource aadSshLogin 'Microsoft.Compute/virtualMachines/extensions@2023-09-01' =
     type: 'AADSSHLoginForLinux'
     typeHandlerVersion: '1.0'
     autoUpgradeMinorVersion: true
+  }
+}
+
+// Boot integrity attestation for the Trusted Launch VM -- what Defender's
+// "Guest Attestation extension should be installed" check looks for
+// (MCSB PV.4).
+resource guestAttestation 'Microsoft.Compute/virtualMachines/extensions@2023-09-01' = {
+  parent: vm
+  name: 'GuestAttestation'
+  location: location
+  properties: {
+    publisher: 'Microsoft.Azure.Security.LinuxAttestation'
+    type: 'GuestAttestation'
+    typeHandlerVersion: '1.0'
+    autoUpgradeMinorVersion: true
+    enableAutomaticUpgrade: true
   }
 }
 

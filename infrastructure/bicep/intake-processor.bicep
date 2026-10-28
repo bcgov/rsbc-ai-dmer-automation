@@ -89,9 +89,13 @@ param privateEndpointSubnetId string
 ])
 param publicNetworkAccess string = 'Enabled'
 
-@description('Name of the existing storage account backing AzureWebJobsStorage and the deployment package container. Referenced, not created — this account is shared with other things, not necessarily in the same resource group this template deploys into (the Function App module only ever builds a blob URL string from this name, never an `existing` resource lookup, so it works regardless of which resource group actually holds it).')
+@description('Name of the existing storage account backing AzureWebJobsStorage and the deployment package container. Referenced, not created — this account is shared with other things, not necessarily in the same resource group this template deploys into (see storageAccountResourceGroupName).')
 @minLength(1)
 param storageAccountName string
+
+@description('Resource group holding storageAccountName (rsbc-dmer-ai-optimization-rg in DEV) -- where the Function App module grants this app\'s identity its runtime storage roles.')
+@minLength(1)
+param storageAccountResourceGroupName string
 
 @description('Blob container holding the Flex Consumption deployment package (created automatically by the tooling on first `func azure functionapp publish`).')
 @minLength(1)
@@ -103,10 +107,6 @@ param logAnalyticsWorkspaceId string
 
 @description('Python runtime version for the Flex Consumption worker.')
 param pythonVersion string = '3.12'
-
-@secure()
-@description('Connection string (account key) for storageAccountName — used for both AzureWebJobsStorage and DEPLOYMENT_STORAGE_CONNECTION_STRING. Supply via a pipeline secret, never checked into a parameters.json file.')
-param storageAccountConnectionString string
 
 @description('Blob container the Ingest Function writes downloaded DMER PDFs into, at raw-dmer/{yyyy}/{MM}/{document_guid}.pdf (see docs/development/stages/01-ingest.md). Renamed from the original architecture\'s "incoming-dmer-queue" to match the revised architecture\'s container name.')
 param dmerRawContainer string = 'raw-dmer'
@@ -188,8 +188,6 @@ module appInsights 'modules/monitor/application-insights.bicep' = {
 // the resource itself (see docs/services/intake-processor.md).
 // ---------------------------------------------------------------------------
 var appSettings = {
-  AzureWebJobsStorage: storageAccountConnectionString
-  DEPLOYMENT_STORAGE_CONNECTION_STRING: storageAccountConnectionString
   APPLICATIONINSIGHTS_CONNECTION_STRING: appInsights.outputs.connectionString
   DMER_RAW_CONTAINER: dmerRawContainer
   DMER_POLL_SCHEDULE: dmerPollSchedule
@@ -230,6 +228,7 @@ module functionApp 'modules/compute/function-app.bicep' = {
     virtualNetworkSubnetId: virtualNetworkSubnetId
     publicNetworkAccess: publicNetworkAccess
     storageAccountName: storageAccountName
+    storageAccountResourceGroupName: storageAccountResourceGroupName
     deploymentPackageContainerName: deploymentPackageContainerName
     pythonVersion: pythonVersion
     appSettings: appSettings

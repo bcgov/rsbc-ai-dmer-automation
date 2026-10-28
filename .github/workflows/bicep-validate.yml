@@ -11,8 +11,7 @@
 #   AZURE_CLIENT_ID        — the GitHub Actions app registration's client ID
 #   AZURE_TENANT_ID         — the Azure AD tenant ID
 #   AZURE_SUBSCRIPTION_ID   — the target subscription ID
-# and two more for the intake-processor template's @secure() parameters:
-#   INTAKE_PROCESSOR_STORAGE_CONNECTION_STRING
+# and one more for the intake-processor template's @secure() parameter:
 #   MERCURY_API_KEY
 # If AZURE_CLIENT_ID isn't set yet, the build+lint job still runs and still
 # gates PRs; only the what-if job is skipped (see its `if:` condition).
@@ -103,5 +102,4 @@ jobs:
             --resource-group rsbc-dmer-ai-optimization-rg \
             --template-file intake-processor.bicep \
             --parameters @../../deployment/dev/intake-processor.parameters.json \
-            --parameters storageAccountConnectionString="${{ secrets.INTAKE_PROCESSOR_STORAGE_CONNECTION_STRING }}" \
             --parameters mercuryApiKey="${{ secrets.MERCURY_API_KEY }}"
