@@ -59,7 +59,6 @@ CONDITIONS: dict[str, dict] = {
         "type": "bool",
         "description": "colour vision, Ishihara",
     },
-    "vision.retinopathy": {"type": "bool", "description": ""},
     "vision.retinal_detachment": {"type": "bool", "description": ""},
     "vision.crao": {"type": "bool", "description": "central retinal artery"},
     "vision.crvo": {"type": "bool", "description": "central retinal vein"},
@@ -70,7 +69,7 @@ CONDITIONS: dict[str, dict] = {
     },
     "vision.progressive_eye_condition": {
         "type": "bool",
-        "description": "macular degeneration, AMD, glaucoma, cataracts, retinopathy, diabetic retinopathy, or another progressive eye disease. Also set deterministically when vision.cataracts or vision.retinopathy is true",
+        "description": "macular degeneration, AMD, glaucoma, cataracts, retinopathy, or another progressive eye disease. Diabetes alone is not a progressive eye condition. Also set deterministically when vision.cataracts is true",
     },
     "vision.other": {"type": "str", "description": ""},
     # --- Cognition ---
