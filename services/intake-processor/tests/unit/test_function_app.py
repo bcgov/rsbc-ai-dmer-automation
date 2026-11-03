@@ -224,6 +224,45 @@ def test_upsert_document_and_driver_extracts_mercury_case_id():
     assert doc_repo.calls[0]["mercury_case_id"] == "C1234"
 
 
+class _FakeBlobServiceClient:
+    def __init__(self, account_url, credential=None):
+        self.account_url = account_url
+        self.credential = credential
+        self.connection_string = None
+
+    @classmethod
+    def from_connection_string(cls, connection_string):
+        client = cls(None)
+        client.connection_string = connection_string
+        return client
+
+
+def test_runtime_blob_service_uses_managed_identity_when_account_name_set(monkeypatch):
+    """In Azure, AzureWebJobsStorage is identity-based (no account key), so
+    the raw-dmer upload must authenticate with the app's identity."""
+    credential = object()
+    monkeypatch.setenv("AzureWebJobsStorage__accountName", "rsbcstorage")
+    monkeypatch.delenv("AzureWebJobsStorage", raising=False)
+    monkeypatch.setattr(fa, "BlobServiceClient", _FakeBlobServiceClient)
+    monkeypatch.setattr(fa, "DefaultAzureCredential", lambda: credential)
+
+    client = fa._runtime_blob_service()
+
+    assert client.account_url == "https://rsbcstorage.blob.core.windows.net"
+    assert client.credential is credential
+    assert client.connection_string is None
+
+
+def test_runtime_blob_service_falls_back_to_connection_string_locally(monkeypatch):
+    monkeypatch.delenv("AzureWebJobsStorage__accountName", raising=False)
+    monkeypatch.setenv("AzureWebJobsStorage", "UseDevelopmentStorage=true")
+    monkeypatch.setattr(fa, "BlobServiceClient", _FakeBlobServiceClient)
+
+    client = fa._runtime_blob_service()
+
+    assert client.connection_string == "UseDevelopmentStorage=true"
+
+
 def test_publish_message_sends_expected_queue_message_id_and_body(monkeypatch):
     """Verifies `_publish_message`'s duplicate-detection contract
     (message-contracts.md): the Service Bus MessageId is the caller-supplied

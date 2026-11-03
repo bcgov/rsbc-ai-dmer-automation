@@ -68,3 +68,47 @@ def test_the_engine_is_disposed_even_when_the_run_fails(monkeypatch):
     except RuntimeError:
         pass
     engine.dispose.assert_awaited_once()
+
+
+class _FakeBlobServiceClient:
+    def __init__(self, account_url, credential=None):
+        self.account_url = account_url
+        self.credential = credential
+        self.connection_string = None
+
+    @classmethod
+    def from_connection_string(cls, connection_string):
+        client = cls(None)
+        client.connection_string = connection_string
+        return client
+
+
+def test_runtime_storage_uses_managed_identity_when_account_name_set(monkeypatch):
+    """In Azure, AzureWebJobsStorage is identity-based (no account key), so
+    the reconciliation report upload must authenticate with the app's identity."""
+    import azure.identity
+    import azure.storage.blob
+
+    credential = object()
+    monkeypatch.setenv("AzureWebJobsStorage__accountName", "rsbcstorage")
+    monkeypatch.delenv("AzureWebJobsStorage", raising=False)
+    monkeypatch.setattr(azure.storage.blob, "BlobServiceClient", _FakeBlobServiceClient)
+    monkeypatch.setattr(azure.identity, "DefaultAzureCredential", lambda: credential)
+
+    client = fa._runtime_blob_service()
+
+    assert client.account_url == "https://rsbcstorage.blob.core.windows.net"
+    assert client.credential is credential
+    assert client.connection_string is None
+
+
+def test_runtime_storage_falls_back_to_connection_string_locally(monkeypatch):
+    import azure.storage.blob
+
+    monkeypatch.delenv("AzureWebJobsStorage__accountName", raising=False)
+    monkeypatch.setenv("AzureWebJobsStorage", "UseDevelopmentStorage=true")
+    monkeypatch.setattr(azure.storage.blob, "BlobServiceClient", _FakeBlobServiceClient)
+
+    client = fa._runtime_blob_service()
+
+    assert client.connection_string == "UseDevelopmentStorage=true"

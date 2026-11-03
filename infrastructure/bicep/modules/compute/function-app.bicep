@@ -18,12 +18,16 @@
 //   Consumption doesn't support the classic Web App VNet integration
 //   subnet delegation, and isn't the same subnet purpose as
 //   modules/networking/subnet.bicep (private-endpoint subnets).
-// - The deployment package lives in a blob container on
-//   `storageAccountName`, referenced via a connection-string-named app
-//   setting rather than Managed Identity — matching how this Function App
-//   is deployed today (`func azure functionapp publish`, remote build).
-//   Switching the deployment storage link to Managed Identity is a
-//   possible follow-up, not done here in order to match live state.
+// - Both the runtime storage (AzureWebJobsStorage) and the deployment
+//   package link (a blob container on `storageAccountName`, written by
+//   `func azure functionapp publish` and read on every cold start) use the
+//   app's Managed Identity, not an account key -- so the storage account
+//   can run with shared key access disabled (MCSB IM.1). This module sets
+//   `AzureWebJobsStorage__accountName` itself and grants the identity
+//   Storage Blob Data Owner on the account (plus queue/table roles when
+//   `durableFunctions` is set -- Durable Functions keeps its task hub in
+//   queues and tables there). Callers must NOT pass AzureWebJobsStorage or
+//   DEPLOYMENT_STORAGE_CONNECTION_STRING in appSettings.
 // - System-assigned identity (not user-assigned) — matches what's live;
 //   the Postgres AAD role for this identity's principal name is created
 //   out-of-band via SQL (data-plane, not an ARM concept — see
@@ -51,6 +55,12 @@ param virtualNetworkSubnetId string
 @minLength(1)
 param storageAccountName string
 
+@description('Resource group holding storageAccountName -- where this module\'s storage role assignments are deployed. Defaults to this deployment\'s own resource group.')
+param storageAccountResourceGroupName string = resourceGroup().name
+
+@description('Whether this is a Durable Functions app: also grants the identity Storage Queue and Table Data Contributor on storageAccountName, which the Durable task hub (control/work-item queues, History/Instances tables) needs.')
+param durableFunctions bool = false
+
 @description('Blob container holding the Flex Consumption deployment package (created automatically by the tooling on first `func azure functionapp publish`, not by this module).')
 @minLength(1)
 param deploymentPackageContainerName string
@@ -71,7 +81,7 @@ param instanceMemoryMB int = 512
 @maxValue(1000)
 param maximumInstanceCount int = 100
 
-@description('Complete app settings for this Function App (name/value pairs) — the caller assembles the full set, including AzureWebJobsStorage, DEPLOYMENT_STORAGE_CONNECTION_STRING, and APPLICATIONINSIGHTS_CONNECTION_STRING, plus every service-specific setting. Passed as one secure object since it typically mixes secrets (connection strings, API keys) with plain config — keeping the whole thing out of deployment-history/what-if diff text is simpler and safer than splitting secret from non-secret per key.')
+@description('App settings for this Function App (name/value pairs) — the caller assembles APPLICATIONINSIGHTS_CONNECTION_STRING plus every service-specific setting; this module adds the identity-based AzureWebJobsStorage__accountName itself. Passed as one secure object since it typically mixes secrets (connection strings, API keys) with plain config — keeping the whole thing out of deployment-history/what-if diff text is simpler and safer than splitting secret from non-secret per key.')
 @secure()
 param appSettings object
 
@@ -84,6 +94,14 @@ param publicNetworkAccess string = 'Enabled'
 
 @description('Extra tags applied only to the Function App site, merged on top of `tags` — not the hosting plan. Use this for the "hidden-link: /app-insights-resource-id" tag Azure\'s own tooling manages: an explicit `tags` on the site resource REPLACES the whole tag set rather than merging with it, so omitting that tag here would silently delete the Portal\'s Application Insights association on the next deployment.')
 param siteExtraTags object = {}
+
+var storageBlobDataOwnerRoleId = 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b'
+var storageQueueDataContributorRoleId = '974c5e8b-45b9-4653-ba55-5f855dd0fb88'
+var storageTableDataContributorRoleId = '0a9a7e1f-b9d0-4cc4-a60d-0319b160aaa3'
+
+var runtimeStorageSettings = {
+  AzureWebJobsStorage__accountName: storageAccountName
+}
 
 resource hostingPlan 'Microsoft.Web/serverfarms@2023-12-01' = {
   name: hostingPlanName
@@ -119,8 +137,7 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
           type: 'blobContainer'
           value: 'https://${storageAccountName}.blob.${environment().suffixes.storage}/${deploymentPackageContainerName}'
           authentication: {
-            type: 'StorageAccountConnectionString'
-            storageAccountConnectionStringName: 'DEPLOYMENT_STORAGE_CONNECTION_STRING'
+            type: 'SystemAssignedIdentity'
           }
         }
       }
@@ -138,12 +155,30 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
       ftpsState: 'FtpsOnly'
       use32BitWorkerProcess: false
       appSettings: [
-        for item in items(appSettings): {
+        for item in items(union(appSettings, runtimeStorageSettings)): {
           name: item.key
           value: string(item.value)
         }
       ]
     }
+  }
+}
+
+module runtimeStorageRoles '../storage/account-role-assignment.bicep' = {
+  name: '${deployment().name}-runtime-storage-roles'
+  scope: resourceGroup(storageAccountResourceGroupName)
+  params: {
+    storageAccountName: storageAccountName
+    principalId: functionApp.identity.principalId
+    roleDefinitionIds: durableFunctions
+      ? [
+          storageBlobDataOwnerRoleId
+          storageQueueDataContributorRoleId
+          storageTableDataContributorRoleId
+        ]
+      : [
+          storageBlobDataOwnerRoleId
+        ]
   }
 }
 

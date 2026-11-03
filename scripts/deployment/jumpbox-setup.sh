@@ -161,4 +161,20 @@ chown -R "${ADMIN_USERNAME}:${ADMIN_USERNAME}" \
 systemctl restart xrdp
 systemctl restart xrdp-sesman
 
+# ---------------------------------------------------------------------------
+# 9. SSH: no password login (MCSB IM.6, "Authentication to Linux machines
+#    should require SSH keys"). SSH goes through AADSSHLoginForLinux
+#    certificates, never the admin password; that password stays for xrdp,
+#    whose PAM login doesn't go through sshd. sshd takes the first value it
+#    reads and cloud-init's 50-cloud-init.conf sets "yes", so this drop-in
+#    sorts ahead of it and the cloud-init line is flipped too.
+# ---------------------------------------------------------------------------
+echo "PasswordAuthentication no" > /etc/ssh/sshd_config.d/00-no-password-auth.conf
+if [ -f /etc/ssh/sshd_config.d/50-cloud-init.conf ]; then
+  sed -i 's/^PasswordAuthentication yes/PasswordAuthentication no/' \
+    /etc/ssh/sshd_config.d/50-cloud-init.conf
+fi
+sshd -t
+systemctl reload ssh
+
 echo "jumpbox-setup.sh complete."

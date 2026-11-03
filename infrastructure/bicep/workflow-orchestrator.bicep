@@ -21,11 +21,12 @@
 //   app's template owns it; created with modules/networking/subnet.bicep
 //   (see deployment/dev/README.md).
 // - The Durable Functions runtime storage account (AzureWebJobsStorage +
-//   deployment package container), reached by connection string like
-//   intake-processor's. Durable Functions' default Azure Storage backend
-//   keeps its control/work-item queues, History/Instances tables and lease
-//   blobs there, so that account needs blob, queue AND table private
-//   endpoints -- not just blob.
+//   deployment package container), reached by this app's Managed Identity
+//   (the Function App module grants it blob, queue and table roles there).
+//   Durable Functions' default Azure Storage backend keeps its
+//   control/work-item queues, History/Instances tables and lease blobs
+//   there, so that account needs blob, queue AND table private endpoints
+//   -- not just blob.
 // - The dmer-extracted / driver-decision queues and the extracted-dmer /
 //   normalized-dmer / rules containers -- owned by main.bicep.
 // - The Postgres role for this app's identity (data-plane SQL -- run
@@ -84,13 +85,13 @@ param publicNetworkAccess string = 'Enabled'
 @minLength(1)
 param runtimeStorageAccountName string
 
+@description('Resource group holding runtimeStorageAccountName (rsbc-dmer-ai-optimization-rg in DEV).')
+@minLength(1)
+param runtimeStorageResourceGroupName string
+
 @description('Blob container on runtimeStorageAccountName holding the Flex Consumption deployment package. Must exist before the first publish.')
 @minLength(1)
 param deploymentPackageContainerName string
-
-@secure()
-@description('Connection string (account key) for runtimeStorageAccountName -- used for both AzureWebJobsStorage and DEPLOYMENT_STORAGE_CONNECTION_STRING. Supply at deploy time, never checked into a parameters.json file.')
-param runtimeStorageConnectionString string
 
 @description('Resource ID of the Log Analytics Workspace the Application Insights component reports into.')
 @minLength(1)
@@ -225,8 +226,6 @@ module appInsights 'modules/monitor/application-insights.bicep' = {
 // the resource itself (same as intake-processor).
 // ---------------------------------------------------------------------------
 var appSettings = {
-  AzureWebJobsStorage: runtimeStorageConnectionString
-  DEPLOYMENT_STORAGE_CONNECTION_STRING: runtimeStorageConnectionString
   APPLICATIONINSIGHTS_CONNECTION_STRING: appInsights.outputs.connectionString
   'AzureWebJobs.StartDocumentOrchestration.Disabled': documentOrchestrationTriggerEnabled ? 'false' : 'true'
   // Trigger binding's identity-based connection (resolved by the host) vs.
@@ -274,6 +273,8 @@ module functionApp 'modules/compute/function-app.bicep' = {
     virtualNetworkSubnetId: virtualNetworkSubnetId
     publicNetworkAccess: publicNetworkAccess
     storageAccountName: runtimeStorageAccountName
+    storageAccountResourceGroupName: runtimeStorageResourceGroupName
+    durableFunctions: true
     deploymentPackageContainerName: deploymentPackageContainerName
     pythonVersion: pythonVersion
     maximumInstanceCount: maximumInstanceCount

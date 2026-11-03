@@ -119,7 +119,7 @@ stay in their DLQs and nothing is swept or reported until they are switched on. 
 grants the app's identity receive and send on the four pipeline queues.
 
 ```bash
-az deployment group create -g rg-rsbc-dmer-dev   -f infrastructure/bicep/reliability.bicep   -p @deployment/dev/reliability.parameters.json   -p runtimeStorageConnectionString="$(az storage account show-connection-string -n rsbcstorage -g rsbc-dmer-ai-optimization-rg --query connectionString -o tsv)"   -p mercuryApiKey="$(az functionapp config appsettings list -g rg-rsbc-dmer-dev -n func-rsbc-dmer-workflow-orchestrator-dev --query "[?name=='MERCURY_API_KEY'].value" -o tsv)"
+az deployment group create -g rg-rsbc-dmer-dev   -f infrastructure/bicep/reliability.bicep   -p @deployment/dev/reliability.parameters.json   -p mercuryApiKey="$(az functionapp config appsettings list -g rg-rsbc-dmer-dev -n func-rsbc-dmer-workflow-orchestrator-dev --query "[?name=='MERCURY_API_KEY'].value" -o tsv)"
 ```
 
 `mercuryApiKey` must be supplied on every deploy (it defaults to empty, and an empty
