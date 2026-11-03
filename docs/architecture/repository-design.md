@@ -1,6 +1,16 @@
 # DMER Intake Automation — Repository & Infrastructure Design
 
-**Source of truth:** `docs/architecture/DMER Intake Automation- Architecture (Azure Cloud) - Explained.docx`
+> **Superseded.** This repository/service design was derived from the *original* architecture. The
+> revised architecture (`DMER_Intake_Automation_Revised_Architecture.docx`, this folder) changes
+> the service boundaries, queue topology, and database schema significantly — see
+> [`docs/development/README.md`](../development/README.md#what-changed-from-the-original-architecture)
+> for the summary of changes and
+> [`docs/development/README.md#open-questions--decisions-required`](../development/README.md#open-questions--decisions-required)
+> for the proposed (not yet confirmed) folder-structure mapping. This document is kept for history
+> and for infrastructure conventions (naming, Bicep module layout, GitOps practices) that are
+> largely still valid; do not treat its service list, queue names, or Bicep module list as current.
+
+**Source of truth (original):** `docs/architecture/DMER Intake Automation- Architecture (Azure Cloud) - Explained.docx`
 
 This document is the enterprise repository and infrastructure design for the DMER Optimization /
 Intake Automation project: a monorepo following Azure best practices, Domain-Driven service
@@ -237,7 +247,6 @@ placeholders these files ship with.
 │   ├── lint.yml                 # ruff/black/mypy + bicep lint
 │   ├── bicep-validate.yml       # az bicep build + what-if
 │   ├── security-scan.yml        # pip-audit, Trivy, gitleaks
-│   ├── pr-validation.yml        # aggregates required checks for branch protection
 │   ├── deploy-dev.yml           # auto-deploy on merge to main
 │   ├── deploy-test.yml          # manual promotion, 1 approver
 │   └── deploy-prod.yml          # manual promotion, 2 approvers + change window
@@ -299,7 +308,7 @@ docs/
 | `shared/resource-group.bicep`               | Creates the application resource group (e.g. `rg-rsbc-dmer-dev`). Subscription-scoped; only used by `subscription.bicep`, never by `main.bicep`.                                                                                                                            |
 | `identity/managed-identity.bicep`           | User-assigned Managed Identity per service, with an optional RBAC role-assignment block (least privilege only).                                                                                                                                                             |
 | `storage/storage-account.bicep`             | StorageV2 account: private endpoint, TLS 1.2 minimum, public network access disabled, lifecycle management policy hook.                                                                                                                                                     |
-| `storage/blob-containers.bicep`             | Creates the seven containers: `raw`, `ocr`, `normalized`, `rules`, `audit`, `failed`, `archive` (§ Storage layout).                                                                                                                                                         |
+| `storage/blob-containers.bicep`             | Creates the pipeline-stage containers: `raw`, `ocr`, `normalized`, `rules`, `audit`, `failed`, `archive`, plus the two di-processor extraction-output containers `extracted-dmer` and `combined-extracted-dmer` (stage-named exception to the singular-noun rule — see §12) (§ Storage layout). |
 | `servicebus/namespace.bicep`                | Service Bus namespace, Premium tier (for private endpoint + availability zone support), private endpoint.                                                                                                                                                                   |
 | `servicebus/queue.bicep`                    | Reusable queue module: max delivery count, lock duration, duplicate-detection window — instantiated for `raw-dmer-queue` and `extracted-dmer-queue`.                                                                                                                        |
 | `servicebus/topic.bicep`                    | Reusable topic + subscription module — instantiated for `dmer-lifecycle-events`.                                                                                                                                                                                            |
@@ -314,7 +323,7 @@ docs/
 | `ai/document-intelligence.bicep`            | Document Intelligence (Cognitive Services) account: private endpoint, public network access disabled. Custom model training remains manual (§13).                                                                                                                           |
 | `compute/container-apps-environment.bicep`  | VNet-integrated Container Apps Environment, linked to the Log Analytics Workspace.                                                                                                                                                                                          |
 | `compute/container-app.bicep`               | Reusable Container App module: image, KEDA Service Bus scale rule, Managed Identity, ingress config — instantiated for `di-processor`, `normalizer-service`, `audit-service`.                                                                                               |
-| `compute/function-app.bicep`                | Reusable Function App module: Premium/Elastic Premium plan (required for VNet integration + no cold start on the orchestrator), Managed Identity, App Insights connection — instantiated for `intake-processor`, `workflow-orchestrator`, `rule-engine`, `post-processing`. |
+| `compute/function-app.bicep`                | Reusable Function App module: Flex Consumption plan (VNet integration; one app per plan), Managed Identity, App Insights connection — instantiated for `intake-processor`, `workflow-orchestrator`, `rule-engine`, `post-processing`. |
 | `shared/naming.bicep`                       | Naming-convention helper functions (generates a resource name from type/service/env/region/instance — see §12).                                                                                                                                                             |
 | `shared/tags.bicep`                         | Standard tag set helper (`environment`, `service`, `costCenter`, `owner`, `dataClassification`).                                                                                                                                                                            |
 
@@ -362,7 +371,8 @@ Existing VNet (platform-provided, referenced only — never created by this repo
       └─ Function App VNet integration (Premium plan, per Function App)
 
 Storage Account
- └─ Blob Containers: raw, ocr, normalized, rules, audit, failed, archive
+ └─ Blob Containers: raw, ocr, normalized, rules, audit, failed, archive,
+                     extracted-dmer, combined-extracted-dmer
 
 Service Bus Namespace
  └─ Queue: raw-dmer-queue (+ native DLQ)
@@ -448,7 +458,9 @@ Pattern (Cloud Adoption Framework-aligned):
 Service Bus entities: `kebab-case`, `<domain>-<stage>-queue` for queues (`raw-dmer-queue`),
 `<domain>-events` for topics (`dmer-lifecycle-events`), `sub-<consumer>` for subscriptions
 (`sub-post-processing`). Blob containers: lowercase singular noun matching pipeline stage
-(`raw`, `ocr`, `normalized`, `rules`, `audit`, `failed`, `archive`). PostgreSQL: `snake_case`,
+(`raw`, `ocr`, `normalized`, `rules`, `audit`, `failed`, `archive`), with the documented
+exception of di-processor's `extracted-dmer` and `combined-extracted-dmer` (stage-named).
+PostgreSQL: `snake_case`,
 plural table names (except `audit_log`, kept singular by log-table convention).
 
 ## 13. Recommended Additions Beyond the Architecture Document
@@ -505,9 +517,11 @@ adjusted to make the repository production-ready:
 
 - Container Apps scale on Service Bus queue/subscription depth via KEDA scale rules (min replicas
 0–1 in dev, ≥1 in prod to avoid cold start on the pipeline's critical path).
-- Function Apps use a Premium/Elastic Premium plan (required for VNet integration and to avoid
-Consumption-plan cold starts on `workflow-orchestrator`, which is latency-sensitive as the
-pipeline's coordination point).
+- Function Apps use the Flex Consumption plan: VNet integration, scale to zero, one app per plan.
+Several Flex apps can share one integration subnet (the Document and Driver orchestrators share
+`snet-rsbc-dmer-orchestrator-<env>`); size it for ~1 IP per instance and cap
+`maximumInstanceCount`. If cold start on `workflow-orchestrator` becomes a problem, add Flex
+always-ready instances before considering Elastic Premium.
 - PostgreSQL Flexible Server sized per environment in `deployment/<env>/parameters.json`; enable
 read replicas only if `audit-service` read load later contends with the write path.
 - Service Bus Premium tier for predictable throughput and private endpoint support at scale.

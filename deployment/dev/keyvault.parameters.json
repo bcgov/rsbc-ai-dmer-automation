@@ -1,0 +1,27 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "name": { "value": "kv-rsbc-dmer-dev-001" },
+    "location": { "value": "canadacentral" },
+    "tags": {
+      "value": {
+        "project": "dmer-automation",
+        "environment": "dev",
+        "service": "shared",
+        "costCenter": "RSBC",
+        "owner": "RSBC-DMER",
+        "dataClassification": "protected-b"
+      }
+    },
+    "privateEndpointName": { "value": "pe-kv-rsbc-dmer-dev-001" },
+    "privateEndpointSubnetId": {
+      "value": "/subscriptions/e34c5ef8-e2f1-4a67-a94f-29cb158155c2/resourceGroups/f11861-dev-networking/providers/Microsoft.Network/virtualNetworks/f11861-dev-vwan-spoke/subnets/snet-rsbc-dmer-pe-dev-001"
+    },
+    "secretReaderPrincipalIds": {
+      "value": [
+        "6cd03094-e4c7-4719-a352-885661209d4b"
+      ]
+    }
+  }
+}

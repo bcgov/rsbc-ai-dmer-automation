@@ -1,0 +1,36 @@
+-- create-principal.sql
+--
+-- Registers intake-processor's Function App managed identity as a
+-- Postgres role mapped to its Microsoft Entra identity. Must be run
+-- against the server's default `postgres` database, NOT the app database
+-- (`dmer`) -- confirmed by testing against a freshly-created server:
+-- Azure's control-plane hook that installs the pgaadauth_* functions only
+-- runs against the server's default database at server-creation time, so a
+-- database created afterward (e.g. via postgresql-database.bicep, in a
+-- later deployment step) doesn't have them. `\c postgres` first if running
+-- this by hand in psql; apply_roles.sh already connects to the right
+-- database for this file vs. roles.sql (which runs against the app
+-- database instead, for the GRANT statements that need to see its tables).
+--
+-- Prerequisite: you must be connected as an actual Microsoft Entra
+-- identity, not the password-based administrator login -- confirmed by
+-- testing: pgaadauth_create_principal internally applies a Postgres
+-- SECURITY LABEL that only a connection already mapped to a Microsoft
+-- Entra principal is allowed to apply ("Microsoft Entra ID authentication
+-- security labels can only be applied by users which are mapped to a
+-- Microsoft Entra ID principal"). That means a Microsoft Entra
+-- Administrator must be configured on the server first (Server -> Settings
+-- -> Authentication -> Microsoft Entra authentication -> add yourself, or
+-- `az postgres flexible-server microsoft-entra-admin create`) before this
+-- file can be run at all -- there is no way to bootstrap the first AAD
+-- principal from the password admin alone. No formal AAD administrator is
+-- configured by any Bicep in this repo (deliberately -- see
+-- infrastructure/bicep/modules/database/postgresql-flexible-server.bicep's
+-- header for why that's a data-plane/environment-specific concern), so
+-- this is a manual one-time step per server.
+--
+-- :function_app_name is single-quoted here (:'function_app_name') because
+-- it's a string-literal argument, not an identifier -- contrast with
+-- roles.sql, where it's used as a role name (double-quoted identifier).
+
+SELECT * FROM pgaadauth_create_principal(:'function_app_name', false, false);

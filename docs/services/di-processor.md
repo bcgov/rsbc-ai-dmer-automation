@@ -1,6 +1,11 @@
 
 # di-processor
 
+> **Superseded.** See [`docs/development/stages/02-extraction.md`](../development/stages/02-extraction.md)
+> and [`docs/development/services/azure-container-apps.md`](../development/services/azure-container-apps.md)
+> for the current (revised architecture) implementation reference — the responsibilities below are
+> from the original architecture.
+
 **Azure compute:** Azure Container Apps (Service Bus-triggered via KEDA scaler)
 
 ## Responsibilities

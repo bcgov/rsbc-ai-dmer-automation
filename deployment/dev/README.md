@@ -20,8 +20,10 @@ deployment guide.
 
 - `vnetResourceGroupName: "f11861-dev-networking"` — confirmed via the platform team/Portal.
 - `privateEndpointSubnetAddressPrefix: "10.46.156.64/27"` — confirmed non-overlapping against
-  the live VNet (`AzureBastionSubnet` at `10.46.156.0/26`, and DEV's pre-existing manually
-  created `snet-rsbc-dmer-ai-optimization-private-endpoints` at `10.46.156.224/27`).
+  the live VNet (`AzureBastionSubnet` at `10.46.156.0/26`). It is DEV's only private-endpoint
+  subnet: the pre-existing manually created `snet-rsbc-dmer-ai-optimization-private-endpoints`
+  (`10.46.156.224/27`) was emptied into it on 2026-10-02 — its private endpoints recreated here,
+  the jump box's NIC moved here — and deleted, to free `10.46.156.192/26` for the orchestrators.
 
 `privateDnsZoneIdCognitiveServices` / `privateDnsZoneIdBlob` are confirmed empty — the platform
 team centrally manages both Private DNS zones and auto-registers private endpoints via a

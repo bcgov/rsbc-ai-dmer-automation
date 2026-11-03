@@ -1,6 +1,12 @@
 
 # post-processing
 
+> **Superseded.** Post-processing is now a Durable Functions activity inside Driver Orchestration
+> (writing the decision and outbox rows transactionally), not a topic-triggered Function. See
+> [`docs/development/stages/08-post-processing.md`](../development/stages/08-post-processing.md)
+> for the current implementation reference — the responsibilities below are from the original
+> architecture.
+
 **Azure compute:** Azure Functions (Service Bus topic-triggered)
 
 ## Responsibilities
