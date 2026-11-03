@@ -4,6 +4,7 @@
   "parameters": {
     "environment": { "value": "dev" },
     "location": { "value": "canadacentral" },
+    "publicNetworkAccess": { "value": "Enabled" },
     "functionAppName": { "value": "func-rsbc-dmer-workflow-orchestrator-dev" },
     "hostingPlanName": { "value": "asp-rsbc-dmer-workflow-orchestrator-dev-001" },
     "virtualNetworkSubnetId": {

@@ -82,12 +82,12 @@ param virtualNetworkSubnetId string
 @minLength(1)
 param privateEndpointSubnetId string
 
-@description('Whether the Function App accepts public-internet traffic (including its SCM deploy endpoint). Enabled lets code be published from outside the VNet; set Disabled per environment to restrict access to the private endpoint only.')
+@description('Whether the Function App accepts public-internet traffic (including its SCM deploy endpoint). Disabled (the default) restricts access to the private endpoint; set Enabled explicitly where code is published from outside the VNet.')
 @allowed([
   'Enabled'
   'Disabled'
 ])
-param publicNetworkAccess string = 'Enabled'
+param publicNetworkAccess string = 'Disabled'
 
 @description('Name of the existing storage account backing AzureWebJobsStorage and the deployment package container. Referenced, not created — this account is shared with other things, not necessarily in the same resource group this template deploys into (see storageAccountResourceGroupName).')
 @minLength(1)

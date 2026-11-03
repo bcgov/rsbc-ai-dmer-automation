@@ -49,6 +49,16 @@ instead, set this to `false` and supply `existingNetworkSecurityGroupId`.
 - `allowSharedKeyAccess: true` matches the currently-working manually-provisioned DEV storage
   account. Plan to flip this to `false` once every consumer (di-processor's managed identity,
   any scripts) authenticates via Azure AD instead of the account key.
+- The four Function Apps' parameter files set `publicNetworkAccess: Enabled` explicitly. The
+  templates default to `Disabled` (private endpoint only), but DEV is deployed by
+  `deploy-dev.yml` from a GitHub-hosted runner, which reaches each app's SCM endpoint over the
+  internet. Set it back to `Disabled` once deployment runs from inside the VNet (a self-hosted
+  runner or the jump box). TEST and PROD get the `Disabled` default.
+- On the shared runtime storage account (`rsbcstorage`), the Blob Data Owner role of
+  workflow-orchestrator, driver-orchestrator and reliability carries an ABAC condition that
+  denies blob read, write and delete in `raw-dmer` (the source DMER PDFs). Only
+  intake-processor, which writes them, has access there; di-processor reads them through its
+  own container-scoped role.
 - This file does *not* hold Azure OpenAI values — that model is hosted in a separate
   AI Hub subscription and consumed via a Key Vault secret (endpoint + API key), not a Bicep
   parameter. See `docs/architecture/repository-design.md` §10, §13. (Not yet relevant — no

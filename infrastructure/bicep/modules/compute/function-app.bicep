@@ -61,6 +61,9 @@ param storageAccountResourceGroupName string = resourceGroup().name
 @description('Whether this is a Durable Functions app: also grants the identity Storage Queue and Table Data Contributor on storageAccountName, which the Durable task hub (control/work-item queues, History/Instances tables) needs.')
 param durableFunctions bool = false
 
+@description('Blob containers on storageAccountName this app must NOT read, write or delete, enforced with an ABAC condition on its Storage Blob Data Owner assignment -- e.g. raw-dmer, which holds the source DMER PDFs on the shared runtime account. Empty = no restriction.')
+param blobDeniedContainerNames array = []
+
 @description('Blob container holding the Flex Consumption deployment package (created automatically by the tooling on first `func azure functionapp publish`, not by this module).')
 @minLength(1)
 param deploymentPackageContainerName string
@@ -85,12 +88,12 @@ param maximumInstanceCount int = 100
 @secure()
 param appSettings object
 
-@description('Whether the Function App (including its SCM/Kudu deploy endpoint) accepts traffic from the public internet. Enabled lets `func azure functionapp publish` deploy from outside the VNet; Disabled restricts all inbound access to the private endpoint. Explicit here so the setting is deterministic rather than left to whatever the platform or a landing-zone policy defaults it to.')
+@description('Whether the Function App (including its SCM/Kudu deploy endpoint) accepts traffic from the public internet. Disabled (the default) restricts all inbound access to the private endpoint; set Enabled explicitly only where code is published from outside the VNet (e.g. a GitHub-hosted runner). Explicit here so the setting is deterministic rather than left to whatever the platform or a landing-zone policy defaults it to.')
 @allowed([
   'Enabled'
   'Disabled'
 ])
-param publicNetworkAccess string = 'Enabled'
+param publicNetworkAccess string = 'Disabled'
 
 @description('Extra tags applied only to the Function App site, merged on top of `tags` — not the hosting plan. Use this for the "hidden-link: /app-insights-resource-id" tag Azure\'s own tooling manages: an explicit `tags` on the site resource REPLACES the whole tag set rather than merging with it, so omitting that tag here would silently delete the Portal\'s Application Insights association on the next deployment.')
 param siteExtraTags object = {}
@@ -98,6 +101,20 @@ param siteExtraTags object = {}
 var storageBlobDataOwnerRoleId = 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b'
 var storageQueueDataContributorRoleId = '974c5e8b-45b9-4653-ba55-5f855dd0fb88'
 var storageTableDataContributorRoleId = '0a9a7e1f-b9d0-4cc4-a60d-0319b160aaa3'
+
+// ABAC condition for the Blob Data Owner assignment: blob data actions are
+// allowed in every container except blobDeniedContainerNames (pattern from
+// Microsoft's "read, write, or delete blobs in named containers" example).
+var blobDeniedClause = join(
+  map(
+    blobDeniedContainerNames,
+    name => '@Resource[Microsoft.Storage/storageAccounts/blobServices/containers:name] StringNotEquals \'${name}\''
+  ),
+  ' AND '
+)
+var blobRoleCondition = empty(blobDeniedContainerNames)
+  ? ''
+  : '((!(ActionMatches{\'Microsoft.Storage/storageAccounts/blobServices/containers/blobs/delete\'}) AND !(ActionMatches{\'Microsoft.Storage/storageAccounts/blobServices/containers/blobs/read\'}) AND !(ActionMatches{\'Microsoft.Storage/storageAccounts/blobServices/containers/blobs/write\'}) AND !(ActionMatches{\'Microsoft.Storage/storageAccounts/blobServices/containers/blobs/add/action\'}) AND !(ActionMatches{\'Microsoft.Storage/storageAccounts/blobServices/containers/blobs/runAsSuperUser/action\'})) OR (${blobDeniedClause}))'
 
 var runtimeStorageSettings = {
   AzureWebJobsStorage__accountName: storageAccountName
@@ -164,21 +181,29 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
   }
 }
 
-module runtimeStorageRoles '../storage/account-role-assignment.bicep' = {
+module runtimeStorageBlobRole '../storage/account-role-assignment.bicep' = {
   name: '${deployment().name}-runtime-storage-roles'
   scope: resourceGroup(storageAccountResourceGroupName)
   params: {
     storageAccountName: storageAccountName
     principalId: functionApp.identity.principalId
-    roleDefinitionIds: durableFunctions
-      ? [
-          storageBlobDataOwnerRoleId
-          storageQueueDataContributorRoleId
-          storageTableDataContributorRoleId
-        ]
-      : [
-          storageBlobDataOwnerRoleId
-        ]
+    roleDefinitionIds: [
+      storageBlobDataOwnerRoleId
+    ]
+    condition: blobRoleCondition
+  }
+}
+
+module runtimeStorageDurableRoles '../storage/account-role-assignment.bicep' = if (durableFunctions) {
+  name: '${deployment().name}-runtime-storage-durable-roles'
+  scope: resourceGroup(storageAccountResourceGroupName)
+  params: {
+    storageAccountName: storageAccountName
+    principalId: functionApp.identity.principalId
+    roleDefinitionIds: [
+      storageQueueDataContributorRoleId
+      storageTableDataContributorRoleId
+    ]
   }
 }
 
