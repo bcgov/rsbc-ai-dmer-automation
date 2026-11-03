@@ -17,10 +17,9 @@ put back by matching it against that input:
   otherwise it stays masked.
 
 Only text from the call's own input is ever used, so nothing the model was
-not already given ends up in the output. Each masked value is logged before
-and after restoration (normalization input carries no PII), so a wrong
-restoration -- or a model that answered a masked input with a made-up value
--- can be traced in the logs.
+not already given ends up in the output. Each masked value is logged with its
+field, mask size and outcome -- never the text itself, which is Section D free
+text or an evidence quote from it (health information under FOIPPA).
 """
 
 import re
@@ -38,10 +37,6 @@ CONTEXT_WORDS = 3
 # Quote marks and "field_name:" labels separate an evidence string into parts
 # that come from different places, so context never crosses them.
 _SEGMENT_SPLIT_RE = re.compile(r'(["“”]|(?:^|(?<=\s))[\w.]+:(?=\s|$))')
-
-
-# Cap on logged text: an Application Insights trace holds about 32 KB.
-MAX_LOGGED_CHARS = 30_000
 
 
 def has_mask(text: str) -> bool:
@@ -317,13 +312,17 @@ def restore_masked(
             restored = _restore_text(restored, own, step, field)
         restored = _restore_text(restored, texts, step, field)
         if masked:
+            # Field name, mask size and outcome only -- never the text before or
+            # after: it is Section D free text or an evidence quote from it.
             _log.info(
                 "masked model output values",
                 extra={
                     "step": step,
                     "field": field,
-                    "masked_value": response[:MAX_LOGGED_CHARS],
-                    "restored_value": restored[:MAX_LOGGED_CHARS],
+                    "mask_length": sum(
+                        len(m.group()) for m in MASK_RE.finditer(response)
+                    ),
+                    "restored": restored != response,
                     "still_masked": has_mask(restored),
                 },
             )
