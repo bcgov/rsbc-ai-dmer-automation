@@ -204,14 +204,17 @@ async def drain_source(
                 )
             await run_sync(receiver.complete_message, message)
             summary.count(result.action)
-        except Exception:  # noqa: BLE001 - one bad message doesn't stop the run
+        except Exception as exc:  # noqa: BLE001 - one bad message doesn't stop the run
             summary.left_in_dlq += 1
-            _log.exception(
+            # Type only, never the message or traceback: it can carry message
+            # bodies or database values.
+            _log.error(
                 "dead letter not drained; left for the next run",
                 extra={
                     "queue": source.queue,
                     "dlq_message_id": dead_letter.message_id,
                     "document_id": dead_letter.document_id,
+                    "error_type": type(exc).__name__,
                 },
             )
             try:

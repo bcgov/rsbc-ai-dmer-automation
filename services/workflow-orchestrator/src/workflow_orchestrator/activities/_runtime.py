@@ -68,7 +68,14 @@ async def get_async_engine() -> AsyncEngine:
         database=database,
     )
     connect_args = {} if sslmode == "disable" else {"ssl": sslmode}
-    return create_async_engine(url, poolclass=NullPool, connect_args=connect_args)
+    return create_async_engine(
+        url,
+        poolclass=NullPool,
+        connect_args=connect_args,
+        # Keep bound values (names, licence numbers, clinical fields) out of
+        # SQLAlchemy error text, which reaches logs and error_detail.
+        hide_parameters=True,
+    )
 
 
 async def poison_as_result(

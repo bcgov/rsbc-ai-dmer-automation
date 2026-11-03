@@ -76,7 +76,14 @@ def build_postgres_engine(settings: Settings, credential: Any) -> AsyncEngine:
         if settings.postgres_sslmode == "disable"
         else {"ssl": settings.postgres_sslmode}
     )
-    engine = create_async_engine(url, poolclass=NullPool, connect_args=connect_args)
+    engine = create_async_engine(
+        url,
+        poolclass=NullPool,
+        connect_args=connect_args,
+        # Keep bound values (names, licence numbers, clinical fields) out of
+        # SQLAlchemy error text, which reaches logs and error_detail.
+        hide_parameters=True,
+    )
 
     if not settings.postgres_password:
 

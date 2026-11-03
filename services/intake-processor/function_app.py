@@ -128,7 +128,14 @@ async def _get_async_engine() -> AsyncEngine:
         database=database,
     )
     connect_args = {} if sslmode == "disable" else {"ssl": sslmode}
-    return create_async_engine(url, poolclass=NullPool, connect_args=connect_args)
+    return create_async_engine(
+        url,
+        poolclass=NullPool,
+        connect_args=connect_args,
+        # Keep bound values (names, licence numbers, clinical fields) out of
+        # SQLAlchemy error text, which reaches logs and error_detail.
+        hide_parameters=True,
+    )
 
 
 def _parse_mercury_datetime(value: str | None) -> datetime | None:
@@ -198,9 +205,10 @@ def _publish_message(queue_name: str, message_id: str, body: dict) -> None:
     system-wide, not per-queue.
     """
     fully_qualified_namespace = os.environ["SERVICE_BUS_NAMESPACE_FQDN"]
-    with ServiceBusClient(
-        fully_qualified_namespace, DefaultAzureCredential()
-    ) as client, client.get_queue_sender(queue_name) as sender:
+    with (
+        ServiceBusClient(fully_qualified_namespace, DefaultAzureCredential()) as client,
+        client.get_queue_sender(queue_name) as sender,
+    ):
         sender.send_messages(ServiceBusMessage(json.dumps(body), message_id=message_id))
 
 
@@ -372,9 +380,13 @@ async def dmer_poll(timer: func.TimerRequest) -> None:
                 return
             try:
                 await _run_poll(engine)
-            except Exception:
-                _log.exception("dmer_poll: poll failed")
-                raise
+            except Exception as exc:  # noqa: BLE001 - logged by type, re-raised
+                # Type only: the message can carry Mercury response or document
+                # data. Re-raised without it so the host still retries.
+                _log.error(
+                    "dmer_poll: poll failed", extra={"error_type": type(exc).__name__}
+                )
+                raise RuntimeError(f"dmer_poll failed: {type(exc).__name__}") from None
             finally:
                 await lock_conn.execute(
                     text("SELECT pg_advisory_unlock(:key)"),
@@ -471,15 +483,21 @@ async def dmer_ingest(msg: func.ServiceBusMessage) -> None:
                 _log.info(
                     "dmer_ingest: succeeded", extra={"raw_blob_url": raw_blob_url}
                 )
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - logged by type, re-raised
+                # Type only, never str(exc): the message can carry the driver's
+                # name or licence number (DB errors) or the document URL.
                 await stage_run_repo.fail(
                     run_id,
                     ended_at=datetime.now(UTC),
                     error_code=type(exc).__name__,
-                    error_detail=str(exc),
+                    error_detail=f"error={type(exc).__name__}",
                 )
-                _log.exception("dmer_ingest: failed")
-                raise
+                _log.error(
+                    "dmer_ingest: failed", extra={"error_type": type(exc).__name__}
+                )
+                raise RuntimeError(
+                    f"dmer_ingest failed: {type(exc).__name__}"
+                ) from None
         finally:
             await engine.dispose()
 

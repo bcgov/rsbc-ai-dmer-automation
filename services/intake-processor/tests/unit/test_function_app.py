@@ -407,3 +407,29 @@ def test_dmer_ingest_logs_error_and_noops_when_document_row_missing(monkeypatch)
     asyncio.run(fa.dmer_ingest(_make_ingest_message()))
 
     assert download_calls == []
+
+
+def test_engine_keeps_bound_values_out_of_error_text(monkeypatch):
+    """SQLAlchemy error text, which reaches logs and error_detail, must not
+    include bound values such as a driver's name or licence number."""
+    monkeypatch.setenv("POSTGRES_HOST", "localhost")
+    monkeypatch.setenv("POSTGRES_USER", "app")
+    monkeypatch.setenv("POSTGRES_PASSWORD", "unused")
+    engine = asyncio.run(fa._get_async_engine())
+    assert engine.sync_engine.hide_parameters is True
+
+    # What the setting does, on an in-memory database: the statement is in the
+    # error text, the value is not.
+    from sqlalchemy import create_engine, text
+
+    sync = create_engine("sqlite://", hide_parameters=True)
+    try:
+        with sync.connect() as conn:
+            conn.execute(
+                text("INSERT INTO missing_table VALUES (:v)"), {"v": "DL1234567"}
+            )
+    except Exception as exc:  # noqa: BLE001
+        assert "missing_table" in str(exc)
+        assert "DL1234567" not in str(exc)
+    else:
+        raise AssertionError("expected an error")
