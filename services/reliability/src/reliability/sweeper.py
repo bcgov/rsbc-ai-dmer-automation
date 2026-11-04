@@ -97,11 +97,16 @@ async def run_sweep(
                     session_id=session_id,
                 ),
             )
-        except Exception:  # noqa: BLE001 - one failed send doesn't stop the run
+        except Exception as exc:  # noqa: BLE001 - one failed send doesn't stop the run
             summary.publish_failures += 1
-            _log.exception(
+            # Type only, never the message or traceback (see dlq_drain).
+            _log.error(
                 "sweeper re-publish failed; the next sweep retries",
-                extra={"document_id": item.document_id, "queue": item.queue.value},
+                extra={
+                    "document_id": item.document_id,
+                    "queue": item.queue.value,
+                    "error_type": type(exc).__name__,
+                },
             )
             continue
         key = item.queue.value

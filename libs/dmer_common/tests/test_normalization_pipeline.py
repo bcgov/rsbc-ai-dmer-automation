@@ -1930,7 +1930,7 @@ def test_asterisks_that_are_really_in_the_source_do_not_loop_forever():
     )
 
 
-def test_mask_logs_record_each_masked_value_before_and_after(monkeypatch):
+def test_mask_logs_record_each_masked_value_without_its_text(monkeypatch):
     from unittest.mock import Mock
 
     from dmer_common.normalization import unmask
@@ -1956,21 +1956,23 @@ def test_mask_logs_record_each_masked_value_before_and_after(monkeypatch):
         ("value", "restored"),
         ("value", "ambiguous"),
     }
-    # and one per masked value, with the text before and after (DMER29: the
-    # evidence was restored but the value next to it was not)
-    values = {e["field"]: e for e in extras if "masked_value" in e}
-    assert values["cardiovascular.pacemaker_evidence"]["masked_value"] == (
-        "Permanent *********."
-    )
-    assert values["cardiovascular.pacemaker_evidence"]["restored_value"] == (
-        "Permanent pacemaker."
-    )
+    # and one per masked value, with its outcome but never its text (it is
+    # Section D free text or an evidence quote from it)
+    values = {
+        c.kwargs["extra"]["field"]: c.kwargs["extra"]
+        for c in calls
+        if c.args[0] == "masked model output values"
+    }
+    assert values["cardiovascular.pacemaker_evidence"]["mask_length"] == 9
+    assert values["cardiovascular.pacemaker_evidence"]["restored"] is True
     assert values["cardiovascular.pacemaker_evidence"]["still_masked"] is False
-    assert values["general.other"]["restored_value"] == "*********"  # ambiguous
+    assert values["general.other"]["restored"] is False  # ambiguous
     assert values["general.other"]["still_masked"] is True
+    logged = repr(extras)
+    assert "Permanent" not in logged and "pacemaker." not in logged
 
 
-def test_model_calls_log_the_input_and_the_raw_and_restored_output(monkeypatch):
+def test_model_calls_log_only_the_shape_of_input_and_output(monkeypatch):
     from unittest.mock import Mock
 
     from dmer_common.normalization import errors
@@ -1980,7 +1982,8 @@ def test_model_calls_log_the_input_and_the_raw_and_restored_output(monkeypatch):
     client = Mock()
     client.complete.return_value = (
         '{"dmer": {"cns.moca_score": 0, '
-        '"cns.moca_score_evidence": "cns.moca_score: \\"*****\\""}}'
+        '"cns.moca_score_evidence": "cns.moca_score: \\"*****\\"", '
+        '"scored 19/30 on MoCA": true}}'
     )
     errors.call_model(
         client,
@@ -1989,15 +1992,58 @@ def test_model_calls_log_the_input_and_the_raw_and_restored_output(monkeypatch):
         accept=lambda response: response,
         step="analyze:cognition",
         source={"dmer": {"cns.moca_score": "19/30"}},
+        known_keys={"dmer", "cns.moca_score", "cns.moca_score_evidence"},
     )
     logged = {c.args[0]: c.kwargs["extra"] for c in log.info.call_args_list}
-    assert (
-        logged["model input"]["model_input"] == '{"dmer": {"cns.moca_score": "19/30"}}'
+    assert logged["model input"]["input_fields"] == ["cns.moca_score"]
+    assert logged["model input"]["input_chars"] > 0
+    assert logged["model output (raw)"]["output_chars"] > 0
+    restored = logged["model output (restored)"]
+    assert restored["output_fields"] == [
+        "cns.moca_score",
+        "cns.moca_score_evidence",
+    ]
+    # a key outside the schema is counted, never logged
+    assert restored["output_field_count"] == 3
+    assert restored["output_unknown_field_count"] == 1
+    # no values, scores or quotes -- only sizes and schema field names
+    assert "19/30" not in repr(logged) and "*****" not in repr(logged)
+
+
+def test_no_document_text_reaches_the_logs_from_a_model_call(monkeypatch):
+    """A Section D sentinel sent to the model and quoted back -- in a value, or
+    in a key the model made up, plain or masked -- must not appear in any log
+    record (health information under FOIPPA)."""
+    from unittest.mock import Mock
+
+    from dmer_common.normalization import errors, unmask
+
+    sentinel = "SENTINEL-SECTION-D-7f3a"
+    log = Mock()
+    monkeypatch.setattr(errors, "_log", log)
+    monkeypatch.setattr(unmask, "_log", log)
+    client = Mock()
+    client.complete.return_value = (
+        '{"dmer": {"cardiovascular.cad": true, '
+        f'"cardiovascular.cad_evidence": "details_of_condition: \\"{sentinel} ******\\"", '
+        f'"{sentinel} angina": "{sentinel} ******", '
+        f'"{sentinel} ******": true}}}}'
     )
-    assert '"cns.moca_score": 0' in logged["model output (raw)"]["model_output"]
-    assert "*****" in logged["model output (raw)"]["model_output"]
-    restored = logged["model output (restored)"]["model_output"]
-    assert "19/30" in restored and "*****" not in restored
+    errors.call_model(
+        client,
+        [{"role": "user", "content": "x"}],
+        temperature=0,
+        accept=lambda response: response,
+        step="analyze:cardiovascular",
+        source={"dmer": {"details_of_condition": f"{sentinel} angina"}},
+        known_keys={"dmer", "cardiovascular.cad", "cardiovascular.cad_evidence"},
+    )
+    records = [
+        repr((c.args, c.kwargs))
+        for c in log.info.call_args_list + log.warning.call_args_list
+    ]
+    assert records, "expected the model call to be logged"
+    assert not any(sentinel in r for r in records)
 
 
 # ---------------------------------------------------------------------------
@@ -2937,8 +2983,10 @@ def test_masked_field_name_that_cant_be_restored_is_dropped_and_flagged(monkeypa
         if c.args[0] == "masked field name dropped"
     ]
     assert len(logged) == 1
-    assert logged[0]["field"] == "**********"
-    assert logged[0]["value"] == "true"
+    # the size of the model's key and the type of its value -- never either
+    assert logged[0]["key_chars"] == 10
+    assert logged[0]["value_type"] == "bool"
+    assert "field" not in logged[0] and "value" not in logged[0]
 
 
 def test_masked_field_name_that_is_restored_is_not_flagged():

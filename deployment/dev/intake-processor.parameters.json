@@ -4,6 +4,7 @@
   "parameters": {
     "environment": { "value": "dev" },
     "location": { "value": "canadacentral" },
+    "publicNetworkAccess": { "value": "Enabled" },
     "functionAppName": { "value": "func-rsbc-dmer-intake-processor-dev" },
     "hostingPlanName": { "value": "asp-rsbc-dmer-intake-processor-dev-001" },
     "virtualNetworkSubnetId": {
