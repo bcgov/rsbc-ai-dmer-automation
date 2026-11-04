@@ -1982,7 +1982,8 @@ def test_model_calls_log_only_the_shape_of_input_and_output(monkeypatch):
     client = Mock()
     client.complete.return_value = (
         '{"dmer": {"cns.moca_score": 0, '
-        '"cns.moca_score_evidence": "cns.moca_score: \\"*****\\""}}'
+        '"cns.moca_score_evidence": "cns.moca_score: \\"*****\\"", '
+        '"scored 19/30 on MoCA": true}}'
     )
     errors.call_model(
         client,
@@ -1991,22 +1992,28 @@ def test_model_calls_log_only_the_shape_of_input_and_output(monkeypatch):
         accept=lambda response: response,
         step="analyze:cognition",
         source={"dmer": {"cns.moca_score": "19/30"}},
+        known_keys={"dmer", "cns.moca_score", "cns.moca_score_evidence"},
     )
     logged = {c.args[0]: c.kwargs["extra"] for c in log.info.call_args_list}
     assert logged["model input"]["input_fields"] == ["cns.moca_score"]
     assert logged["model input"]["input_chars"] > 0
     assert logged["model output (raw)"]["output_chars"] > 0
-    assert logged["model output (restored)"]["output_fields"] == [
+    restored = logged["model output (restored)"]
+    assert restored["output_fields"] == [
         "cns.moca_score",
         "cns.moca_score_evidence",
     ]
+    # a key outside the schema is counted, never logged
+    assert restored["output_field_count"] == 3
+    assert restored["output_unknown_field_count"] == 1
     # no values, scores or quotes -- only sizes and schema field names
     assert "19/30" not in repr(logged) and "*****" not in repr(logged)
 
 
 def test_no_document_text_reaches_the_logs_from_a_model_call(monkeypatch):
-    """A Section D sentinel sent to the model and quoted back must not appear in
-    any log record (health information under FOIPPA)."""
+    """A Section D sentinel sent to the model and quoted back -- in a value, or
+    in a key the model made up, plain or masked -- must not appear in any log
+    record (health information under FOIPPA)."""
     from unittest.mock import Mock
 
     from dmer_common.normalization import errors, unmask
@@ -2018,7 +2025,9 @@ def test_no_document_text_reaches_the_logs_from_a_model_call(monkeypatch):
     client = Mock()
     client.complete.return_value = (
         '{"dmer": {"cardiovascular.cad": true, '
-        f'"cardiovascular.cad_evidence": "details_of_condition: \\"{sentinel} ******\\""}}}}'
+        f'"cardiovascular.cad_evidence": "details_of_condition: \\"{sentinel} ******\\"", '
+        f'"{sentinel} angina": "{sentinel} ******", '
+        f'"{sentinel} ******": true}}}}'
     )
     errors.call_model(
         client,
@@ -2027,6 +2036,7 @@ def test_no_document_text_reaches_the_logs_from_a_model_call(monkeypatch):
         accept=lambda response: response,
         step="analyze:cardiovascular",
         source={"dmer": {"details_of_condition": f"{sentinel} angina"}},
+        known_keys={"dmer", "cardiovascular.cad", "cardiovascular.cad_evidence"},
     )
     records = [
         repr((c.args, c.kwargs))
@@ -2973,9 +2983,10 @@ def test_masked_field_name_that_cant_be_restored_is_dropped_and_flagged(monkeypa
         if c.args[0] == "masked field name dropped"
     ]
     assert len(logged) == 1
-    assert logged[0]["field"] == "**********"
-    assert logged[0]["value_type"] == "bool"  # the type only, never the value
-    assert "value" not in logged[0]
+    # the size of the model's key and the type of its value -- never either
+    assert logged[0]["key_chars"] == 10
+    assert logged[0]["value_type"] == "bool"
+    assert "field" not in logged[0] and "value" not in logged[0]
 
 
 def test_masked_field_name_that_is_restored_is_not_flagged():

@@ -495,15 +495,16 @@ def _masked_field_names(result: object) -> list[dict]:
 
 def _masked_field_name_flags(dropped: list[dict], step: str) -> list[dict]:
     """One ``masked_field_name`` flag (action "dropped") per masked field
-    name, each also logged with the type of the value that was lost -- never
-    the value itself, which can be an evidence quote from Section D."""
+    name, each also logged with the size of the name and the type of the
+    value that was lost -- never the name or the value: both came from the
+    model, and either can carry an evidence quote from Section D."""
     flags = []
     for item in dropped:
         _log.warning(
             "masked field name dropped",
             extra={
                 "step": step,
-                "field": item["field"],
+                "key_chars": len(item["field"]),
                 "value_type": type(item["value"]).__name__,
             },
         )

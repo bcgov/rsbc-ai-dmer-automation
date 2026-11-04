@@ -19,7 +19,9 @@ put back by matching it against that input:
 Only text from the call's own input is ever used, so nothing the model was
 not already given ends up in the output. Each masked value is logged with its
 field, mask size and outcome -- never the text itself, which is Section D free
-text or an evidence quote from it (health information under FOIPPA).
+text or an evidence quote from it (health information under FOIPPA). The field
+is logged only when it is one of the call's known field names: any other key
+came from the model and can itself carry quoted text, so it is left out.
 """
 
 import re
@@ -98,7 +100,9 @@ def _match_run(
     return None, "no_match", 0
 
 
-def _restore_segment(segment: str, texts: list[str], step: str, field: str) -> str:
+def _restore_segment(
+    segment: str, texts: list[str], step: str, field: str | None
+) -> str:
     parts = re.split(r"(\s+)", segment)
     word_slots = [i for i in range(0, len(parts), 2) if parts[i]]
     for position, slot in enumerate(word_slots):
@@ -138,7 +142,7 @@ def _restore_segment(segment: str, texts: list[str], step: str, field: str) -> s
     return "".join(parts)
 
 
-def _restore_text(text: str, texts: list[str], step: str, field: str) -> str:
+def _restore_text(text: str, texts: list[str], step: str, field: str | None) -> str:
     if not has_mask(text) or any(text in source for source in texts):
         return text  # no mask, or the asterisks are really in the source
     pieces = _SEGMENT_SPLIT_RE.split(text)
@@ -186,9 +190,10 @@ def _restore_key(
         "masked model output",
         extra={
             "step": step,
-            # A restored name is a schema field name; an unresolved one is
-            # shown masked -- neither carries document text.
-            "field": restored or key,
+            # A restored name is a schema field name. An unresolved one is the
+            # model's own key, which can carry quoted text: only its size.
+            "field": restored,
+            "key_chars": len(key),
             "location": "key",
             "mask_length": sum(len(m.group()) for m in MASK_RE.finditer(key)),
             "candidates": len(candidates),
@@ -285,6 +290,8 @@ def restore_masked(
     """
     texts = list(texts)
     fields = fields or {}
+    # The field as logged: a known field name, or None for a key the model made up.
+    shown = field if field in known_keys else None
     if isinstance(response, dict):
         restored = {}
         for key, value in response.items():
@@ -309,8 +316,8 @@ def restore_masked(
         own = _field_texts(field, response, fields) if masked else []
         restored = response
         if own:
-            restored = _restore_text(restored, own, step, field)
-        restored = _restore_text(restored, texts, step, field)
+            restored = _restore_text(restored, own, step, shown)
+        restored = _restore_text(restored, texts, step, shown)
         if masked:
             # Field name, mask size and outcome only -- never the text before or
             # after: it is Section D free text or an evidence quote from it.
@@ -318,7 +325,7 @@ def restore_masked(
                 "masked model output values",
                 extra={
                     "step": step,
-                    "field": field,
+                    "field": shown,
                     "mask_length": sum(
                         len(m.group()) for m in MASK_RE.finditer(response)
                     ),

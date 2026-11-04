@@ -39,10 +39,12 @@ def model_object(raw: str) -> dict:
     return value
 
 
-def _shape(value: object) -> dict:
+def _shape(value: object, allowed: Collection[str] | None = None) -> dict:
     """What a model call's input or output looked like, without its content:
-    its size and the schema field names it carried (the keys of the object, or
-    of its "dmer" object). Field names are schema names, never document text."""
+    its size and the field names it carried (the keys of the object, or of its
+    "dmer" object). With *allowed*, only names in that allowlist are listed and
+    the rest are only counted: keys in a model response are model-controlled
+    and can carry quoted Section D text, so they are not safe to log as-is."""
     text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
     obj = value
     if isinstance(value, str):
@@ -52,8 +54,14 @@ def _shape(value: object) -> dict:
             obj = None
     if isinstance(obj, dict) and isinstance(obj.get("dmer"), dict):
         obj = obj["dmer"]
-    fields = sorted(str(k) for k in obj) if isinstance(obj, dict) else []
-    return {"chars": len(text), "field_count": len(fields), "fields": fields[:200]}
+    keys = [str(k) for k in obj] if isinstance(obj, dict) else []
+    fields = sorted(k for k in keys if allowed is None or k in allowed)
+    return {
+        "chars": len(text),
+        "field_count": len(keys),
+        "unknown_field_count": len(keys) - len(fields),
+        "fields": fields[:200],
+    }
 
 
 def call_model[T](
@@ -78,7 +86,8 @@ def call_model[T](
     names it may return) -- see :mod:`.unmask`.
 
     Only the shape of the input sent and of each response is logged (size and
-    schema field names), never their content: the input carries Section D
+    field names -- for a response, only those in *known_keys*; any other key
+    is counted, never logged), never their content: the input carries Section D
     free text, diagnoses, dates and scores, and the output quotes them as
     evidence -- health information about an identifiable person (FOIPPA), even
     without a name or licence number.
@@ -108,12 +117,15 @@ def call_model[T](
             response = restore_masked(
                 model_object(raw), texts, known_keys, step=step, fields=fields
             )
+            output = _shape(response, known_keys)
             _log.info(
                 "model output (restored)",
                 extra={
                     "step": step,
                     "attempt": attempt,
-                    "output_fields": _shape(response)["fields"],
+                    "output_field_count": output["field_count"],
+                    "output_unknown_field_count": output["unknown_field_count"],
+                    "output_fields": output["fields"],
                 },
             )
             return accept(response)
