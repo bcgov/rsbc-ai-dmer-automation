@@ -71,7 +71,6 @@ from .schema import (
     ConditionCategory,
 )
 from .unmask import (
-    MAX_LOGGED_CHARS,
     evidence_labels,
     has_mask,
     masked_evidence_labels,
@@ -496,17 +495,17 @@ def _masked_field_names(result: object) -> list[dict]:
 
 def _masked_field_name_flags(dropped: list[dict], step: str) -> list[dict]:
     """One ``masked_field_name`` flag (action "dropped") per masked field
-    name, each also logged with the value that was lost."""
+    name, each also logged with the size of the name and the type of the
+    value that was lost -- never the name or the value: both came from the
+    model, and either can carry an evidence quote from Section D."""
     flags = []
     for item in dropped:
         _log.warning(
             "masked field name dropped",
             extra={
                 "step": step,
-                "field": item["field"],
-                "value": json.dumps(item["value"], ensure_ascii=False)[
-                    :MAX_LOGGED_CHARS
-                ],
+                "key_chars": len(item["field"]),
+                "value_type": type(item["value"]).__name__,
             },
         )
         flags.append(

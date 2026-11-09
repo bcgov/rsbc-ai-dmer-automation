@@ -7,7 +7,7 @@ from collections.abc import Callable, Collection
 
 from ..openai_client import OpenAIClient
 from ..telemetry import get_logger
-from .unmask import MAX_LOGGED_CHARS, restore_masked, source_fields, source_strings
+from .unmask import restore_masked, source_fields, source_strings
 
 _log = get_logger(__name__)
 
@@ -39,9 +39,29 @@ def model_object(raw: str) -> dict:
     return value
 
 
-def _text(value: object) -> str:
+def _shape(value: object, allowed: Collection[str] | None = None) -> dict:
+    """What a model call's input or output looked like, without its content:
+    its size and the field names it carried (the keys of the object, or of its
+    "dmer" object). With *allowed*, only names in that allowlist are listed and
+    the rest are only counted: keys in a model response are model-controlled
+    and can carry quoted Section D text, so they are not safe to log as-is."""
     text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
-    return text[:MAX_LOGGED_CHARS]
+    obj = value
+    if isinstance(value, str):
+        try:
+            obj = json.loads(value)
+        except ValueError:
+            obj = None
+    if isinstance(obj, dict) and isinstance(obj.get("dmer"), dict):
+        obj = obj["dmer"]
+    keys = [str(k) for k in obj] if isinstance(obj, dict) else []
+    fields = sorted(k for k in keys if allowed is None or k in allowed)
+    return {
+        "chars": len(text),
+        "field_count": len(keys),
+        "unknown_field_count": len(keys) - len(fields),
+        "fields": fields[:200],
+    }
 
 
 def call_model[T](
@@ -65,12 +85,24 @@ def call_model[T](
     from *source* (the input this call sent) and *known_keys* (the field
     names it may return) -- see :mod:`.unmask`.
 
-    The input sent, the raw response and the restored response are logged
-    (normalization input carries no PII), so each step's values can be traced.
+    Only the shape of the input sent and of each response is logged (size and
+    field names -- for a response, only those in *known_keys*; any other key
+    is counted, never logged), never their content: the input carries Section D
+    free text, diagnoses, dates and scores, and the output quotes them as
+    evidence -- health information about an identifiable person (FOIPPA), even
+    without a name or licence number.
     """
     texts = source_strings(source)
     fields = source_fields(source)
-    _log.info("model input", extra={"step": step, "model_input": _text(source)})
+    shape = _shape(source)
+    _log.info(
+        "model input",
+        extra={
+            "step": step,
+            "input_chars": shape["chars"],
+            "input_fields": shape["fields"],
+        },
+    )
     for attempt in range(1, MODEL_ATTEMPTS + 1):
         raw = openai.complete(
             messages=messages,
@@ -79,18 +111,21 @@ def call_model[T](
         )
         _log.info(
             "model output (raw)",
-            extra={"step": step, "attempt": attempt, "model_output": _text(raw)},
+            extra={"step": step, "attempt": attempt, "output_chars": len(raw)},
         )
         try:
             response = restore_masked(
                 model_object(raw), texts, known_keys, step=step, fields=fields
             )
+            output = _shape(response, known_keys)
             _log.info(
                 "model output (restored)",
                 extra={
                     "step": step,
                     "attempt": attempt,
-                    "model_output": _text(response),
+                    "output_field_count": output["field_count"],
+                    "output_unknown_field_count": output["unknown_field_count"],
+                    "output_fields": output["fields"],
                 },
             )
             return accept(response)

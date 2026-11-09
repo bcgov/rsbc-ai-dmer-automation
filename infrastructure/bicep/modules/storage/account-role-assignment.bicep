@@ -24,6 +24,9 @@ param roleDefinitionIds array
 ])
 param principalType string = 'ServicePrincipal'
 
+@description('Optional ABAC condition (conditionVersion 2.0) applied to every assignment made here. Empty = none.')
+param condition string = ''
+
 resource storageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' existing = {
   name: storageAccountName
 }
@@ -36,6 +39,8 @@ resource assignments 'Microsoft.Authorization/roleAssignments@2022-04-01' = [
       principalId: principalId
       principalType: principalType
       roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roleDefinitionId)
+      condition: empty(condition) ? null : condition
+      conditionVersion: empty(condition) ? null : '2.0'
     }
   }
 ]

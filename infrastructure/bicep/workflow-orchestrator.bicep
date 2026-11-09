@@ -74,12 +74,12 @@ param virtualNetworkSubnetId string
 @minLength(1)
 param privateEndpointSubnetId string
 
-@description('Whether the Function App accepts public-internet traffic (including its SCM deploy endpoint). Enabled lets code be published from outside the VNet.')
+@description('Whether the Function App accepts public-internet traffic (including its SCM deploy endpoint). Disabled (the default) restricts access to the private endpoint; set Enabled explicitly where code is published from outside the VNet.')
 @allowed([
   'Enabled'
   'Disabled'
 ])
-param publicNetworkAccess string = 'Enabled'
+param publicNetworkAccess string = 'Disabled'
 
 @description('Name of the existing storage account backing AzureWebJobsStorage (Durable Functions state) and the deployment package container.')
 @minLength(1)
@@ -88,6 +88,11 @@ param runtimeStorageAccountName string
 @description('Resource group holding runtimeStorageAccountName (rsbc-dmer-ai-optimization-rg in DEV).')
 @minLength(1)
 param runtimeStorageResourceGroupName string
+
+@description('Containers on the runtime storage account this app must not read, write or delete (ABAC condition on its Blob Data Owner role). raw-dmer holds the source DMER PDFs, which only intake-processor writes and di-processor reads.')
+param runtimeStorageDeniedContainers array = [
+  'raw-dmer'
+]
 
 @description('Blob container on runtimeStorageAccountName holding the Flex Consumption deployment package. Must exist before the first publish.')
 @minLength(1)
@@ -274,6 +279,7 @@ module functionApp 'modules/compute/function-app.bicep' = {
     publicNetworkAccess: publicNetworkAccess
     storageAccountName: runtimeStorageAccountName
     storageAccountResourceGroupName: runtimeStorageResourceGroupName
+    blobDeniedContainerNames: runtimeStorageDeniedContainers
     durableFunctions: true
     deploymentPackageContainerName: deploymentPackageContainerName
     pythonVersion: pythonVersion
