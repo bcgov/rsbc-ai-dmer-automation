@@ -178,31 +178,37 @@ def convert(pdf: bytes) -> str:
         ]
         chapter = ""
         for number, page in enumerate(doc.pages, start=1):
-            tables = _rule_tables(page)
-            if not tables:
-                parts.append(f"=== Page {number} ===")
-                parts += _lines(page.extract_text())
+            # Free each page once read: pdfplumber otherwise keeps every
+            # page's objects (build() of the 42-page PDF peaked at ~180 MB;
+            # ~25 MB with pages closed -- workers have 512 MB).
+            try:
+                tables = _rule_tables(page)
+                if not tables:
+                    parts.append(f"=== Page {number} ===")
+                    parts += _lines(page.extract_text())
+                    parts.append("")
+                    continue
+                for table in tables:
+                    title, rules = _table(table)
+                    chapter = title or chapter
+                    parts.append(f"=== Page {number} | {chapter} ===")
+                    for rule in rules:
+                        parts.append(f"- Condition: {rule['condition']}")
+                        parts.append("  Class 5-8:")
+                        parts += [f"    * {x}" for x in rule["class58"]] or [
+                            "    * (none listed)"
+                        ]
+                        parts.append(f"  {HIGH}:")
+                        parts += [f"    * {x}" for x in rule["high"]] or [
+                            "    * (none listed)"
+                        ]
+                notes = _text_outside(page, [t.bbox for t in tables])
+                if notes:
+                    parts.append("Notes on this page:")
+                    parts += [f"  {n}" for n in notes]
                 parts.append("")
-                continue
-            for table in tables:
-                title, rules = _table(table)
-                chapter = title or chapter
-                parts.append(f"=== Page {number} | {chapter} ===")
-                for rule in rules:
-                    parts.append(f"- Condition: {rule['condition']}")
-                    parts.append("  Class 5-8:")
-                    parts += [f"    * {x}" for x in rule["class58"]] or [
-                        "    * (none listed)"
-                    ]
-                    parts.append(f"  {HIGH}:")
-                    parts += [f"    * {x}" for x in rule["high"]] or [
-                        "    * (none listed)"
-                    ]
-            notes = _text_outside(page, [t.bbox for t in tables])
-            if notes:
-                parts.append("Notes on this page:")
-                parts += [f"  {n}" for n in notes]
-            parts.append("")
+            finally:
+                page.close()
     return "\n".join(parts)
 
 
@@ -316,55 +322,58 @@ def _pdf_pages(doc) -> dict[int, dict[str, list[str]]]:
     """Per PDF page: all words, and words by the column they sit in."""
     pages = {}
     for number, page in enumerate(doc.pages, start=1):
-        words = _page_words(page)
-        res = _empty_page()
-        tables = _rule_tables(page)
-        if not tables:
-            for word in words:
-                res["all"] += _words(word["text"])
-            pages[number] = res
-            continue
-        table = tables[0]
-        rows = table.extract()
-        first = next(
-            (
-                i
-                for i, r in enumerate(rows)
-                if any(
-                    _ACTION.match(
-                        (r[j] or "").split()[-1] if (r[j] or "").strip() else ""
+        try:
+            words = _page_words(page)
+            res = _empty_page()
+            tables = _rule_tables(page)
+            if not tables:
+                for word in words:
+                    res["all"] += _words(word["text"])
+                pages[number] = res
+                continue
+            table = tables[0]
+            rows = table.extract()
+            first = next(
+                (
+                    i
+                    for i, r in enumerate(rows)
+                    if any(
+                        _ACTION.match(
+                            (r[j] or "").split()[-1] if (r[j] or "").strip() else ""
+                        )
+                        for j in (2, 4)
                     )
-                    for j in (2, 4)
-                )
-            ),
-            None,
-        )
-        header_bottom = (
-            table.rows[first].bbox[1] if first is not None else table.bbox[3]
-        )
-        # The five columns' left edges, from the first data row's cells.
-        data_row = table.rows[first] if first is not None else table.rows[-1]
-        edges = [cell[0] for cell in data_row.cells if cell]
-        if len(edges) < _RULE_TABLE_COLUMNS:
-            edges = sorted({round(c[0], 1) for c in table.cells if c})[
-                :_RULE_TABLE_COLUMNS
-            ]
+                ),
+                None,
+            )
+            header_bottom = (
+                table.rows[first].bbox[1] if first is not None else table.bbox[3]
+            )
+            # The five columns' left edges, from the first data row's cells.
+            data_row = table.rows[first] if first is not None else table.rows[-1]
+            edges = [cell[0] for cell in data_row.cells if cell]
+            if len(edges) < _RULE_TABLE_COLUMNS:
+                edges = sorted({round(c[0], 1) for c in table.cells if c})[
+                    :_RULE_TABLE_COLUMNS
+                ]
 
-        for word in words:
-            tokens = _words(word["text"])
-            res["all"] += tokens
-            if not _inside(word, table.bbox):
-                res["notes"] += tokens
-                continue
-            if (word["top"] + word["bottom"]) / 2 < header_bottom:
-                res["header"] += tokens
-                continue
-            col = _column((word["x0"] + word["x1"]) / 2, edges)
-            key = ("condition", "class58", "class58", "high", "high")[col]
-            res[key] += tokens
-            if col in (2, 4) and _ACTION.match(word["text"].strip()):
-                res[f"{key}_actions"].append(word["text"].strip())
-        pages[number] = res
+            for word in words:
+                tokens = _words(word["text"])
+                res["all"] += tokens
+                if not _inside(word, table.bbox):
+                    res["notes"] += tokens
+                    continue
+                if (word["top"] + word["bottom"]) / 2 < header_bottom:
+                    res["header"] += tokens
+                    continue
+                col = _column((word["x0"] + word["x1"]) / 2, edges)
+                key = ("condition", "class58", "class58", "high", "high")[col]
+                res[key] += tokens
+                if col in (2, 4) and _ACTION.match(word["text"].strip()):
+                    res[f"{key}_actions"].append(word["text"].strip())
+            pages[number] = res
+        finally:
+            page.close()
     return pages
 
 
