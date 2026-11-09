@@ -4,6 +4,8 @@ azure-functions-durable
 sqlalchemy[asyncio]>=2.0,<2.1
 asyncpg
 azure-identity
+# dmer_common[triage]: the triage LLM converts the procedures PDF to text.
+pdfplumber==0.11.9  # see libs/dmer_common/pyproject.toml [triage]
 # dmer_common has no PyPI/registry presence (private, unpublished) -- Azure's
 # remote build (Oryx) only sees this directory's own contents, so the wheel
 # travels alongside the function code itself rather than being installed

@@ -26,6 +26,14 @@ dependencies = [
 dev = [
     "pytest>=8",
 ]
+# The triage LLM's policy text (dmer_common.triage.policy_text): only the
+# workflow orchestrator converts the procedures PDF, so the other services
+# don't install pdfplumber. MIT licensed (PyMuPDF, used in the POC, is AGPL).
+# 0.11.9: 0.11.10 requires Pillow>=12.2, and di-processor pins Pillow<12; the
+# converted text is identical with both.
+triage = [
+    "pdfplumber==0.11.9",
+]
 
 [build-system]
 requires = ["setuptools>=68"]
