@@ -68,7 +68,7 @@ def call_model[T](
     openai: OpenAIClient,
     messages: list[dict],
     *,
-    temperature: float,
+    temperature: float | None,
     accept: Callable[[dict], T],
     step: str,
     source: object = None,
@@ -84,6 +84,9 @@ def call_model[T](
     Before that, words the deployment masked with asterisks are restored
     from *source* (the input this call sent) and *known_keys* (the field
     names it may return) -- see :mod:`.unmask`.
+
+    *temperature* None leaves it to the deployment's default (the triage
+    LLM, as validated in the POC).
 
     Only the shape of the input sent and of each response is logged (size and
     field names -- for a response, only those in *known_keys*; any other key
@@ -107,7 +110,7 @@ def call_model[T](
         raw = openai.complete(
             messages=messages,
             response_format={"type": "json_object"},
-            temperature=temperature,
+            **({} if temperature is None else {"temperature": temperature}),
         )
         _log.info(
             "model output (raw)",
