@@ -161,6 +161,13 @@ param triagePolicyPdfPath string = 'active/triage_sort_procedures.pdf'
 @description('Container this app writes the text generated from the procedures PDF to (<pdf sha256>.txt). Must exist (main.bicep blobContainerNames).')
 param triagePolicyContainer string = 'triage-policy'
 
+@description('What decides a document in the Rule Engine activity: triage_llm (the triage LLM against the procedures PDF) or rules (rules.json with GoRules ZEN, kept to switch back). Either writes the same rule_evaluation row.')
+@allowed([
+  'triage_llm'
+  'rules'
+])
+param decisionEngine string = 'triage_llm'
+
 @description('Mercury driver-by-licence API base URL (Driver Lookup).')
 param mercuryDriverLicenceApiBaseUrl string = ''
 
@@ -259,6 +266,7 @@ var appSettings = {
   RULES_ACTIVE_PATH: rulesActivePath
   TRIAGE_POLICY_PDF_PATH: triagePolicyPdfPath
   TRIAGE_POLICY_CONTAINER: triagePolicyContainer
+  DECISION_ENGINE: decisionEngine
   MERCURY_DRIVER_LICENCE_API_BASE_URL: mercuryDriverLicenceApiBaseUrl
   MERCURY_API_KEY: mercuryApiKey
   MERCURY_COUNTED_DOCUMENT_TYPES: mercuryCountedDocumentTypes

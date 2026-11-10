@@ -5,8 +5,42 @@ Data model: `../data-model.md`.
 
 ## Purpose
 
-Loads the active `rules.json`, applies it to the normalized document, and receives a list of
-candidate outcomes. A validation step then selects the highest-priority outcome.
+Evaluates the normalized document and receives a list of candidate outcomes. A validation step
+then selects the highest-priority outcome.
+
+## Decision engine
+
+`DECISION_ENGINE` chooses what produces the candidates:
+
+| Value | Candidates from |
+|---|---|
+| `triage_llm` (default) | The triage LLM (`dmer_common.triage`): one model call that reads the normalized DMER and the Triage Sort Procedures, as text generated from the PDF. Each condition it marks `APPLIED` is a candidate; a `POLICY_GAP`, or the model asking for human review, is an `IN` candidate. |
+| `rules` | The active `rules.json`, evaluated in-process with GoRules ZEN (`dmer_common.rules`) — kept so the pipeline can switch back by changing the setting. |
+
+Everything after the candidates is shared: the same `select_outcome()` picks the outcome (highest
+action wins; FIT letters combine; no candidate is `IN`; a clean pass with a driving-record row is
+`IN`), and the same unit of work records it. The orchestration, `rule_evaluation`, the `RULES`
+stage run, `RULES_APPLIED` and the Decision Gateway do not change with the engine.
+
+The triage LLM is the POC's (`docs/research/llm-triage-poc/`), unchanged: the same prompt (only
+the procedures version is filled in from the PDF), the same request (identity fields and their
+evidence removed, date of birth sent as age at exam, the diabetes-treatment flag only with
+diabetes, content parts with the checklist of true conditions), and the deployment's default
+temperature. Its driving-record check uses the same fields as the `rules.json` rows, not the
+model's view.
+
+### The procedures text
+
+The PDF is maintained in the `rules` container (`active/triage_sort_procedures.pdf`), like
+`rules.json`, and is read-only to the pipeline. Per document the activity reads only the PDF's
+ETag. When the PDF is replaced, its text is generated once — converted with pdfplumber and
+verified against the PDF word by word and column by column (`dmer_common.triage.policy_text`) —
+and stored in the `triage-policy` container as `<pdf sha256>.txt`, where every other worker reads
+it. A text that does not verify is never stored or used. Check a new PDF before publishing it with
+`scripts/dev/build_triage_policy_text.py`.
+
+The procedures' "Updated" date is the version: it must be registered in `rules_version` (by
+maintenance, as for `rules.json`) and is recorded on the evaluation.
 
 ## Why this is a library call, not a service
 
@@ -20,8 +54,8 @@ orchestrator — see [Alignment gaps](#alignment-gaps-vs-current-code).
 | | |
 |---|---|
 | Type | Durable activity function, running GoRules/Zen in-process, called from the Document Orchestrator |
-| Reads | `normalized-dmer` blob; the active `rules.json` from the `rules` blob container |
-| Writes | `rule_evaluation`, `dmer_document`, `dmer_stage_run` |
+| Reads | `normalized-dmer` blob; from the `rules` container, the active procedures PDF (`triage_llm`) or `rules.json` (`rules`) |
+| Writes | `rule_evaluation`, `dmer_document`, `dmer_stage_run`; with `triage_llm`, the model's full answer to `normalized-dmer/<document_id>/runs/<run_id>/triage.json` and, once per PDF version, the procedures text to `triage-policy` |
 
 ## Processing steps
 
@@ -48,7 +82,8 @@ that question unanswerable after the fact.
 | Table | Operation | Fields |
 |---|---|---|
 | `rule_evaluation` | `INSERT` (one row **per evaluation**, not per document — a re-run creates a new row) | `document_id`, `rules_version`, `all_outcomes` (jsonb — `{"rule_engine_outcome_code": ..., "candidates": [...]}`: every candidate with its inputs, and the engine's own outcome), `selected_outcome_code`, `selected_reason`, `priority_rank`, `evaluated_at`, and (V0007) `fit_letter` — whether a FIT letter applies to the outcome. When a clean pass needs the driving-record check, `selected_outcome_code` is `IN` while `rule_engine_outcome_code` keeps the engine's `CP`, and `selected_reason` says why. |
-| `rules_version` | **Read only** | The activity finds the active ruleset's row by its `checksum` (sha256) and records its `version` on the evaluation. It never writes this table: rows are maintained by whoever publishes or corrects `rules.json` (see [`rules_version`](../data-model.md#rules_version)). No matching row means the ruleset isn't registered — `RulesetUnavailableError`, logged at ERROR with the checksum, and the document is not evaluated. |
+| `rule_evaluation` (`triage_llm`) | as above | The same columns. `all_outcomes` is the triage LLM's decision record: `engine`, `prompt_version`, `policy_sha256`, `policy_updated`, `evaluation_status`, `rule_engine_outcome_code`, `candidates`, per condition its `rule_status`, `recommended_action`, `fit_letter` and `policy_reference` (no evidence or reasoning), `checks` (soft problems with the answer, by field and page name only) and `answer_blob_url` (the full answer, which quotes the DMER). `rules_version` is the procedures' "Updated" date. |
+| `rules_version` | **Read only** | With `triage_llm`, the activity checks the procedures' "Updated" date is a registered `version` (`RulesetUnavailableError` if not). With `rules`, it finds the active ruleset's row by its `checksum` (sha256) and records its `version` on the evaluation. It never writes this table: rows are maintained by whoever publishes or corrects `rules.json` (see [`rules_version`](../data-model.md#rules_version)). No matching row means the ruleset isn't registered — `RulesetUnavailableError`, logged at ERROR with the checksum, and the document is not evaluated. |
 | `dmer_document` | `UPDATE` | `pipeline_status = RULES_APPLIED`, then `AWAITING_DRIVER_COMPLETION` once the driver is signalled (not built yet — the driver-decision publish needs Driver Lookup); `current_stage = DECISION`, `updated_at`. |
 | `driver_evaluation` | `UPDATE` | `completed_document_count` incremented — this counter and `expected_document_count` are what make the wait observable. Only when a `driver_evaluation_document` marker row is newly inserted (see [Idempotency](#idempotency-requirements)); a document with no open evaluation is completed but not counted (logged as a warning). |
 | `driver_evaluation_document` | `INSERT ... ON CONFLICT DO NOTHING` (V0004) | `driver_evaluation_id`, `document_id`, `counted_at` — the once-per-document marker. |
@@ -64,6 +99,15 @@ Question I-3 (answered): **the rule engine decides PR/PU/TCM/CR entirely from me
 `dmer_document.document_priority` (from Mercury) does not override the outcome selection.
 
 ## Failure handling
+
+With `triage_llm`: an unreadable procedures PDF, a generated text that does not verify, an
+unregistered procedures version, or a `DECISION_ENGINE` that is neither engine is
+`RulesetUnavailableError` — every document, logged at ERROR, retried like a missing `rules.json`.
+A model answer that is still invalid after its retries (`NORMALIZATION_MODEL_ATTEMPTS`) is poison
+for that document (manual review). Soft problems — evidence that doesn't quote the input, unknown
+fields, impossible pages — are recorded in `all_outcomes.checks` and never retried.
+
+With `rules`:
 
 A rules.json parse/validation failure at load time is poison for the whole batch of documents
 currently in flight, not just one document — treat a corrupt or missing active `rules.json` as a
@@ -82,6 +126,10 @@ Document Orchestrator publishes to `driver-decision` for — see
 
 | Variable | Purpose |
 |---|---|
+| `DECISION_ENGINE` | `triage_llm` (default) or `rules` — see [Decision engine](#decision-engine). |
+| `TRIAGE_POLICY_PDF_PATH` | Path of the procedures PDF **within** `RULES_CONTAINER`, default `active/triage_sort_procedures.pdf`. |
+| `TRIAGE_POLICY_CONTAINER` | Where the generated procedures text is kept, default `triage-policy` (written by this app only). |
+| `TRIAGE_TEMPERATURE` | Optional; unset leaves it to the deployment (as validated in the POC). |
 | `RULES_CONTAINER` | Default `rules`. |
 | `RULES_ACTIVE_PATH` | Path **within** `RULES_CONTAINER`, default `active/rules.json` (i.e. `rules/active/rules.json`). |
 | `RULE_ENGINE_LIBRARY` | GoRules ZEN Python binding: `zen-engine` (imported as `zen`), pinned `>=0.51,<0.52` in `libs/dmer_common/pyproject.toml`. |
