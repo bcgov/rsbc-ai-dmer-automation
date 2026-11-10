@@ -416,3 +416,35 @@ def test_an_answer_still_invalid_after_its_retries_is_poison():
 
     with pytest.raises(NormalizationValidationError):
         triage_document(client, _dmer(), POLICY, evaluation_date=date(2026, 11, 9))
+
+
+def test_no_dmer_text_reaches_the_logs_from_a_triage_call(monkeypatch):
+    """A Section D sentinel sent to the model and quoted back in its answer
+    must not appear in any log record (health information under FOIPPA)."""
+    from dmer_common.normalization import errors, unmask
+    from dmer_common.triage import engine
+
+    sentinel = "SENTINEL-SECTION-D-9c41"
+    log = Mock()
+    for module in (errors, unmask, engine):
+        monkeypatch.setattr(module, "_log", log)
+    answer = _answer(
+        _condition(
+            "PR",
+            evidence=[f'details_of_condition: "{sentinel} dizzy ******"'],
+            reasoning=f"{sentinel} with symptoms",
+            name=f"{sentinel} condition",
+        )
+    )
+    answer[f"{sentinel} key"] = "made-up key"
+
+    triage_document(
+        _model(answer),
+        _dmer(details_of_condition=f"{sentinel} dizzy spells"),
+        POLICY,
+        evaluation_date=date(2026, 11, 9),
+    )
+
+    records = [repr((c.args, c.kwargs)) for c in log.method_calls]
+    assert records, "expected the triage call to be logged"
+    assert not any(sentinel in r for r in records)
