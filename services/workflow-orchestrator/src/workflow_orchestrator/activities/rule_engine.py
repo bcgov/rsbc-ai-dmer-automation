@@ -1,10 +1,19 @@
 """Rule Engine Durable activity: ruleset and artifact I/O, evaluation, persistence.
 
-See docs/development/stages/05-activity-rule-engine.md. The evaluation itself
-is ``dmer_common.rules`` (GoRules ZEN, in-process); the DB unit of work is
-``dmer_common.db.rule_engine``. Clinical content stays in the blob and the
-``rule_evaluation`` row -- the activity returns and logs only the outcome
-code, the rules version and ids.
+See docs/development/stages/05-activity-rule-engine.md. ``DECISION_ENGINE``
+chooses what evaluates the normalized DMER:
+
+- ``triage_llm`` (default): the triage LLM against the Triage Sort Procedures
+  PDF (``dmer_common.triage``); its full answer is stored beside the
+  normalized output.
+- ``rules``: ``rules.json`` with GoRules ZEN, in-process (``dmer_common.rules``)
+  -- kept so the pipeline can switch back.
+
+Either way the outcome is picked by the rules engine's ``select_outcome`` and
+recorded the same way (``dmer_common.db.rule_engine``): the same
+``rule_evaluation`` row, stage run and driver count. Clinical content stays in
+the blob and the ``rule_evaluation`` row -- the activity returns and logs only
+the outcome code, the version and ids.
 """
 
 from __future__ import annotations
@@ -14,17 +23,33 @@ import os
 from datetime import UTC, datetime
 from urllib.parse import urlparse
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 import azure.durable_functions as df
+from dmer_common.config import openai_settings
 from dmer_common.db.rule_engine import (
     RuleEngineBusyError,
     RuleEngineNotReadyError,
     RuleEngineStateError,
     rule_engine_session,
 )
-from dmer_common.rules import RuleEvaluationError, Ruleset, RulesetError
-from dmer_common.storage import BlobClient, rules, rules_active_path
+from dmer_common.normalization import NormalizationValidationError
+from dmer_common.openai_client import OpenAIClient
+from dmer_common.rules import RuleEvaluation, RuleEvaluationError, Ruleset, RulesetError
+from dmer_common.storage import (
+    BlobClient,
+    normalized_dmer,
+    rules,
+    rules_active_path,
+    triage_path,
+)
 from dmer_common.telemetry import document_id_context, get_logger
+from dmer_common.triage import (
+    PolicyTextError,
+    PolicyUnavailableError,
+    load_policy,
+    triage_document,
+)
 
 from ._runtime import get_async_engine as _get_async_engine
 from ._runtime import poison_as_result
@@ -34,6 +59,13 @@ _log = get_logger(__name__)
 
 ACTIVITY_NAME = "RunRuleEngine"
 
+TRIAGE_LLM = "triage_llm"
+RULES = "rules"
+DECISION_ENGINES = (TRIAGE_LLM, RULES)
+
+# The triage LLM's evaluation date (the procedures' "today"): BC's.
+_EVALUATION_TZ = ZoneInfo("America/Vancouver")
+
 
 class RuleEngineValidationError(ValueError):
     """Poison for this document: bad input, an unreadable normalized artifact,
@@ -41,9 +73,11 @@ class RuleEngineValidationError(ValueError):
 
 
 class RulesetUnavailableError(RuntimeError):
-    """The active rules.json is missing, invalid, or not registered in
-    rules_version -- affects every document in flight, not just this one.
-    Logged at ERROR for alerting."""
+    """The decision engine can't run for any document: the active rules.json
+    (or, for the triage LLM, the procedures PDF) is missing, invalid, or not
+    registered in rules_version, or DECISION_ENGINE is not an engine --
+    affects every document in flight, not just this one. Logged at ERROR for
+    alerting."""
 
 
 class RuleEngineActivityError(RuntimeError):
@@ -99,6 +133,100 @@ def _ruleset(content: bytes) -> Ruleset:
     return _RULESETS.setdefault(ruleset.checksum, ruleset)
 
 
+def _decision_engine() -> str:
+    engine = os.environ.get("DECISION_ENGINE", TRIAGE_LLM).strip().lower()
+    if engine not in DECISION_ENGINES:
+        _log.error("rule engine: DECISION_ENGINE is not triage_llm or rules")
+        raise RulesetUnavailableError("DECISION_ENGINE must be triage_llm or rules")
+    return engine
+
+
+async def _evaluate_rules(
+    repository, blob: BlobClient, normalized_blob_url: str, received_date: datetime
+) -> tuple[RuleEvaluation, str]:
+    """rules.json (GoRules ZEN): the evaluation and the registered rules version."""
+    rules_url = blob.blob_url(rules(), rules_active_path())
+    try:
+        rules_content = await _run_sync(blob.download, rules_url)
+    # Any read failure means there is no active ruleset.
+    except Exception:  # noqa: BLE001
+        raise RulesetUnavailableError("Active rules.json could not be read") from None
+    ruleset = _ruleset(rules_content)
+    # rules_version is written by maintenance, never here.
+    version = await repository.find_rules_version(checksum=ruleset.checksum)
+    if version is None:
+        _log.error(
+            "rule engine: active rules.json has no registered rules_version",
+            extra={"checksum": ruleset.checksum},
+        )
+        raise RulesetUnavailableError(
+            "Active rules.json is not registered in rules_version"
+        )
+    content = await _run_sync(blob.download, normalized_blob_url)
+    dmer = _normalized_document(content)
+    try:
+        evaluation = ruleset.evaluate(dmer, received_date=received_date)
+    except RuleEvaluationError:
+        raise RuleEngineValidationError(
+            "Rules could not evaluate the normalized document"
+        ) from None
+    return evaluation, version
+
+
+async def _evaluate_triage(
+    repository,
+    blob: BlobClient,
+    normalized_blob_url: str,
+    document_id: str,
+    run_id: int,
+) -> tuple[RuleEvaluation, str, dict]:
+    """The triage LLM: the evaluation, the procedures version, and the decision
+    record for ``all_outcomes``. Its full answer goes to the blob, never the
+    database or the logs (it quotes the DMER)."""
+    try:
+        policy = await _run_sync(load_policy, blob)
+    except (PolicyUnavailableError, PolicyTextError) as exc:
+        _log.error(
+            "rule engine: procedures PDF unavailable",
+            extra={"error_code": type(exc).__name__},
+        )
+        raise RulesetUnavailableError(
+            "Active procedures PDF is unavailable or its text does not verify"
+        ) from None
+    version = policy.updated.isoformat() if policy.updated else None
+    # Like rules.json: the procedures' version is registered by maintenance.
+    if version is None or not await repository.rules_version_registered(version):
+        _log.error(
+            "rule engine: procedures PDF version not registered in rules_version",
+            extra={"pdf_sha256": policy.pdf_sha256, "version": version},
+        )
+        raise RulesetUnavailableError(
+            "Active procedures PDF's version is not registered in rules_version"
+        )
+    content = await _run_sync(blob.download, normalized_blob_url)
+    dmer = _normalized_document(content)
+    try:
+        result = await _run_sync(
+            triage_document,
+            OpenAIClient(settings=openai_settings()),
+            dmer,
+            policy,
+            evaluation_date=datetime.now(_EVALUATION_TZ).date(),
+        )
+    except NormalizationValidationError:
+        raise RuleEngineValidationError(
+            "Triage answer still invalid after its retries"
+        ) from None
+    record = result.record()
+    answer_url = await _run_sync(
+        blob.upload_json,
+        normalized_dmer(),
+        triage_path(document_id, run_id=run_id),
+        {"record": record, "answer": result.answer},
+    )
+    return result.evaluation, version, {**record, "answer_blob_url": answer_url}
+
+
 def _completed(evaluation_id: int, version: str, outcome: str) -> dict:
     return {
         "rule_evaluation_id": evaluation_id,
@@ -135,48 +263,32 @@ async def run_rule_engine_activity(payload: dict) -> dict:
                         # The monocular rules measure the DMER's age from it.
                         raise RuleEngineValidationError("Document has no received date")
                     blob = BlobClient(os.environ["BLOB_ACCOUNT_URL"])
-                    rules_url = blob.blob_url(rules(), rules_active_path())
-                    try:
-                        rules_content = await _run_sync(blob.download, rules_url)
-                    # Any read failure means there is no active ruleset.
-                    except Exception:  # noqa: BLE001
-                        raise RulesetUnavailableError(
-                            "Active rules.json could not be read"
-                        ) from None
-                    ruleset = _ruleset(rules_content)
-                    # rules_version is written by maintenance, never here.
-                    version = await repository.find_rules_version(
-                        checksum=ruleset.checksum
-                    )
-                    if version is None:
-                        _log.error(
-                            "rule engine: active rules.json has no registered "
-                            "rules_version",
-                            extra={"checksum": ruleset.checksum},
+                    engine_name = _decision_engine()
+                    if engine_name == TRIAGE_LLM:
+                        evaluation, version, record = await _evaluate_triage(
+                            repository,
+                            blob,
+                            normalized_blob_url,
+                            document_id,
+                            run.run_id,
                         )
-                        raise RulesetUnavailableError(
-                            "Active rules.json is not registered in rules_version"
+                    else:
+                        evaluation, version = await _evaluate_rules(
+                            repository, blob, normalized_blob_url, run.received_date
                         )
-                    content = await _run_sync(blob.download, normalized_blob_url)
-                    dmer = _normalized_document(content)
-                    try:
-                        evaluation = ruleset.evaluate(
-                            dmer, received_date=run.received_date
-                        )
-                    except RuleEvaluationError:
-                        raise RuleEngineValidationError(
-                            "Rules could not evaluate the normalized document"
-                        ) from None
+                        record = None
                     evaluation_id, count = await repository.succeed(
                         run.run_id,
                         evaluation=evaluation,
                         rules_version_name=version,
                         driver_key=run.driver_key,
                         ended_at=datetime.now(UTC),
+                        all_outcomes=record,
                     )
                     _log.info(
                         "rule engine: succeeded",
                         extra={
+                            "decision_engine": engine_name,
                             "run_id": run.run_id,
                             "rules_version": version,
                             "selected_outcome_code": evaluation.selected_outcome_code,

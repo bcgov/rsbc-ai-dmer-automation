@@ -298,6 +298,21 @@ class RuleEngineRepository:
             ).first()
         return None if row is None else row[0]
 
+    async def rules_version_registered(self, version: str) -> bool:
+        """Whether *version* is a registered ``rules_version`` -- the triage
+        LLM's procedures version (their "Updated" date) must be, like an
+        active ``rules.json``. Read-only, as :meth:`find_rules_version`."""
+        self._check_session()
+        async with self._conn.begin():
+            row = (
+                await self._conn.execute(
+                    select(rules_version.c.version).where(
+                        rules_version.c.version == version
+                    )
+                )
+            ).first()
+        return row is not None
+
     async def succeed(
         self,
         run_id: int,
@@ -306,8 +321,13 @@ class RuleEngineRepository:
         rules_version_name: str,
         driver_key: str | None,
         ended_at: datetime,
+        all_outcomes: dict | None = None,
     ) -> tuple[int, DriverCount]:
-        """Record the evaluation and complete the stage, atomically."""
+        """Record the evaluation and complete the stage, atomically.
+
+        *all_outcomes* replaces the rules engine's record
+        (:func:`all_outcomes_record`) -- the triage LLM's own, which also
+        names the model, prompt and procedures that produced it."""
         self._check_session()
         async with self._conn.begin():
             stage = await self._conn.execute(
@@ -336,7 +356,11 @@ class RuleEngineRepository:
                     .values(
                         document_id=self._document_id,
                         rules_version=rules_version_name,
-                        all_outcomes=all_outcomes_record(evaluation),
+                        all_outcomes=(
+                            all_outcomes
+                            if all_outcomes is not None
+                            else all_outcomes_record(evaluation)
+                        ),
                         selected_outcome_code=evaluation.selected_outcome_code,
                         selected_reason=evaluation.selected_reason,
                         priority_rank=evaluation.priority_rank,

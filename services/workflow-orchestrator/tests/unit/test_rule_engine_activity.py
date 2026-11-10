@@ -66,8 +66,8 @@ def dependencies(monkeypatch):
     engine = SimpleNamespace(dispose=AsyncMock())
     blobs = {RULES_URL: RULES_JSON, NORMALIZED_URL: normalized()}
     blob = Mock()
-    blob.blob_url.side_effect = (
-        lambda container, path: f"https://blob/{container}/{path}"
+    blob.blob_url.side_effect = lambda container, path: (
+        f"https://blob/{container}/{path}"
     )
     blob.download.side_effect = lambda url: blobs[url]
 
@@ -81,6 +81,8 @@ def dependencies(monkeypatch):
     monkeypatch.setattr(activity, "_get_async_engine", AsyncMock(return_value=engine))
     monkeypatch.setattr(activity, "BlobClient", lambda _: blob)
     monkeypatch.setenv("BLOB_ACCOUNT_URL", "https://blob")
+    # These tests cover the rules.json engine (test_triage_engine.py: the LLM).
+    monkeypatch.setenv("DECISION_ENGINE", "rules")
     monkeypatch.delenv("RULES_CONTAINER", raising=False)
     monkeypatch.delenv("RULES_ACTIVE_PATH", raising=False)
     return SimpleNamespace(repo=repository, engine=engine, blob=blob, blobs=blobs)

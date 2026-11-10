@@ -19,6 +19,7 @@ from .paths import (
     normalized_path,
     ocr_path,
     top_level_path,
+    triage_path,
 )
 
 __all__ = [
@@ -33,6 +34,7 @@ __all__ = [
     "rules",
     "rules_active_path",
     "top_level_path",
+    "triage_path",
     "triage_policy",
     "triage_policy_pdf_path",
 ]

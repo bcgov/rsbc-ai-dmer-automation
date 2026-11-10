@@ -6,6 +6,9 @@ asyncpg
 azure-identity
 # dmer_common[triage]: the triage LLM converts the procedures PDF to text.
 pdfplumber==0.11.9  # see libs/dmer_common/pyproject.toml [triage]
+# The triage evaluation date is BC's (zoneinfo America/Vancouver); tzdata
+# supplies the time-zone database where the OS has none.
+tzdata
 # dmer_common has no PyPI/registry presence (private, unpublished) -- Azure's
 # remote build (Oryx) only sees this directory's own contents, so the wheel
 # travels alongside the function code itself rather than being installed
