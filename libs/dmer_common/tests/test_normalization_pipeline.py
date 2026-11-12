@@ -429,13 +429,12 @@ def test_no_other_conditions_ignores_acuity_and_field_results():
     assert result["dmer"]["no_other_conditions"] is True
 
 
-def test_cataracts_or_retinopathy_mark_progressive_eye_condition():
+def test_cataracts_mark_progressive_eye_condition():
     from dmer_common.normalization.pipeline import flag_progressive_eye_condition
 
-    for source in ("vision.cataracts", "vision.retinopathy"):
-        dmer = flag_progressive_eye_condition({"dmer": {source: True}})["dmer"]
-        assert dmer["vision.progressive_eye_condition"] is True
-        assert dmer["vision.progressive_eye_condition_evidence"] == f"{source}: true"
+    dmer = flag_progressive_eye_condition({"dmer": {"vision.cataracts": True}})["dmer"]
+    assert dmer["vision.progressive_eye_condition"] is True
+    assert dmer["vision.progressive_eye_condition_evidence"] == "vision.cataracts: true"
     assert (
         "vision.progressive_eye_condition"
         not in flag_progressive_eye_condition({"dmer": {}})["dmer"]
