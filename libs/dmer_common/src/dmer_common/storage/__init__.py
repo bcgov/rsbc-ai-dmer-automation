@@ -5,13 +5,21 @@ artifacts per document)."""
 
 from . import containers
 from .client import BlobClient
-from .containers import extracted_dmer, normalized_dmer, rules, rules_active_path
+from .containers import (
+    extracted_dmer,
+    normalized_dmer,
+    rules,
+    rules_active_path,
+    triage_policy,
+    triage_policy_pdf_path,
+)
 from .paths import (
     combined_path,
     handwritten_path,
     normalized_path,
     ocr_path,
     top_level_path,
+    triage_path,
 )
 
 __all__ = [
@@ -26,4 +34,7 @@ __all__ = [
     "rules",
     "rules_active_path",
     "top_level_path",
+    "triage_path",
+    "triage_policy",
+    "triage_policy_pdf_path",
 ]

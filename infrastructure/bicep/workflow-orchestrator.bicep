@@ -155,6 +155,19 @@ param rulesContainer string = 'rules'
 @description('Blob path of the active rule set within rulesContainer.')
 param rulesActivePath string = 'active/rules.json'
 
+@description('Blob path of the active Triage Sort Procedures PDF within rulesContainer (the policy the triage LLM reads; maintained like the rule set, read-only to this app).')
+param triagePolicyPdfPath string = 'active/triage_sort_procedures.pdf'
+
+@description('Container this app writes the text generated from the procedures PDF to (<pdf sha256>.txt). Must exist (main.bicep blobContainerNames).')
+param triagePolicyContainer string = 'triage-policy'
+
+@description('What decides a document in the Rule Engine activity: rules (rules.json with GoRules ZEN; the default, and what every environment runs) or triage_llm (the triage LLM against the procedures PDF; off unless chosen, kept for re-evaluation). Either writes the same rule_evaluation row.')
+@allowed([
+  'rules'
+  'triage_llm'
+])
+param decisionEngine string = 'rules'
+
 @description('Mercury driver-by-licence API base URL (Driver Lookup).')
 param mercuryDriverLicenceApiBaseUrl string = ''
 
@@ -251,6 +264,9 @@ var appSettings = {
   NORMALIZED_DMER_CONTAINER: normalizedDmerContainer
   RULES_CONTAINER: rulesContainer
   RULES_ACTIVE_PATH: rulesActivePath
+  TRIAGE_POLICY_PDF_PATH: triagePolicyPdfPath
+  TRIAGE_POLICY_CONTAINER: triagePolicyContainer
+  DECISION_ENGINE: decisionEngine
   MERCURY_DRIVER_LICENCE_API_BASE_URL: mercuryDriverLicenceApiBaseUrl
   MERCURY_API_KEY: mercuryApiKey
   MERCURY_COUNTED_DOCUMENT_TYPES: mercuryCountedDocumentTypes
@@ -334,7 +350,9 @@ module driverDecisionSenderRoleAssignment 'modules/servicebus/data-plane-role-as
 // ---------------------------------------------------------------------------
 // 5. Blob RBAC (container-scoped, least privilege): Normalize reads the
 //    extraction from extracted-dmer and writes normalized-dmer; the Rule
-//    Engine reads the active rule set from rules.
+//    Engine reads the active rule set and the procedures PDF from rules, and
+//    writes the text generated from the PDF to triage-policy -- a container of
+//    its own, so rules stays read-only to this app.
 // ---------------------------------------------------------------------------
 resource extractedContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' existing = {
   name: '${dataStorageAccountName}/default/extracted-dmer'
@@ -346,6 +364,10 @@ resource normalizedContainer 'Microsoft.Storage/storageAccounts/blobServices/con
 
 resource rulesContainerExisting 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' existing = {
   name: '${dataStorageAccountName}/default/${rulesContainer}'
+}
+
+resource triagePolicyContainerExisting 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' existing = {
+  name: '${dataStorageAccountName}/default/${triagePolicyContainer}'
 }
 
 resource extractedBlobDataReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
@@ -373,6 +395,16 @@ resource rulesBlobDataReader 'Microsoft.Authorization/roleAssignments@2022-04-01
   scope: rulesContainerExisting
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', storageBlobDataReaderRoleId)
+    principalId: functionApp.outputs.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource triagePolicyBlobDataContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(triagePolicyContainerExisting.id, functionAppName, storageBlobDataContributorRoleId)
+  scope: triagePolicyContainerExisting
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', storageBlobDataContributorRoleId)
     principalId: functionApp.outputs.principalId
     principalType: 'ServicePrincipal'
   }

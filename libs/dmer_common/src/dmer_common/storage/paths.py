@@ -53,3 +53,13 @@ def normalized_path(document_id: str, *, run_id: int | None = None) -> str:
             raise ValueError("run_id must be a positive integer")
         return f"{_doc(document_id)}/runs/{run_id}/normalized.json"
     return f"{_doc(document_id)}/normalized.json"
+
+
+def triage_path(document_id: str, *, run_id: int) -> str:
+    """The triage LLM's full answer for one Rule Engine attempt (*run_id* is
+    that attempt's ``dmer_stage_run`` id), stored beside the normalized
+    output it evaluated -- in ``normalized-dmer``, never in the database or
+    the logs (it quotes the DMER)."""
+    if type(run_id) is not int or run_id < 1:
+        raise ValueError("run_id must be a positive integer")
+    return f"{_doc(document_id)}/runs/{run_id}/triage.json"

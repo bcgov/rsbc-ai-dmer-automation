@@ -70,8 +70,9 @@ def test_download_same_account_uses_this_clients_account(monkeypatch):
     monkeypatch.setattr(
         client._service,
         "get_blob_client",
-        lambda container, blob: seen.append((container, blob))
-        or _FakeBlob(ACCOUNT, container, blob),
+        lambda container, blob: (
+            seen.append((container, blob)) or _FakeBlob(ACCOUNT, container, blob)
+        ),
     )
     # WHEN downloading
     data = client.download(f"{ACCOUNT}/raw/2026/09/doc.pdf")
@@ -128,3 +129,55 @@ def test_download_refuses_non_azure_blob_urls(bad):
     # WHEN downloading THEN it raises before any request carries the token
     with pytest.raises(ValueError):
         client.download(bad)
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "http://rsbcstorage.blob.core.windows.net/rules/active/policy.pdf",
+        "https://evil.example.com/rules/active/policy.pdf",
+    ],
+)
+@pytest.mark.parametrize("method", ["etag", "download_if_exists"])
+def test_etag_and_download_if_exists_refuse_non_azure_blob_urls(bad, method):
+    # GIVEN a URL that isn't an https Azure Blob endpoint
+    client = _client()
+    # WHEN reading its ETag or content THEN it raises before any request
+    with pytest.raises(ValueError):
+        getattr(client, method)(bad)
+
+
+def test_download_if_exists_is_none_for_a_missing_blob(monkeypatch):
+    from azure.core.exceptions import ResourceNotFoundError
+
+    # GIVEN a blob that doesn't exist
+    client = _client()
+
+    class _Missing(_FakeBlob):
+        def download_blob(self):
+            raise ResourceNotFoundError("The specified blob does not exist.")
+
+    monkeypatch.setattr(
+        client._service,
+        "get_blob_client",
+        lambda container, blob: _Missing(ACCOUNT, container, blob),
+    )
+    # WHEN downloading it if it exists THEN there is nothing, not an error
+    assert client.download_if_exists(f"{ACCOUNT}/triage-policy/abc.txt") is None
+
+
+def test_etag_reads_the_blobs_properties(monkeypatch):
+    # GIVEN a blob in this client's account
+    client = _client()
+
+    class _WithProperties(_FakeBlob):
+        def get_blob_properties(self):
+            return type("Props", (), {"etag": '"0x8DC"'})()
+
+    monkeypatch.setattr(
+        client._service,
+        "get_blob_client",
+        lambda container, blob: _WithProperties(ACCOUNT, container, blob),
+    )
+    # WHEN reading its ETag THEN the properties' ETag is returned
+    assert client.etag(f"{ACCOUNT}/rules/active/policy.pdf") == '"0x8DC"'

@@ -59,6 +59,12 @@ instead, set this to `false` and supply `existingNetworkSecurityGroupId`.
   denies blob read, write and delete in `raw-dmer` (the source DMER PDFs). Only
   intake-processor, which writes them, has access there; di-processor reads them through its
   own container-scoped role.
+- The triage LLM reads the Triage Sort Procedures PDF from the `rules` container,
+  `active/triage_sort_procedures.pdf` (upload a new version over it, same name, like
+  `active/rules.json`; its "Updated" date must also be registered in `rules_version`). The
+  workflow orchestrator generates the text from it into the `triage-policy` container
+  (`<pdf sha256>.txt`, once per PDF version) -- the only container it writes besides
+  `normalized-dmer`; `rules` stays read-only to it.
 - This file does *not* hold Azure OpenAI values — that model is hosted in a separate
   AI Hub subscription and consumed via a Key Vault secret (endpoint + API key), not a Bicep
   parameter. See `docs/architecture/repository-design.md` §10, §13. (Not yet relevant — no

@@ -11,6 +11,7 @@ import json
 from typing import Any
 from urllib.parse import urlparse
 
+from azure.core.exceptions import ResourceNotFoundError
 from azure.identity import DefaultAzureCredential
 from azure.storage.blob import BlobClient as _SdkBlobClient
 from azure.storage.blob import BlobServiceClient, ContentSettings
@@ -53,21 +54,36 @@ class BlobClient:
         Only ``https`` Azure Blob URLs are accepted, so the Managed Identity
         token is never sent to any other host.
         """
+        return self._sdk_blob(uri).download_blob().readall()
+
+    def download_if_exists(self, uri: str) -> bytes | None:
+        """Like :meth:`download`, but None when the blob doesn't exist."""
+        try:
+            return self.download(uri)
+        except ResourceNotFoundError:
+            return None
+
+    def etag(self, uri: str) -> str:
+        """The blob's ETag -- changes whenever its content is replaced. Reads
+        the blob's properties only, not its content."""
+        return self._sdk_blob(uri).get_blob_properties().etag
+
+    def _sdk_blob(self, uri: str) -> _SdkBlobClient:
+        """The SDK client for one blob URL, on the URL's own account (https
+        Azure Blob hosts only -- see :meth:`download`)."""
         container, path = self._split_uri(uri)
         parsed = urlparse(uri)
         host = (parsed.hostname or "").lower()
         if parsed.scheme != "https" or not host.endswith(_BLOB_HOST_SUFFIX):
             raise ValueError("Not an https Azure Blob Storage URL")
         if f"https://{host}" == self._account_url.lower():
-            blob = self._service.get_blob_client(container=container, blob=path)
-        else:
-            blob = _SdkBlobClient(
-                account_url=f"https://{host}",
-                container_name=container,
-                blob_name=path,
-                credential=self._credential,
-            )
-        return blob.download_blob().readall()
+            return self._service.get_blob_client(container=container, blob=path)
+        return _SdkBlobClient(
+            account_url=f"https://{host}",
+            container_name=container,
+            blob_name=path,
+            credential=self._credential,
+        )
 
     def upload_json(self, container: str, path: str, obj: Any) -> str:
         """Serialize ``obj`` to JSON, upload it, and return the blob URL."""

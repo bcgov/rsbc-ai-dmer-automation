@@ -9,6 +9,7 @@ from dmer_common.storage import (
     handwritten_path,
     ocr_path,
     top_level_path,
+    triage_path,
 )
 
 
@@ -48,3 +49,10 @@ def test_container_name_configurable_via_env(monkeypatch):
     monkeypatch.setenv("EXTRACTED_DMER_CONTAINER", "extracted-custom")
     # THEN the getter reflects the override
     assert containers.extracted_dmer() == "extracted-custom"
+
+
+def test_triage_path_is_per_rule_engine_attempt_beside_the_normalized_output():
+    assert triage_path("doc-1", run_id=42) == "doc-1/runs/42/triage.json"
+    for bad in (0, -1, "42", None):
+        with pytest.raises(ValueError):
+            triage_path("doc-1", run_id=bad)
