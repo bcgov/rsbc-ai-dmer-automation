@@ -3,11 +3,12 @@
 See docs/development/stages/05-activity-rule-engine.md. ``DECISION_ENGINE``
 chooses what evaluates the normalized DMER:
 
-- ``triage_llm`` (default): the triage LLM against the Triage Sort Procedures
-  PDF (``dmer_common.triage``); its full answer is stored beside the
-  normalized output.
-- ``rules``: ``rules.json`` with GoRules ZEN, in-process (``dmer_common.rules``)
-  -- kept so the pipeline can switch back.
+- ``rules`` (default, and what every environment runs): ``rules.json`` with
+  GoRules ZEN, in-process (``dmer_common.rules``).
+- ``triage_llm``: the triage LLM against the Triage Sort Procedures PDF
+  (``dmer_common.triage``); its full answer is stored beside the normalized
+  output. Off unless set explicitly -- kept so it can be re-evaluated, e.g.
+  with a newer model.
 
 Either way the outcome is picked by the rules engine's ``select_outcome`` and
 recorded the same way (``dmer_common.db.rule_engine``): the same
@@ -134,7 +135,8 @@ def _ruleset(content: bytes) -> Ruleset:
 
 
 def _decision_engine() -> str:
-    engine = os.environ.get("DECISION_ENGINE", TRIAGE_LLM).strip().lower()
+    # Unset means the rules engine: the triage LLM only runs when chosen.
+    engine = os.environ.get("DECISION_ENGINE", RULES).strip().lower()
     if engine not in DECISION_ENGINES:
         _log.error("rule engine: DECISION_ENGINE is not triage_llm or rules")
         raise RulesetUnavailableError("DECISION_ENGINE must be triage_llm or rules")

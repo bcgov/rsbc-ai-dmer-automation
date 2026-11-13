@@ -14,8 +14,8 @@ then selects the highest-priority outcome.
 
 | Value | Candidates from |
 |---|---|
-| `triage_llm` (default) | The triage LLM (`dmer_common.triage`): one model call that reads the normalized DMER and the Triage Sort Procedures, as text generated from the PDF. Each condition it marks `APPLIED` is a candidate; a `POLICY_GAP`, or the model asking for human review, is an `IN` candidate. |
-| `rules` | The active `rules.json`, evaluated in-process with GoRules ZEN (`dmer_common.rules`) — kept so the pipeline can switch back by changing the setting. |
+| `rules` (default) | The active `rules.json`, evaluated in-process with GoRules ZEN (`dmer_common.rules`). Every environment (DEV, TEST, PROD) runs this. |
+| `triage_llm` | The triage LLM (`dmer_common.triage`): one model call that reads the normalized DMER and the Triage Sort Procedures, as text generated from the PDF. Each condition it marks `APPLIED` is a candidate; a `POLICY_GAP`, or the model asking for human review, is an `IN` candidate. **Off unless `DECISION_ENGINE=triage_llm` is set** — kept so it can be re-evaluated (e.g. with a newer model) against the approved decisions; in DEV testing (2026-11) it was less accurate and less consistent than the rules engine. |
 
 Everything after the candidates is shared: the same `select_outcome()` picks the outcome (highest
 action wins; FIT letters combine; no candidate is `IN`; a clean pass with a driving-record row is
@@ -126,7 +126,7 @@ Document Orchestrator publishes to `driver-decision` for — see
 
 | Variable | Purpose |
 |---|---|
-| `DECISION_ENGINE` | `triage_llm` (default) or `rules` — see [Decision engine](#decision-engine). |
+| `DECISION_ENGINE` | `rules` (default) or `triage_llm` — see [Decision engine](#decision-engine). |
 | `TRIAGE_POLICY_PDF_PATH` | Path of the procedures PDF **within** `RULES_CONTAINER`, default `active/triage_sort_procedures.pdf`. |
 | `TRIAGE_POLICY_CONTAINER` | Where the generated procedures text is kept, default `triage-policy` (written by this app only). |
 | `TRIAGE_TEMPERATURE` | Optional; unset leaves it to the deployment (as validated in the POC). |

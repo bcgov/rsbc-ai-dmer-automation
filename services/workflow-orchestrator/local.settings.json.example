@@ -20,7 +20,7 @@
     "NORMALIZED_DMER_CONTAINER": "normalized-dmer",
     "RULES_CONTAINER": "rules",
     "RULES_ACTIVE_PATH": "active/rules.json",
-    "DECISION_ENGINE": "triage_llm",
+    "DECISION_ENGINE": "rules",
     "TRIAGE_POLICY_PDF_PATH": "active/triage_sort_procedures.pdf",
     "TRIAGE_POLICY_CONTAINER": "triage-policy",
     "MERCURY_DRIVER_LICENCE_API_BASE_URL": "https://func-mock-mercury-api-dev.azurewebsites.net/api/mercury/drivers",

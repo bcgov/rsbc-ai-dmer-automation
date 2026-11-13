@@ -1,6 +1,6 @@
-"""Rule Engine activity with DECISION_ENGINE=triage_llm (the default): the
-triage LLM evaluates the normalized DMER, and the result is recorded exactly
-as the rules engine's is. The policy loader, the model call and the database
+"""Rule Engine activity with DECISION_ENGINE=triage_llm (off by default; the
+rules engine is the default): the triage LLM evaluates the normalized DMER, and
+the result is recorded exactly as the rules engine's is. The policy loader, the model call and the database
 are stubbed; the outcome selection is the real select_outcome."""
 
 import asyncio
@@ -91,7 +91,7 @@ def d(monkeypatch):
     monkeypatch.setattr(activity, "openai_settings", Mock())
     monkeypatch.setattr(activity, "OpenAIClient", Mock())
     monkeypatch.setenv("BLOB_ACCOUNT_URL", "https://blob")
-    monkeypatch.delenv("DECISION_ENGINE", raising=False)  # the default
+    monkeypatch.setenv("DECISION_ENGINE", "triage_llm")  # chosen explicitly
     monkeypatch.delenv("NORMALIZED_DMER_CONTAINER", raising=False)
     return SimpleNamespace(repo=repository, blob=blob, triage=triage, engine=engine)
 
@@ -100,7 +100,17 @@ def _run(payload=INPUT):
     return asyncio.run(activity.run_rule_engine_activity(payload))
 
 
-def test_the_triage_llm_is_the_default_engine_and_recorded_like_the_rules(d):
+def test_unset_decision_engine_means_the_rules_engine(d, monkeypatch):
+    # The triage LLM must never run unless DECISION_ENGINE says so.
+    monkeypatch.delenv("DECISION_ENGINE", raising=False)
+    d.blob.download.side_effect = Exception("no rules.json here")
+    with pytest.raises(activity.RulesetUnavailableError):
+        _run()
+    d.triage.assert_not_called()
+    assert d.blob.blob_url.call_args.args == ("rules", "active/rules.json")
+
+
+def test_the_triage_llm_when_chosen_is_recorded_like_the_rules(d):
     result = _run()
 
     assert result == {
