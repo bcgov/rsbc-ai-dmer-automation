@@ -1,6 +1,11 @@
 
 # intake-processor
 
+> **Superseded.** See [`docs/development/stages/01-ingest.md`](../development/stages/01-ingest.md)
+> and [`docs/development/services/azure-functions.md`](../development/services/azure-functions.md)
+> for the current (revised architecture) implementation reference — the responsibilities below are
+> from the original architecture.
+
 **Azure compute:** Azure Functions (Timer + HTTP triggers)
 
 ## Responsibilities

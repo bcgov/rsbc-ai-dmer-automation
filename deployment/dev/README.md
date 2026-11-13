@@ -20,8 +20,10 @@ deployment guide.
 
 - `vnetResourceGroupName: "f11861-dev-networking"` — confirmed via the platform team/Portal.
 - `privateEndpointSubnetAddressPrefix: "10.46.156.64/27"` — confirmed non-overlapping against
-  the live VNet (`AzureBastionSubnet` at `10.46.156.0/26`, and DEV's pre-existing manually
-  created `snet-rsbc-dmer-ai-optimization-private-endpoints` at `10.46.156.224/27`).
+  the live VNet (`AzureBastionSubnet` at `10.46.156.0/26`). It is DEV's only private-endpoint
+  subnet: the pre-existing manually created `snet-rsbc-dmer-ai-optimization-private-endpoints`
+  (`10.46.156.224/27`) was emptied into it on 2026-10-02 — its private endpoints recreated here,
+  the jump box's NIC moved here — and deleted, to free `10.46.156.192/26` for the orchestrators.
 
 `privateDnsZoneIdCognitiveServices` / `privateDnsZoneIdBlob` are confirmed empty — the platform
 team centrally manages both Private DNS zones and auto-registers private endpoints via a
@@ -47,6 +49,22 @@ instead, set this to `false` and supply `existingNetworkSecurityGroupId`.
 - `allowSharedKeyAccess: true` matches the currently-working manually-provisioned DEV storage
   account. Plan to flip this to `false` once every consumer (di-processor's managed identity,
   any scripts) authenticates via Azure AD instead of the account key.
+- The four Function Apps' parameter files set `publicNetworkAccess: Enabled` explicitly. The
+  templates default to `Disabled` (private endpoint only), but DEV is deployed by
+  `deploy-dev.yml` from a GitHub-hosted runner, which reaches each app's SCM endpoint over the
+  internet. Set it back to `Disabled` once deployment runs from inside the VNet (a self-hosted
+  runner or the jump box). TEST and PROD get the `Disabled` default.
+- On the shared runtime storage account (`rsbcstorage`), the Blob Data Owner role of
+  workflow-orchestrator, driver-orchestrator and reliability carries an ABAC condition that
+  denies blob read, write and delete in `raw-dmer` (the source DMER PDFs). Only
+  intake-processor, which writes them, has access there; di-processor reads them through its
+  own container-scoped role.
+- The triage LLM reads the Triage Sort Procedures PDF from the `rules` container,
+  `active/triage_sort_procedures.pdf` (upload a new version over it, same name, like
+  `active/rules.json`; its "Updated" date must also be registered in `rules_version`). The
+  workflow orchestrator generates the text from it into the `triage-policy` container
+  (`<pdf sha256>.txt`, once per PDF version) -- the only container it writes besides
+  `normalized-dmer`; `rules` stays read-only to it.
 - This file does *not* hold Azure OpenAI values — that model is hosted in a separate
   AI Hub subscription and consumed via a Key Vault secret (endpoint + API key), not a Bicep
   parameter. See `docs/architecture/repository-design.md` §10, §13. (Not yet relevant — no

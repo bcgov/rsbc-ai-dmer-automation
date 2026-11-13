@@ -1,6 +1,15 @@
 
 # Testing Guide
 
+> **Note:** `rule-engine` and `normalizer-service` below refer to the original architecture's
+> standalone services. Under the revised architecture they are activities inside
+> `workflow-orchestrator`/the driver-orchestration service — see
+> [`README.md`](README.md#open-questions--decisions-required) for the current service mapping. The
+> golden-file testing approach and coverage targets described here still apply to that code,
+> wherever it ends up living, and the Driver Orchestration join additionally needs the deliberate
+> concurrency test described in
+> [`stages/06-driver-orchestration.md`](stages/06-driver-orchestration.md#implementation-considerations-for-claude-code).
+
 ## Test layers
 
 | Layer | Scope | Location |

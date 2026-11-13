@@ -1,6 +1,12 @@
 
 # normalizer-service
 
+> **Superseded.** Normalization is now a Durable Functions activity inside Document Orchestration,
+> not a Container App. See
+> [`docs/development/stages/04-activity-normalize.md`](../development/stages/04-activity-normalize.md)
+> for the current implementation reference — the Container App responsibilities below are from the
+> original architecture.
+
 **Azure compute:** Azure Container Apps
 
 ## Responsibilities
