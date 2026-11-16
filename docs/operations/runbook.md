@@ -77,6 +77,6 @@ pipeline and writes `reconciliation-reports/<yyyy-mm-dd>.json`. Each entry in `e
 | `NOT_POSTED` | An outcome is queued but not all writes are sent after 24 h | See `outbox-backlog` |
 | `POST_FAILED` | A Mercury write is `FAILED` | See `outbox-write-failed`; the document stays on the report until Mercury has triaged it |
 
-`mercury_read_complete: false` means the queue was longer than `RECONCILIATION_MAX_PAGES` pages
-and only part of it was checked. `metrics` holds the day's manual reviews, fallback outcomes and
+`mercury_read_complete: false` means more documents wait in the DPS queues than one `GET dmers` page
+holds, and only that page was checked. `metrics` holds the day's manual reviews, fallback outcomes and
 stage p95s (the `manual-review-rate`, `fallback-rate` and `stage-p95` alerts).

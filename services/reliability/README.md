@@ -89,9 +89,9 @@ Mercury's GET-by-licence response with no `dmer_document` row) is not built yet.
 
 ## Daily Reconciliation
 
-`DailyReconciliation` runs once a day (`RECONCILIATION_SCHEDULE`, default 13:00 UTC). It pages
-through Mercury's DPS queue (`MERCURY_API_BASE_URL`, `MERCURY_QUEUE`, at most
-`RECONCILIATION_MAX_PAGES` pages) and checks every document against the pipeline
+`DailyReconciliation` runs once a day (`RECONCILIATION_SCHEDULE`, default 13:00 UTC). It reads
+the documents still in Mercury's DPS queues (one `GET dmers` page from
+`MERCURY_API_BASE_URL`; the API is claim-based) and checks every document against the pipeline
 (`dmer_common.db.reconciliation`): never received (after `RECONCILIATION_RECEIVE_GRACE_HOURS`),
 overdue in the pipeline (after `RECONCILIATION_OVERDUE_HOURS`), in manual review with nothing sent
 to Mercury, not posted, or a `FAILED` write. The report goes to `RECONCILIATION_CONTAINER`

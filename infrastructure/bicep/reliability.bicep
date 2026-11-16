@@ -154,11 +154,14 @@ param reconciliationEnabled bool = false
 @description('NCRONTAB schedule for the DailyReconciliation (default: 13:00 UTC, early morning Pacific).')
 param reconciliationSchedule string = '0 0 13 * * *'
 
-@description('Mercury batch API base URL (unpaginated) -- the DPS queue the reconciliation report reads, the same one the Page Poller reads.')
+@description('Mercury GET dmers endpoint (https://<mercury-host>/Dmers) -- the documents still in the DPS queues, which the reconciliation report reads; the same one the Page Poller reads.')
 param mercuryApiBaseUrl string = ''
 
-@description('Mercury queue the reconciliation report reads -- the same one the Page Poller reads.')
+@description('Label for the Mercury queue in the reconciliation report (GET dmers takes no queue).')
 param mercuryQueue string = 'BOTH'
+
+@description('IANA time zone Mercury\'s receivedDate is read in when it carries no offset (Mercury sends "MM/DD/YYYY HH:MM:SS"). Pacific until Mercury confirms the zone.')
+param mercuryReceivedDateTimezone string = 'America/Vancouver'
 
 @description('Fully-qualified Service Bus namespace hostname, e.g. sb-rsbc-dmer-shared-dev-001.servicebus.windows.net.')
 @minLength(1)
@@ -261,6 +264,7 @@ var appSettings = {
   RECONCILIATION_CONTAINER: 'reconciliation-reports'
   MERCURY_API_BASE_URL: mercuryApiBaseUrl
   MERCURY_QUEUE: mercuryQueue
+  MERCURY_RECEIVED_DATE_TIMEZONE: mercuryReceivedDateTimezone
   SERVICE_BUS_NAMESPACE_FQDN: serviceBusNamespaceFqdn
   DMER_INGEST_QUEUE: dmerIngestQueueName
   DMER_RAW_QUEUE: dmerRawQueueName

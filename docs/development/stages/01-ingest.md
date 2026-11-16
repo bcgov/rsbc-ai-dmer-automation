@@ -16,7 +16,7 @@ Poller) from per-document download (Ingest Function) gives per-document retry an
 
 | Component | Trigger | Reads | Writes |
 |---|---|---|---|
-| **Page Poller** | Timer, ~5 min (question I-14 sets the real SLA) | `poll_checkpoint`; Mercury batch GET API, one page per invocation | `dmer_document`, `driver`, `poll_checkpoint` |
+| **Page Poller** | Timer, ~5 min (question I-14 sets the real SLA) | Mercury `GET dmers`, one page per invocation | `dmer_document`, `driver`, `poll_checkpoint`; Mercury's AI Processed status |
 | **Ingest Function** | Service Bus queue trigger on `dmer-ingest` | The queue message (for `document_id`); `dmer_document.document_url` for the pre-signed URL itself | `raw-dmer` blob container, `dmer_document`, `dmer_stage_run` |
 | **Webhook Listener** (optional, real-time path) | HTTP trigger | Mercury's real-time payload | Same as Page Poller (shares the upsert + publish) |
 
@@ -26,12 +26,19 @@ isolation from the others.
 
 ## Page Poller — processing steps
 
-1. Read the `poll_checkpoint` row for this source (`BACKLOG` or `REALTIME`) to obtain
-   `last_cursor` and `last_received_date`.
-2. Call the Mercury batch `GET` API for **a single page only**. Do not loop over pages inside the
-   invocation — a long-running poller is harder to retry, harder to reason about on timeout, and
-   holds the checkpoint open while it works.
-3. For each entry in the page's `value` array, **upsert** one `dmer_document` row, keyed on
+1. Call Mercury's `GET {MERCURY_API_BASE_URL}?pageSize={MERCURY_PAGE_SIZE}` (`GET dmers`) for **a
+   single page only**. It is **claim-based**: it returns the next records not yet marked AI
+   Processed, so there is no cursor — `nextLink` is the same request again and is not followed.
+   Do not loop over pages inside the invocation — a long-running poller is harder to retry, harder
+   to reason about on timeout, and holds the advisory lock while it works.
+   `MercuryClient` translates Mercury's camelCase `items` into the snake_case records below
+   (`documentRecordId` → `document_guid`, `dmerDocumentCaseRecord` → `case`, …). `receivedDate`
+   ("MM/DD/YYYY HH:MM:SS", no zone) is read in `MERCURY_RECEIVED_DATE_TIMEZONE` (default
+   `America/Vancouver`) until Mercury confirms its zone; an ISO-8601 value keeps its own offset.
+2. Keep only the **DMERs** (`documentType` = `DMER`). The page also holds other document types
+   (HRDIR reports, backfiles — no `documentUrl`); they are not stored, but are still marked in
+   step 7.
+3. For each DMER, **upsert** one `dmer_document` row, keyed on
    `document_guid`: `INSERT ... ON CONFLICT (document_guid) DO NOTHING`. This is the single most
    important idempotency guarantee in the system — it is what makes it safe for the poller to see
    the same document repeatedly, for the webhook to deliver a duplicate, and for a failed run to be
@@ -42,18 +49,25 @@ isolation from the others.
    document. If it does not, leave `driver_key` null. Extraction records the page's licence (`licence_number_read`) but does
    not resolve a driver; [Document Orchestration](03-document-orchestration.md#activity-driver-lookup) does.
 5. If the entry contains a `case` object, record `mercury_case_id`.
-6. Publish one `dmer-ingest` message per document, with **Service Bus `MessageId` set to
+6. Publish one `dmer-ingest` message per DMER, with **Service Bus `MessageId` set to
    `document_guid`** so duplicate detection suppresses repeats within the detection window.
-7. **One page per timer tick, no self-continuation.** The architecture document describes the
+7. **Mark every record on the page AI Processed** — DMERs and non-DMERs alike:
+   `POST {MERCURY_API_BASE_URL}/BatchSetDmerAIProccessedStatus` with `{"dmerIds": [<document_guid>, …]}`
+   (Mercury's endpoint name, spelling included). Mercury moves them to the AI Processed Queue, out
+   of the DPS queues, and `GET dmers` stops returning them — this is what brings the next page.
+   It comes **last**, once the DMERs are stored and queued: if it fails, the poll fails and the next
+   tick gets the same records again, which steps 3–6 handle idempotently. Marking first could hide
+   a DMER from the DPS queues that the pipeline never stored.
+8. **One page per timer tick, no self-continuation.** The architecture document describes the
    poller publishing a message to itself to fetch the next page immediately when `nextLink` is
    present, but no such queue exists in `../message-contracts.md`'s four documented queues, and
    adding a fifth control queue for it was judged not worth the extra infrastructure for now.
    Deliberately chosen over looping through pages inside one invocation too (which would have kept
-   the design queue-free but broken step 2's "single page only" rule for a different reason). A
-   large backlog therefore drains at one page per ~5 min tick — revisit if backlog-drain speed
+   the design queue-free but broken step 1's "single page only" rule for a different reason). A
+   large backlog therefore drains at one page per tick — revisit if backlog-drain speed
    (~1,000,000 documents, question I-15) turns out to need it faster.
-8. Update `poll_checkpoint` (`last_cursor` — Mercury's `nextLink`, or null if this was the last
-   page — `last_received_date`, `last_run_at`).
+9. Update `poll_checkpoint` (`last_received_date`, `last_run_at`; `last_cursor` stays null — there
+   is no cursor).
 
 ### Why `DO NOTHING`, not `DO UPDATE`
 
@@ -71,7 +85,7 @@ orchestration's completeness call — a point where overwriting is safe — not 
 |---|---|---|
 | `dmer_document` | `INSERT ... ON CONFLICT (document_guid) DO NOTHING` | `id` (generated — this row's own id doubles as the tracing key on every log line/message; no separate `correlation_id`), `document_guid`, `document_name`, `mercury_document_status`, `document_priority`, `received_date`, `dps_date`, `queue`, `business_area`, `mercury_case_id`, `driver_key` (if supplied), `document_url` (Mercury's pre-signed URL — the Ingest Function reads it back from here, not from the queue message), `pipeline_status = RECEIVED`, `current_stage = INGEST`, `attempt_count = 0`, `first_seen_at`, `updated_at`. |
 | `driver` | `INSERT ... ON CONFLICT (licence_number) DO UPDATE` | `driver_key`, `licence_number`, `mercury_driver_id`, `first_name`, `last_name`, `last_synced_at`. Only when Mercury returned a driver object. |
-| `poll_checkpoint` | `UPDATE` | `source`, `last_cursor`, `last_received_date`, `last_run_at`. |
+| `poll_checkpoint` | `UPDATE` | `source`, `last_cursor` (null), `last_received_date`, `last_run_at`. |
 
 ### Concurrency
 
@@ -142,7 +156,9 @@ than Mercury itself.
 
 | Variable | Purpose |
 |---|---|
-| `MERCURY_BATCH_API_BASE_URL` | Mercury batch GET endpoint. |
+| `MERCURY_API_BASE_URL` | Mercury `GET dmers` endpoint (`https://<host>/Dmers`); the AI Processed call is `<it>/BatchSetDmerAIProccessedStatus`. |
+| `MERCURY_PAGE_SIZE` | Records per `GET dmers` call (default 50). |
+| `MERCURY_RECEIVED_DATE_TIMEZONE` | IANA zone `receivedDate` is read in when it has no offset (default `America/Vancouver`). |
 | `MERCURY_AUTH_*` | Mercury credentials, from Key Vault (see `../services/azure-key-vault.md`). Network path is ExpressRoute (question M-4, confirmed). |
 | `POLL_INTERVAL_MINUTES` | Timer schedule (default ~5; question I-14 may adjust). |
 | `SERVICEBUS_NAMESPACE`, `DMER_INGEST_QUEUE`, `DMER_RAW_QUEUE` | Service Bus wiring — see `../message-contracts.md`. |
@@ -177,10 +193,9 @@ bound for the life of the document. **Never log the licence number or clinical c
   `raw-dmer` write; add a path builder analogous to
   `libs/dmer_common/src/dmer_common/storage/paths.py` for
   `raw-dmer/{yyyy}/{MM}/{document_guid}.pdf`.
-- `libs/dmer_common/src/dmer_common/mercury_client/__init__.py` is currently an empty
-  anti-corruption-layer stub (docstring only) — the batch GET call, cursor-based pagination
-  (question M-2: confirmed cursor-based, `page_size`/`nextLink` shape), and driver/case parsing
-  need to be built here.
+- `libs/dmer_common/src/dmer_common/mercury_client/__init__.py` is the anti-corruption layer:
+  `get_page` (`GET dmers`, items translated to snake_case records) and `set_ai_processed` (the
+  claim). Mercury's shapes stay inside it.
 - `dmer_document`/`poll_checkpoint`/`driver` repositories do not exist yet — see
   `../data-model.md#alignment-gaps-vs-current-code`. Do not reuse `documents.py`'s `DocumentRepository`
   as-is; its status enum doesn't match `pipeline_status`.

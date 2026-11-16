@@ -1,4 +1,4 @@
-"""Local-only mock of the Mercury backlog API, for exercising intake-processor's
+"""Local-only mock of Mercury's GET dmers API, for exercising intake-processor's
 `dmer_poll` poller end to end without hitting the real Mercury service.
 
 Run it alongside Azurite, the local Postgres container, and `func start` (see
@@ -8,33 +8,19 @@ Run it alongside Azurite, the local Postgres container, and `func start` (see
 
 Then point local.settings.json at it and restart `func start`:
 
-    "MERCURY_API_BASE_URL": "http://localhost:8899/mercury/documents",
+    "MERCURY_API_BASE_URL": "http://localhost:8899/Dmers",
     "MERCURY_API_KEY": "local-dev-key"  # pragma: allowlist secret -- example value, not a real key
 
-Shape of what it serves matches Mercury's real response: each record carries
-the full set of fields Mercury actually returns (dps_queue, document_name,
-document_type, document_status, document_priority, received_date,
-document_type_business_area, queue, dmer_status, a driver object with
-first/last name + licence_number + a documents[] history, and a case
-object) -- intake-processor embeds all of it verbatim in the dmer-raw message
-(see _publish_message, called from dmer_ingest), so none of it should be
-dropped here just because intake-processor's own extraction logic only reads
-document_guid/document_url/driver.licence_number today. `document_url` is
-kept at the top level (not only nested inside driver.documents[]) since
-that's what intake-processor currently reads to know what to download --
-each one points back at this same server, which serves a tiny dummy PDF
-there so `_download_source_pdf` has something real to fetch.
+What it serves matches Mercury's GET dmers shape (camelCase `items`): three
+DMERs (one without a driver) and one non-DMER (an HRDIR report with no
+documentUrl, which the poller skips but still marks). Each DMER's
+documentUrl points back at this server, which serves a tiny dummy PDF so
+`_download_source_pdf` has something real to fetch.
 
-Two pages are served: page 1 (2 records, one with a driver and one without)
-has a `nextLink` to page 2 (1 record, with a driver); page 2 has no
-`nextLink`, so the next poll after that restarts the cycle at page 1 -- same
-end-of-cycle behaviour as the real design. Because the same three
-document_guids come back every cycle, restarting also exercises
-`_upsert_document_and_driver`'s upsert-on-conflict path: the dmer_document
-row is updated in place rather than duplicated, and a dmer-ingest message
-gets republished for it every cycle regardless -- Service Bus's duplicate
-detection window and dmer_ingest's own replay guard are what actually
-suppress reprocessing here, not the poller skipping already-known records.
+Claim-based, like Mercury: GET /Dmers?pageSize=N returns the first N records
+not yet marked; POST /Dmers/BatchSetDmerAIProccessedStatus {"dmerIds": [...]}
+marks them, and the next GET returns the ones after. Marks are kept in
+memory -- restart this script to start over (or POST /reset).
 """
 
 from __future__ import annotations
@@ -49,115 +35,85 @@ BASE = f"http://{HOST}:{PORT}"
 
 _DUMMY_PDF = b"%PDF-1.4\n% Mock DMER PDF for local testing\n%%EOF\n"
 
-_PAGE_1 = {
-    "value": [
-        {
-            "dps_queue": "General",
-            "document_guid": "bd4c19d6-4e12-45ae-a82b-dfac1fb91bd1",
-            "document_name": "DMER-0001 - MOCKONE.pdf",
-            "document_type": "DMER",
-            "document_status": "Uploaded",
-            "document_priority": "Regular",
-            "received_date": "2024-10-03T07:11:00Z",
-            "document_type_business_area": "Driver Fitness",
-            "queue": "Team - Intake",
-            "dmer_status": "",
-            "document_url": f"{BASE}/files/bd4c19d6-4e12-45ae-a82b-dfac1fb91bd1.pdf",
-            "driver": {
-                "driver_id": "D0001",
-                "first_name": "Mock",
-                "middle_name": "",
-                "last_name": "One",
-                "licence_number": "1234567",
-                "documents": [
-                    {
-                        "file_name": "DMER-0001 - MOCKONE",
-                        "document_type": "DMER",
-                        "document_status": "Uploaded",
-                        "uploaded_date": "2024-10-03T07:11:00Z",
-                        "document_url": f"{BASE}/files/bd4c19d6-4e12-45ae-a82b-dfac1fb91bd1.pdf",
-                        "dps_date": "",
-                    }
-                ],
-            },
-            "case": {
-                "case_id": "C0001",
-                "case_title": "0001 - MOCKONE - RSBC - 1",
-                "case_type": "RSBC",
-                "case_priority": "Regular",
-                "case_owner": "Team - Intake",
-                "case_status": "Open Pending Submission",
-            },
-        },
-        {
-            "dps_queue": "Unknown",
-            "document_guid": "ccf30a7b-8598-4bdc-a3ee-b7dc17c74f9f",
-            "document_name": "DMER-0002 - MOCKTWO.pdf",
-            "document_type": "DMER",
-            "document_status": "Uploaded",
-            "document_priority": "Regular",
-            "received_date": "2024-10-03T08:00:00Z",
-            "document_type_business_area": "Driver Fitness",
-            "queue": "Team - Intake",
-            "dmer_status": "",
-            "document_url": f"{BASE}/files/ccf30a7b-8598-4bdc-a3ee-b7dc17c74f9f.pdf",
-            "driver": None,
-            "case": {
-                "case_id": "C0002",
-                "case_title": "0002 - MOCKTWO - RSBC - 1",
-                "case_type": "RSBC",
-                "case_priority": "Regular",
-                "case_owner": "Team - Intake",
-                "case_status": "Open Pending Submission",
-            },
-        },
-    ],
-    "nextLink": f"{BASE}/mercury/documents?queue=BOTH&page_size=50&cursor=page2",
-}
 
-_PAGE_2 = {
-    "value": [
-        {
-            "dps_queue": "General",
-            "document_guid": "9e21b720-40c6-4fe2-937b-c0fe4534766d",
-            "document_name": "DMER-0003 - MOCKTHREE.pdf",
-            "document_type": "DMER",
-            "document_status": "Uploaded",
-            "document_priority": "Regular",
-            "received_date": "2024-10-03T09:00:00Z",
-            "document_type_business_area": "Driver Fitness",
-            "queue": "Team - Intake",
-            "dmer_status": "",
-            "document_url": f"{BASE}/files/9e21b720-40c6-4fe2-937b-c0fe4534766d.pdf",
-            "driver": {
-                "driver_id": "D0003",
-                "first_name": "Mock",
-                "middle_name": "",
-                "last_name": "Three",
-                "licence_number": "7654321",
-                "documents": [
-                    {
-                        "file_name": "DMER-0003 - MOCKTHREE",
-                        "document_type": "DMER",
-                        "document_status": "Uploaded",
-                        "uploaded_date": "2024-10-03T09:00:00Z",
-                        "document_url": f"{BASE}/files/9e21b720-40c6-4fe2-937b-c0fe4534766d.pdf",
-                        "dps_date": "",
-                    }
-                ],
-            },
-            "case": {
-                "case_id": "C0003",
-                "case_title": "0003 - MOCKTHREE - RSBC - 1",
-                "case_type": "RSBC",
-                "case_priority": "Regular",
-                "case_owner": "Team - Intake",
-                "case_status": "Open Pending Submission",
-            },
-        },
-    ],
-    "nextLink": None,
-}
+def _case(case_id: str, title: str) -> dict:
+    return {
+        "caseId": case_id,
+        "caseTitle": title,
+        "caseType": "Suspected Medical Condition",
+        "casePriority": "Regular",
+        "caseOwner": "Team - Intake",
+        "caseStatus": "Open Pending Submission",
+    }
+
+
+def _driver(driver_id: str, last_name: str, licence: str) -> dict:
+    return {
+        "driverId": driver_id,
+        "firstName": "Mock",
+        "middleName": "",
+        "lastName": last_name,
+        "licenceNumber": licence,
+        "documents": [],
+    }
+
+
+def _dmer(guid: str, name: str, received: str, driver: dict | None, case: dict) -> dict:
+    return {
+        "documentRecordId": guid,
+        "queue": "Team - Intake",
+        "documentName": name,
+        "documentUrl": f"{BASE}/files/{guid}.pdf",
+        "documentType": "DMER",
+        "submittalStatus": "Uploaded",
+        "documentPriority": "Regular",
+        "receivedDate": received,
+        "documentTypeBusinessArea": "Driver Fitness",
+        "dmerStatus": "Uploaded",
+        "driver": driver,
+        "dmerDocumentCaseRecord": case,
+    }
+
+
+_RECORDS = [
+    _dmer(
+        "bd4c19d6-4e12-45ae-a82b-dfac1fb91bd1",
+        "DMER-0001 - MOCKONE.pdf",
+        "10/03/2024 00:11:00",
+        _driver("D0001", "One", "1234567"),
+        _case("C0001", "0001 - MOCKONE - DMER - 1"),
+    ),
+    _dmer(
+        "ccf30a7b-8598-4bdc-a3ee-b7dc17c74f9f",
+        "DMER-0002 - MOCKTWO.pdf",
+        "10/03/2024 01:00:00",
+        None,
+        _case("C0002", "0002 - MOCKTWO - DMER - 1"),
+    ),
+    {
+        "documentRecordId": "05382879-02d0-ed11-b841-00505683fbf4",
+        "queue": "Team - Intake",
+        "documentName": "HRDIR High Risk Driving Incident Report-0003 - MOCKTHREE .",
+        "documentUrl": "",
+        "documentType": "HRDIR High Risk Driving Incident Report",
+        "submittalStatus": "Uploaded",
+        "documentPriority": "Critical Review",
+        "receivedDate": "10/03/2024 01:30:00",
+        "documentTypeBusinessArea": "",
+        "dmerStatus": "Uploaded",
+        "driver": _driver("D0003", "Three", "7654321"),
+        "dmerDocumentCaseRecord": _case("C0003", "0003 - MOCKTHREE - DIP - 1"),
+    },
+    _dmer(
+        "9e21b720-40c6-4fe2-937b-c0fe4534766d",
+        "DMER-0003 - MOCKTHREE.pdf",
+        "10/03/2024 02:00:00",
+        _driver("D0003", "Three", "7654321"),
+        _case("C0003", "0003 - MOCKTHREE - DMER - 1"),
+    ),
+]
+
+_marked: set[str] = set()
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -168,17 +124,24 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         query = parse_qs(parsed.query)
 
-        if parsed.path == "/mercury/documents":
+        if parsed.path.lower() == "/dmers":
             auth = self.headers.get("Authorization", "")
-            cursor = query.get("cursor", [None])[0]
-            page = _PAGE_2 if cursor == "page2" else _PAGE_1
-            page_name = "page 2" if cursor == "page2" else "page 1"
+            page_size = int(query.get("pageSize", ["50"])[0])
+            waiting = [r for r in _RECORDS if r["documentRecordId"] not in _marked]
+            items = waiting[:page_size]
+            more = len(waiting) > page_size
             print(
-                f"[mock-mercury] GET /mercury/documents (auth={'yes' if auth else 'NO'}, "
-                f"queue={query.get('queue')}, cursor={cursor!r}) -> serving {page_name}: "
-                f"{len(page['value'])} record(s), nextLink={'yes' if page['nextLink'] else 'no'}"
+                f"[mock-mercury] GET /Dmers (auth={'yes' if auth else 'NO'}, "
+                f"pageSize={page_size}) -> {len(items)} record(s), "
+                f"{len(_marked)} marked so far, nextLink={'yes' if more else 'no'}"
             )
-            self._send_json(page)
+            self._send_json(
+                {
+                    "items": items,
+                    "page_size": page_size,
+                    "nextLink": f"/Dmers?pageSize={page_size}" if more else None,
+                }
+            )
             return
 
         if parsed.path.startswith("/files/") and parsed.path.endswith(".pdf"):
@@ -189,6 +152,24 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         print(f"[mock-mercury] GET {parsed.path} -> 404 (unknown mock endpoint)")
+        self.send_error(404, "Unknown mock endpoint")
+
+    def do_POST(self):
+        path = urlparse(self.path).path.lower()
+        if path == "/dmers/batchsetdmeraiproccessedstatus":
+            length = int(self.headers.get("Content-Length", "0"))
+            ids = json.loads(self.rfile.read(length) or b"{}").get("dmerIds") or []
+            _marked.update(ids)
+            print(
+                f"[mock-mercury] POST BatchSetDmerAIProccessedStatus -> {len(ids)} marked"
+            )
+            self._send_json({"ok": True, "updated": len(ids)})
+            return
+        if path == "/reset":
+            _marked.clear()
+            print("[mock-mercury] POST /reset -> every record is waiting again")
+            self._send_json({"ok": True})
+            return
         self.send_error(404, "Unknown mock endpoint")
 
     def _send_json(self, body: dict) -> None:
@@ -210,7 +191,7 @@ class Handler(BaseHTTPRequestHandler):
 if __name__ == "__main__":
     server = ThreadingHTTPServer((HOST, PORT), Handler)
     print(f"[mock-mercury] Serving mock Mercury API on {BASE}")
-    print(f"[mock-mercury]   MERCURY_API_BASE_URL = {BASE}/mercury/documents")
+    print(f"[mock-mercury]   MERCURY_API_BASE_URL = {BASE}/Dmers")
     print("[mock-mercury] Ctrl+C to stop")
     try:
         server.serve_forever()

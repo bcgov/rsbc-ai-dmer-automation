@@ -1,2 +1,4 @@
 azure-functions
 azure-storage-blob
+# zoneinfo time-zone database (receivedDate is written in Pacific time)
+tzdata

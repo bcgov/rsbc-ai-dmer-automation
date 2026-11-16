@@ -93,7 +93,7 @@
       "value": "0 0 13 * * *"
     },
     "mercuryApiBaseUrl": {
-      "value": "https://func-mock-mercury-api-dev.azurewebsites.net/api/mercury/documents"
+      "value": "https://func-mock-mercury-api-dev.azurewebsites.net/api/mercury/dmers"
     },
     "mercuryQueue": {
       "value": "BOTH"

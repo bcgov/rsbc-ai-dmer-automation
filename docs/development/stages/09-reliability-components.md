@@ -145,8 +145,9 @@ incident — it is the evidence that the guarantee holds.
 ### Implementation
 
 `services/reliability/` (the `DailyReconciliation` timer, `reliability.reconciliation`) over
-`dmer_common.db.reconciliation`. It pages through Mercury's batch API (the DPS queue,
-`MERCURY_QUEUE`, at most `RECONCILIATION_MAX_PAGES`) and reports every document there that is
+`dmer_common.db.reconciliation`. It reads one page of Mercury's `GET dmers` — the documents
+still in the DPS queues, not yet marked AI Processed (the API is claim-based, so it cannot page
+further without claiming, which only the Page Poller does) — and reports every document there that is
 `NOT_RECEIVED` (past a grace period), `OVERDUE` in the pipeline, in `MANUAL_REVIEW` with nothing
 sent to Mercury, `NOT_POSTED` or `POST_FAILED`. A document whose outbox rows are all `SENT` is
 accounted for. The report (ids, statuses and dates only, plus the day's manual-review, fallback and

@@ -1,9 +1,13 @@
 """Anti-corruption layer for the Mercury (Dynamics) system.
 
-Wraps the batch/backlog GET API used by the Page Poller and Webhook Listener
-(see ``docs/development/stages/01-ingest.md``) and the ``GET by driver_licence``
-lookup used by Driver Lookup (``03-document-orchestration.md``): cursor-based pagination
-(question M-2, confirmed), Bearer-token auth from a Key Vault reference
+Wraps the ``GET dmers`` API used by the Page Poller (see
+``docs/development/stages/01-ingest.md``), the AI Processed status call that
+claims what it read, and the ``GET by driver_licence`` lookup used by Driver
+Lookup (``03-document-orchestration.md``). ``GET dmers`` is claim-based: each
+call returns the next records not yet marked AI Processed, so paging is
+"mark, then call again" (:meth:`MercuryClient.set_ai_processed`), not a
+cursor. Mercury's camelCase items are translated here into the snake_case
+records the rest of the pipeline reads. Bearer-token auth from a Key Vault reference
 (Mercury is outside our tenant boundary, over ExpressRoute -- key/credential
 auth, not Managed Identity, per question M-4), and retry/circuit-breaker
 wrapping, matching every other external client in this package.
@@ -29,8 +33,10 @@ import json
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Protocol
 from urllib.parse import quote
+from zoneinfo import ZoneInfo
 
 from ..config import (
     MercuryDriverSettings,
@@ -105,15 +111,92 @@ def _default_http_get(url: str, *, headers: dict[str, str]) -> tuple[int, bytes]
 
 @dataclass(frozen=True)
 class MercuryPage:
-    """One page of the Mercury batch GET response.
+    """One page of ``GET dmers``: every item Mercury returned (DMER or not),
+    as snake_case records (:func:`_record`).
 
-    ``next_url`` is the full URL to fetch the next page (Mercury's own
-    ``nextLink``, followed as-is rather than re-derived from an opaque
-    cursor value), or ``None`` when this is the last page.
+    ``has_more`` is Mercury's ``nextLink`` being present. The link itself is
+    not followed: it is the same request again, which only returns the next
+    records once these are marked AI Processed.
     """
 
     records: list[dict[str, Any]]
-    next_url: str | None
+    has_more: bool
+
+
+# Mercury's endpoint name, spelling included.
+_AI_PROCESSED_PATH = "BatchSetDmerAIProccessedStatus"
+_RECEIVED_DATE_FORMAT = "%m/%d/%Y %H:%M:%S"  # e.g. "05/06/2025 10:03:01"
+
+
+def _value(value: Any) -> Any:
+    """Mercury sends "" for an unset field; the pipeline uses None."""
+    return None if value == "" else value
+
+
+def _received_date(value: Any, zone: ZoneInfo) -> str | None:
+    """``receivedDate`` as ISO-8601 with an offset. Mercury sends
+    "MM/DD/YYYY HH:MM:SS" with no zone (read in *zone*); an ISO-8601 value is
+    also accepted, and keeps its own offset if it has one."""
+    if not value:
+        return None
+    text = str(value).strip()
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        try:
+            parsed = datetime.strptime(text, _RECEIVED_DATE_FORMAT).replace(tzinfo=zone)
+        except ValueError:
+            # The value itself is not logged: it is document data.
+            _log.warning("mercury receivedDate not understood; left unset")
+            return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=zone)
+    return parsed.isoformat()
+
+
+def _record(item: dict[str, Any], zone: ZoneInfo) -> dict[str, Any]:
+    """One ``GET dmers`` item as the record the Page Poller stores.
+    ``documentRecordId`` is the document guid -- also the id the AI Processed
+    call takes. ``submittalStatus`` is kept as the document status and
+    ``dmerStatus`` beside it, until Mercury says which one we should read."""
+    driver = item.get("driver")
+    case = item.get("dmerDocumentCaseRecord")
+    return {
+        "document_guid": _value(item.get("documentRecordId")),
+        "document_name": _value(item.get("documentName")),
+        "document_url": _value(item.get("documentUrl")),
+        "document_type": _value(item.get("documentType")),
+        "document_status": _value(item.get("submittalStatus")),
+        "dmer_status": _value(item.get("dmerStatus")),
+        "document_priority": _value(item.get("documentPriority")),
+        "received_date": _received_date(item.get("receivedDate"), zone),
+        "document_type_business_area": _value(item.get("documentTypeBusinessArea")),
+        "queue": _value(item.get("queue")),
+        "driver": (
+            {
+                "driver_id": _value(driver.get("driverId")),
+                "first_name": _value(driver.get("firstName")),
+                "middle_name": _value(driver.get("middleName")),
+                "last_name": _value(driver.get("lastName")),
+                "licence_number": _value(driver.get("licenceNumber")),
+                "documents": driver.get("documents") or [],
+            }
+            if isinstance(driver, dict)
+            else None
+        ),
+        "case": (
+            {
+                "case_id": _value(case.get("caseId")),
+                "case_title": _value(case.get("caseTitle")),
+                "case_type": _value(case.get("caseType")),
+                "case_priority": _value(case.get("casePriority")),
+                "case_owner": _value(case.get("caseOwner")),
+                "case_status": _value(case.get("caseStatus")),
+            }
+            if isinstance(case, dict)
+            else None
+        ),
+    }
 
 
 class MercuryClient:
@@ -169,21 +252,13 @@ class MercuryClient:
             self._driver_settings = mercury_driver_settings()
         return self._driver_settings
 
-    def get_page(
-        self, *, queue: str, page_size: int = 50, next_url: str | None = None
-    ) -> MercuryPage:
-        """Fetch one page of the backlog.
-
-        ``next_url`` (from a prior :class:`MercuryPage`), when given, is
-        fetched directly -- the Page Poller should not reconstruct the query
-        string itself once pagination has started. Retried with backoff on
-        transient failure (Requirement per 01-ingest.md's "Failure handling");
-        the caller's own poll_checkpoint is what makes a retry-from-scratch
-        safe.
+    def get_page(self, *, page_size: int = 50) -> MercuryPage:
+        """``GET dmers``: the next *page_size* records not yet marked AI
+        Processed -- the same ones again until they are
+        (:meth:`set_ai_processed`). Retried with backoff on transient failure
+        (01-ingest.md's "Failure handling").
         """
-        url = next_url or (
-            f"{self._settings.base_url}?queue={queue}&page_size={page_size}"
-        )
+        url = f"{self._settings.base_url}?pageSize={page_size}"
 
         @mercury_retry()
         def _run() -> MercuryPage:
@@ -204,7 +279,12 @@ class MercuryClient:
             )
             raise MercuryApiError(f"Mercury batch API returned HTTP {status}")
         payload = json.loads(body.decode("utf-8"))
-        records = payload.get("value", [])
+        zone = ZoneInfo(self._settings.received_date_timezone)
+        records = [
+            _record(item, zone)
+            for item in payload.get("items") or []
+            if isinstance(item, dict)
+        ]
         _log.info(
             "mercury batch API page fetched",
             extra={
@@ -212,7 +292,42 @@ class MercuryClient:
                 "has_next": bool(payload.get("nextLink")),
             },
         )
-        return MercuryPage(records=records, next_url=payload.get("nextLink"))
+        return MercuryPage(records=records, has_more=bool(payload.get("nextLink")))
+
+    def set_ai_processed(self, document_guids: list[str]) -> None:
+        """Mark *document_guids* AI Processed in Mercury
+        (``POST {base}/BatchSetDmerAIProccessedStatus``, ``{"dmerIds": [...]}``):
+        Mercury moves them to the AI Processed Queue, out of the DPS queues,
+        and ``GET dmers`` stops returning them. Retried with backoff on
+        failure; raises :class:`MercuryApiError` once retries are exhausted.
+        The ids are not logged, only how many.
+        """
+        if not document_guids:
+            return
+        url = f"{self._settings.base_url}/{_AI_PROCESSED_PATH}"
+        headers = {
+            "Authorization": f"Bearer {self._settings.api_key}",
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        }
+        body = json.dumps({"dmerIds": list(document_guids)}).encode("utf-8")
+
+        @mercury_retry()
+        def _run() -> None:
+            status, _ = self._http_send("POST", url, headers=headers, body=body)
+            if status < 200 or status >= 300:
+                _log.error(
+                    "mercury AI processed status call failed", extra={"status": status}
+                )
+                raise MercuryApiError(
+                    f"Mercury AI processed status call returned HTTP {status}"
+                )
+
+        self._breaker.call(_run)
+        _log.info(
+            "mercury AI processed status set",
+            extra={"record_count": len(document_guids)},
+        )
 
     def get_driver_by_licence(self, licence_number: str) -> list[dict[str, Any]]:
         """Every driver Mercury holds under *licence_number* (``GET by

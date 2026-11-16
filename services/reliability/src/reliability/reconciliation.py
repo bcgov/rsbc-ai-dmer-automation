@@ -1,7 +1,7 @@
 """Daily reconciliation report (09-reliability-components.md, azure-monitor.md).
 
-Pages through Mercury's DPS queue (the batch API), checks every document
-against our tables (:func:`dmer_common.db.reconciliation.reconcile`), adds the
+Reads the documents still in Mercury's DPS queues (``GET dmers``), checks
+every one against our tables (:func:`dmer_common.db.reconciliation.reconcile`), adds the
 day's figures (:func:`daily_metrics`), saves the whole report as JSON to
 ``RECONCILIATION_CONTAINER`` (``<date>.json``) and logs a summary -- the line
 the alert rules watch. The report holds ids, statuses and dates only.
@@ -29,7 +29,6 @@ _log = get_logger(__name__)
 class ReportSettings:
     queue: str = "BOTH"
     page_size: int = 50
-    max_pages: int = 2000  # bounds one run (100k documents at 50 a page)
     receive_grace: timedelta = timedelta(hours=2)
     overdue: timedelta = timedelta(hours=24)
 
@@ -46,27 +45,20 @@ def _date(value: Any) -> datetime | None:
 async def mercury_documents(
     client: Any, settings: ReportSettings
 ) -> tuple[list[MercuryDocument], bool]:
-    """Every document in the DPS queue (up to ``max_pages``); and whether the
-    queue was read to the end."""
+    """The documents still in the DPS queues -- the ones the Page Poller has
+    not yet marked AI Processed -- and whether that was all of them.
+
+    One page only: ``GET dmers`` is claim-based, so the next page appears
+    only once these are marked, and marking is the Page Poller's job, not
+    the report's. A document still here past ``receive_grace`` means the
+    poller is not keeping up (or not running)."""
     documents: dict[str, MercuryDocument] = {}
-    next_url = None
-    for _ in range(settings.max_pages):
-        page = await run_sync(
-            client.get_page,
-            queue=settings.queue,
-            page_size=settings.page_size,
-            next_url=next_url,
-        )
-        for record in page.records:
-            guid = str(record.get("document_guid") or "")
-            if guid:
-                documents[guid] = MercuryDocument(
-                    guid, _date(record.get("received_date"))
-                )
-        next_url = page.next_url
-        if not next_url:
-            return list(documents.values()), True
-    return list(documents.values()), False
+    page = await run_sync(client.get_page, page_size=settings.page_size)
+    for record in page.records:
+        guid = str(record.get("document_guid") or "")
+        if guid:
+            documents[guid] = MercuryDocument(guid, _date(record.get("received_date")))
+    return list(documents.values()), not page.has_more
 
 
 async def run_report(

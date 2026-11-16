@@ -130,15 +130,15 @@ param postgresPort string = '5432'
 @description('Postgres database name.')
 param postgresDatabase string = 'dmer'
 
-@description('Mercury backlog API base URL (unpaginated), e.g. https://<mercury-host>/documents. Passed straight through as MERCURY_API_BASE_URL — see function_app.py\'s _get_base_mercury_url.')
+@description('Mercury GET dmers endpoint, e.g. https://<mercury-host>/Dmers (MERCURY_API_BASE_URL). The Page Poller calls it with ?pageSize= and marks what it read AI Processed at <this URL>/BatchSetDmerAIProccessedStatus.')
 param mercuryApiBaseUrl string = ''
 
 @secure()
 @description('Bearer token for the Mercury API. Supply via a pipeline secret, never checked into a parameters.json file.')
 param mercuryApiKey string = ''
 
-@description('Mercury queue selector, passed straight through as the `queue` query parameter — DPS_GENERAL | DPS_UNKNOWN | BOTH (a single combined result stream, not something this code fans out over — see docs/services/intake-processor.md).')
-param mercuryQueue string = 'BOTH'
+@description('IANA time zone Mercury\'s receivedDate is read in when it carries no offset (Mercury sends "MM/DD/YYYY HH:MM:SS"). Pacific until Mercury confirms the zone.')
+param mercuryReceivedDateTimezone string = 'America/Vancouver'
 
 @description('Mercury API page size.')
 param mercuryPageSize string = '50'
@@ -199,8 +199,8 @@ var appSettings = {
   POSTGRES_USER: functionAppName
   MERCURY_API_BASE_URL: mercuryApiBaseUrl
   MERCURY_API_KEY: mercuryApiKey
-  MERCURY_QUEUE: mercuryQueue
   MERCURY_PAGE_SIZE: mercuryPageSize
+  MERCURY_RECEIVED_DATE_TIMEZONE: mercuryReceivedDateTimezone
   SERVICE_BUS_NAMESPACE_FQDN: serviceBusNamespaceFqdn
   // Identity-based connection for the dmer_ingest function's Service Bus
   // *trigger* binding specifically -- a different mechanism from

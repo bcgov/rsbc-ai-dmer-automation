@@ -17,6 +17,9 @@ dependencies = [
     "SQLAlchemy[asyncio]>=2.0,<3",
     "asyncpg>=0.29",
     "python-dateutil>=2.8,<3",
+    # zoneinfo's time-zone database where the OS has none (Windows): Mercury's
+    # receivedDate has no offset and is read in a configured zone.
+    "tzdata",
     # GoRules ZEN. Pinned to a minor: rules.json was written and tested against
     # 0.51's expression semantics (null comparisons, date units).
     "zen-engine>=0.51,<0.52",

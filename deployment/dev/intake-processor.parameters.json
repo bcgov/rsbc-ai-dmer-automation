@@ -28,9 +28,8 @@
     "postgresPort": { "value": "5432" },
     "postgresDatabase": { "value": "dmer" },
     "mercuryApiBaseUrl": {
-      "value": "https://func-mock-mercury-api-dev.azurewebsites.net/api/mercury/documents"
+      "value": "https://func-mock-mercury-api-dev.azurewebsites.net/api/mercury/dmers"
     },
-    "mercuryQueue": { "value": "BOTH" },
     "mercuryPageSize": { "value": "50" },
     "serviceBusNamespaceFqdn": {
       "value": "sb-rsbc-dmer-shared-dev-001.servicebus.windows.net"

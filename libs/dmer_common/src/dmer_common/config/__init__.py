@@ -92,17 +92,25 @@ class MercurySettings:
     ``api_key`` originates from a Key Vault reference (Mercury is outside our
     tenant boundary, over ExpressRoute -- key/credential auth, not Managed
     Identity, per question M-4); it must never be logged.
+
+    ``base_url`` is the ``GET dmers`` endpoint (``https://<host>/Dmers``); the
+    AI Processed status call hangs off it. ``received_date_timezone`` is the
+    IANA zone Mercury's ``receivedDate`` is read in when it carries no offset
+    (Pacific until Mercury confirms otherwise).
     """
 
     base_url: str
     api_key: str
+    received_date_timezone: str = "America/Vancouver"
 
 
 def mercury_settings() -> MercurySettings:
     """Load Mercury batch API settings from configuration."""
     return MercurySettings(
-        base_url=require("MERCURY_API_BASE_URL"),
+        base_url=require("MERCURY_API_BASE_URL").rstrip("/"),
         api_key=require("MERCURY_API_KEY"),
+        received_date_timezone=get("MERCURY_RECEIVED_DATE_TIMEZONE")
+        or "America/Vancouver",
     )
 
 

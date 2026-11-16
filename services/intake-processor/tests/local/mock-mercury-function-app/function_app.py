@@ -7,8 +7,15 @@
 #
 # Read endpoints (write-back endpoints for the Outbox Publisher are at the end):
 #
-#   GET /api/mercury/documents?queue=&page_size=&cursor=
-#       The batch/backlog list the Page Poller reads (one record per DMER).
+#   GET  /api/mercury/dmers?pageSize=
+#       Mercury's GET dmers, in its shape (camelCase "items"): the first
+#       pageSize documents not yet marked AI Processed -- DMERs and, like
+#       Mercury, other document types (no documentUrl). Claim-based: the
+#       same call returns the next ones once these are marked.
+#   POST /api/mercury/dmers/BatchSetDmerAIProccessedStatus  {"dmerIds": [...]}
+#       Marks documents AI Processed: one blob per guid in
+#       MOCK_AI_PROCESSED_CONTAINER (default "mock-ai-processed"). Delete a
+#       blob there to make that document come back.
 #   GET /api/mercury/drivers/{licence_number}
 #       The driver-licence lookup Driver Lookup reads: the driver, every
 #       active document Mercury holds for them, and their case. 404 when no
@@ -26,9 +33,10 @@
 #   -- the original behaviour.
 # - PDFs in a folder ("drv-a/DMER-0001.pdf", "drv-a/report.pdf") share one
 #   driver and case: the folder is the driver.
-# - "nodriver" in the name: no driver (`driver: null` in the batch list).
+# - "nodriver" in the name: no driver (`driver: null` in GET dmers).
 # - "report" in the file name: document_type "Test Report". These appear in
-#   the driver's active_documents but not in the batch list, which is DMERs.
+#   the driver's active_documents, and in GET dmers with an empty
+#   documentUrl, as Mercury's non-DMER items do.
 # - "rejected" in the file name: document_status "Rejected", with a dps_date.
 #
 # Stable identity across polls: document_guid is a uuid5 of the blob name and
@@ -51,7 +59,7 @@ import json
 import os
 import uuid
 from datetime import UTC, datetime, timedelta
-from urllib.parse import urlencode
+from zoneinfo import ZoneInfo
 
 import azure.functions as func
 from azure.storage.blob import BlobSasPermissions, BlobServiceClient, generate_blob_sas
@@ -191,14 +199,29 @@ def _driver_identity(group: str) -> dict:
     }
 
 
-def _batch_record(blob, document_url: str, group_documents: list[dict]) -> dict:
+# Mercury's receivedDate: "MM/DD/YYYY HH:MM:SS" with no zone -- written here
+# in Pacific time, the zone the pipeline reads it in by default.
+_MERCURY_DATE = "%m/%d/%Y %H:%M:%S"
+_PACIFIC = ZoneInfo("America/Vancouver")
+
+
+def _dmers_item(blob, document_url: str) -> dict:
+    """One GET dmers item, in Mercury's camelCase shape. A non-DMER (a
+    "report" blob) has no documentUrl, as in Mercury."""
     guid = _guid(blob.name)
     group = _driver_group(blob.name)
+    is_dmer = _document_type(blob.name) == "DMER"
     driver = None
     if group is not None:
-        # The batch shape's driver documents keep their own key name and dps_date.
-        documents = [{"dps_date": "", **d} for d in group_documents]
-        driver = {**_driver_identity(group), "documents": documents}
+        identity = _driver_identity(group)
+        driver = {
+            "driverId": identity["driver_id"],
+            "firstName": identity["first_name"],
+            "middleName": identity["middle_name"],
+            "lastName": identity["last_name"],
+            "licenceNumber": identity["licence_number"],
+            "documents": [],
+        }
     case = (
         _case(group)
         if group is not None
@@ -212,20 +235,43 @@ def _batch_record(blob, document_url: str, group_documents: list[dict]) -> dict:
         }
     )
     return {
-        "dps_queue": "General",
-        "document_guid": guid,
-        "document_name": _file_name(blob.name),
-        "document_type": "DMER",
-        "document_status": "Uploaded",
-        "document_priority": "Regular",
-        "received_date": _received(blob),
-        "document_type_business_area": "Driver Fitness",
+        "documentRecordId": guid,
         "queue": "Team - Intake",
-        "dmer_status": "",
-        "document_url": document_url,
+        "documentName": _file_name(blob.name),
+        "documentUrl": document_url if is_dmer else "",
+        "documentType": _document_type(blob.name),
+        "submittalStatus": "Uploaded",
+        "documentPriority": "Regular",
+        "receivedDate": blob.last_modified.astimezone(_PACIFIC).strftime(_MERCURY_DATE),
+        "documentTypeBusinessArea": "Driver Fitness" if is_dmer else "",
+        "dmerStatus": "Uploaded",
         "driver": driver,
-        "case": case,
+        "dmerDocumentCaseRecord": {
+            "caseId": case["case_id"],
+            "caseTitle": case["case_title"],
+            "caseType": case["case_type"],
+            "casePriority": case["case_priority"],
+            "caseOwner": case["case_owner"],
+            "caseStatus": case["case_status"],
+        },
     }
+
+
+def _ai_processed_container():
+    from azure.core.exceptions import ResourceExistsError
+
+    container = _service().get_container_client(
+        os.environ.get("MOCK_AI_PROCESSED_CONTAINER", "mock-ai-processed")
+    )
+    try:
+        container.create_container()
+    except ResourceExistsError:
+        pass
+    return container
+
+
+def _ai_processed() -> set[str]:
+    return {b.name for b in _ai_processed_container().list_blobs()}
 
 
 def _documents_by_group(service: BlobServiceClient, blobs: list, now: datetime):
@@ -239,41 +285,49 @@ def _documents_by_group(service: BlobServiceClient, blobs: list, now: datetime):
     return urls, groups
 
 
-@app.route(
-    route="mercury/documents", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS
-)
-def mercury_documents(req: func.HttpRequest) -> func.HttpResponse:
-    queue = req.params.get("queue", "BOTH")
+@app.route(route="mercury/dmers", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
+def mercury_dmers(req: func.HttpRequest) -> func.HttpResponse:
     page_size = max(
-        1, min(_int_param(req, "page_size", _DEFAULT_PAGE_SIZE), _MAX_PAGE_SIZE)
+        1, min(_int_param(req, "pageSize", _DEFAULT_PAGE_SIZE), _MAX_PAGE_SIZE)
     )
-    # A non-numeric cursor (e.g. "page2" from the previous static mock, still
-    # sitting in a poll_checkpoint row) restarts from the first page.
-    offset = max(0, _int_param(req, "cursor", 0))
-
     service = _service()
-    blobs = _pdfs(service)
-    dmers = [b for b in blobs if _document_type(b.name) == "DMER"]
-    urls, groups = _documents_by_group(service, blobs, datetime.now(UTC))
-    records = [
-        _batch_record(b, urls[b.name], groups.get(_driver_group(b.name) or "", []))
-        for b in dmers[offset : offset + page_size]
-    ]
-
-    next_offset = offset + page_size
-    next_link = None
-    if next_offset < len(dmers):
-        base_url = req.url.split("/api/")[0]
-        query = urlencode(
-            {"queue": queue, "page_size": page_size, "cursor": next_offset}
-        )
-        next_link = f"{base_url}/api/mercury/documents?{query}"
-
+    marked = _ai_processed()
+    waiting = [b for b in _pdfs(service) if _guid(b.name) not in marked]
+    page = waiting[:page_size]
+    now = datetime.now(UTC)
+    items = [_dmers_item(b, _signed_url(service, b.name, now)) for b in page]
+    # Mercury's nextLink is the same request again (relative); null when
+    # nothing waits beyond this page.
+    next_link = f"/Dmers?pageSize={page_size}" if len(waiting) > page_size else None
     return func.HttpResponse(
-        json.dumps({"value": records, "nextLink": next_link}),
+        json.dumps({"items": items, "page_size": page_size, "nextLink": next_link}),
         mimetype="application/json",
         status_code=200,
     )
+
+
+@app.route(
+    route="mercury/dmers/BatchSetDmerAIProccessedStatus",
+    methods=["POST"],
+    auth_level=func.AuthLevel.ANONYMOUS,
+)
+def mercury_set_ai_processed(req: func.HttpRequest) -> func.HttpResponse:
+    fail = os.environ.get("MOCK_WRITE_FAIL_STATUS", "").strip()
+    if fail:
+        return _json({"error": "simulated outage"}, int(fail))
+    try:
+        ids = req.get_json().get("dmerIds")
+    except (ValueError, AttributeError):
+        return _json({"error": "body must be JSON with dmerIds"}, 400)
+    if not isinstance(ids, list) or not all(isinstance(i, str) and i for i in ids):
+        return _json({"error": "dmerIds must be a list of ids"}, 400)
+    container = _ai_processed_container()
+    received_at = datetime.now(UTC).strftime(_ISO)
+    sources = {_guid(b.name): b.name for b in _pdfs(_service())}
+    for guid in ids:
+        record = {"received_at": received_at, "source_blob": sources.get(guid)}
+        container.get_blob_client(guid).upload_blob(json.dumps(record), overwrite=True)
+    return _json({"ok": True, "updated": len(ids)})
 
 
 def _same_licence(a: str, b: str) -> bool:

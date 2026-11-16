@@ -254,7 +254,6 @@ def report_settings() -> ReportSettings:
     return ReportSettings(
         queue=os.environ.get("MERCURY_QUEUE", "BOTH"),
         page_size=_int("MERCURY_PAGE_SIZE", 50),
-        max_pages=_int("RECONCILIATION_MAX_PAGES", 2000),
         receive_grace=timedelta(hours=_int("RECONCILIATION_RECEIVE_GRACE_HOURS", 2)),
         overdue=timedelta(hours=_int("RECONCILIATION_OVERDUE_HOURS", 24)),
     )

@@ -17,6 +17,7 @@ import json
 from datetime import datetime
 
 import function_app as fa
+from dmer_common.mercury_client import MercuryPage
 
 
 def test_parse_mercury_datetime_none_and_empty_return_none():
@@ -222,6 +223,103 @@ def test_upsert_document_and_driver_extracts_mercury_case_id():
     asyncio.run(run())
 
     assert doc_repo.calls[0]["mercury_case_id"] == "C1234"
+
+
+# ---------------------------------------------------------------------------
+# Page Poller: one GET dmers page, then mark it AI Processed
+# ---------------------------------------------------------------------------
+
+
+class _FakeMercury:
+    """GET dmers returns *records*; every call is recorded in *events*."""
+
+    def __init__(self, records, events, *, mark_fails=False):
+        self.records, self.events, self.mark_fails = records, events, mark_fails
+
+    def get_page(self, *, page_size):
+        self.events.append(("get_page", page_size))
+        return MercuryPage(records=self.records, has_more=False)
+
+    def set_ai_processed(self, guids):
+        self.events.append(("set_ai_processed", list(guids)))
+        if self.mark_fails:
+            raise RuntimeError("Mercury unavailable")
+
+
+class _FakeCheckpointRepo:
+    def __init__(self, events):
+        self.events = events
+
+    async def update(self, source, **kwargs):
+        self.events.append(("checkpoint", source, kwargs["last_cursor"]))
+
+
+def _poll(monkeypatch, records, *, mark_fails=False):
+    events: list = []
+    doc_repo = _FakeDocRepo()
+    monkeypatch.setattr(fa, "DmerDocumentRepository", lambda engine: doc_repo)
+    monkeypatch.setattr(fa, "DriverRepository", lambda engine: _FakeDriverRepo())
+    monkeypatch.setattr(
+        fa, "PollCheckpointRepository", lambda engine: _FakeCheckpointRepo(events)
+    )
+    monkeypatch.setattr(
+        fa,
+        "_publish_message",
+        lambda queue, message_id, body: events.append(("publish", message_id)),
+    )
+    monkeypatch.setenv("MERCURY_PAGE_SIZE", "50")
+    mercury = _FakeMercury(records, events, mark_fails=mark_fails)
+    error = None
+    try:
+        asyncio.run(fa._run_poll(object(), mercury))
+    except RuntimeError as exc:
+        error = exc
+    return events, doc_repo, error
+
+
+_DMER = {"document_guid": "G1", "document_type": "DMER", "document_url": "u1"}
+_HRDIR = {
+    "document_guid": "G2",
+    "document_type": "HRDIR High Risk Driving Incident Report",
+    "document_url": None,
+}
+_DMER_2 = {"document_guid": "G3", "document_type": "dmer", "document_url": "u3"}
+
+
+def test_poll_stores_and_queues_only_the_dmers(monkeypatch):
+    events, doc_repo, _ = _poll(monkeypatch, [_DMER, _HRDIR, _DMER_2])
+    assert [c["document_guid"] for c in doc_repo.calls] == ["G1", "G3"]
+    assert [e[1] for e in events if e[0] == "publish"] == ["G1", "G3"]
+
+
+def test_poll_marks_every_record_ai_processed_after_queuing_the_dmers(monkeypatch):
+    # Non-DMERs are marked too, so GET dmers stops returning them.
+    events, _, error = _poll(monkeypatch, [_DMER, _HRDIR, _DMER_2])
+    assert error is None
+    assert [e[0] for e in events] == [
+        "get_page",
+        "publish",
+        "publish",
+        "set_ai_processed",
+        "checkpoint",
+    ]
+    assert ("set_ai_processed", ["G1", "G2", "G3"]) in events
+    assert ("get_page", 50) in events
+    assert ("checkpoint", "BACKLOG", None) in events  # claim-based: no cursor
+
+
+def test_a_failed_mark_fails_the_poll_so_the_next_tick_gets_the_page_again(
+    monkeypatch,
+):
+    events, _, error = _poll(monkeypatch, [_DMER], mark_fails=True)
+    assert error is not None
+    assert [e[0] for e in events] == ["get_page", "publish", "set_ai_processed"]
+
+
+def test_an_empty_page_stores_nothing_and_marks_nothing(monkeypatch):
+    events, doc_repo, _ = _poll(monkeypatch, [])
+    assert doc_repo.calls == []
+    assert ("set_ai_processed", []) in events  # the client skips an empty call
 
 
 class _FakeBlobServiceClient:

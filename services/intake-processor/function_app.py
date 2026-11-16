@@ -4,9 +4,10 @@
 # replacing the original single-function `dmer_intake` design. Three
 # components, per that doc:
 #
-# - Page Poller (timer): calls Mercury's batch GET for one page, upserts
-#   `dmer_document`/`driver`, publishes one `dmer-ingest` message per
-#   document.
+# - Page Poller (timer): calls Mercury's GET dmers for one page, upserts
+#   `dmer_document`/`driver` and publishes one `dmer-ingest` message per
+#   DMER, then marks every record on the page AI Processed in Mercury (which
+#   is what makes the next GET return the next page).
 # - Ingest Function (Service Bus trigger on dmer-ingest): downloads the
 #   source PDF (from `dmer_document.document_url`, not the queue message --
 #   see that column's comment in database/migrations/V0001__*.sql for why),
@@ -290,24 +291,32 @@ async def _upsert_document_and_driver(
     return document_id, driver_key
 
 
-async def _run_poll(engine: AsyncEngine) -> None:
+def _is_dmer(record: dict) -> bool:
+    """GET dmers also returns other document types (HRDIR reports, backfiles
+    -- with no documentUrl); only DMERs enter the pipeline."""
+    return str(record.get("document_type") or "").strip().upper() == "DMER"
+
+
+async def _run_poll(engine: AsyncEngine, mercury: MercuryClient | None = None) -> None:
+    """One page: store and queue its DMERs, then mark every record on it
+    (DMER or not) AI Processed so GET dmers returns the next ones.
+
+    Marking comes last, once the DMERs are in dmer_document and on
+    dmer-ingest. If it fails the poll fails, and the next tick gets the same
+    records again -- storing and publishing them twice is harmless (upsert by
+    document_guid, Service Bus duplicate detection), so nothing is lost and
+    nothing is processed twice.
+    """
     checkpoint_repo = PollCheckpointRepository(engine)
     doc_repo = DmerDocumentRepository(engine)
     driver_repo = DriverRepository(engine)
 
-    checkpoint = await checkpoint_repo.get(_POLL_SOURCE)
-    last_cursor = checkpoint.last_cursor if checkpoint else None
-
-    mercury = MercuryClient()
-    queue = os.environ.get("MERCURY_QUEUE", "BOTH")
+    mercury = mercury or MercuryClient()
     page_size = int(os.environ.get("MERCURY_PAGE_SIZE", "50"))
-    page = await _run_sync(
-        functools.partial(
-            mercury.get_page, queue=queue, page_size=page_size, next_url=last_cursor
-        )
-    )
+    page = await _run_sync(functools.partial(mercury.get_page, page_size=page_size))
 
-    for record in page.records:
+    dmers = [r for r in page.records if _is_dmer(r) and r.get("document_guid")]
+    for record in dmers:
         document_id, driver_key = await _upsert_document_and_driver(
             record, doc_repo=doc_repo, driver_repo=driver_repo
         )
@@ -335,15 +344,21 @@ async def _run_poll(engine: AsyncEngine) -> None:
                 extra={"document_guid": record["document_guid"]},
             )
 
+    guids = [str(r["document_guid"]) for r in page.records if r.get("document_guid")]
+    await _run_sync(mercury.set_ai_processed, guids)
+
     now = datetime.now(UTC)
+    # No cursor: GET dmers is claim-based, so the next page is the same call.
     await checkpoint_repo.update(
-        _POLL_SOURCE, last_cursor=page.next_url, last_received_date=now, last_run_at=now
+        _POLL_SOURCE, last_cursor=None, last_received_date=now, last_run_at=now
     )
     _log.info(
         "poll complete",
         extra={
             "record_count": len(page.records),
-            "has_next": bool(page.next_url),
+            "dmer_count": len(dmers),
+            "marked_ai_processed": len(guids),
+            "has_next": page.has_more,
         },
     )
 
