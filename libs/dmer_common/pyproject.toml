@@ -19,7 +19,7 @@ dependencies = [
     "python-dateutil>=2.8,<3",
     # GoRules ZEN. Pinned to a minor: rules.json was written and tested against
     # 0.51's expression semantics (null comparisons, date units).
-    "zen-engine>=0.51,<0.52",
+    "zen-engine>=0.51,<2.2",
 ]
 
 [project.optional-dependencies]
