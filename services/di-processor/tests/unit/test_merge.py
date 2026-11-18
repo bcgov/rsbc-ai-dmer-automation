@@ -4,6 +4,8 @@ Semantics: the custom-model output defines the keys. For every handwritten key
 it also output: a high-confidence handwritten value wins; a low-confidence one
 wins unless the custom model read the field with confidence above 0.75, in which
 case the custom-model value is kept. The handwritten value used can be empty.
+A visual acuity field the custom model read with confidence 0.95 or above keeps
+the custom-model value (empty included), whatever the handwritten reading.
 Handwritten keys the custom model did not output are never added.
 """
 
@@ -12,7 +14,12 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import pytest
-from di_processor.extraction.merge import CUSTOM_MODEL_KEEP_CONFIDENCE, merge
+from di_processor.extraction.merge import (
+    CUSTOM_MODEL_KEEP_CONFIDENCE,
+    VISUAL_ACUITY_FIELDS,
+    VISUAL_ACUITY_KEEP_CONFIDENCE,
+    merge,
+)
 from di_processor.extraction.schemas import (
     Confidence,
     HandwrittenExtraction,
@@ -165,6 +172,68 @@ def test_low_confidence_image_value_still_fills_existing_key():
     )
     combined = merge("doc-1", top, hw)
     assert combined.fields["visual_acuity.uncorrected_right"] == "24/30"
+
+
+def _acuity(field, custom_value, custom_conf, hw_value, hw_conf):
+    """Merge one visual acuity field: custom (value, conf) vs handwritten."""
+    top = TopLevelExtraction(
+        fields={field: TopLevelField(value=custom_value, confidence=custom_conf)}
+    )
+    source = Source.BOTH if hw_conf is Confidence.HIGH else Source.IMAGE
+    hw = HandwrittenExtraction(
+        fields={
+            field: HandwrittenField(value=hw_value, confidence=hw_conf, source=source)
+        }
+    )
+    return merge("doc-1", top, hw).fields[field]
+
+
+def test_visual_acuity_threshold_and_fields():
+    assert VISUAL_ACUITY_KEEP_CONFIDENCE == 0.95
+    assert VISUAL_ACUITY_FIELDS == {
+        "visual_acuity.corrected_left",
+        "visual_acuity.corrected_right",
+        "visual_acuity.corrected_both",
+        "visual_acuity.uncorrected_left",
+        "visual_acuity.uncorrected_right",
+        "visual_acuity.uncorrected_both",
+    }
+
+
+@pytest.mark.parametrize("field", sorted(VISUAL_ACUITY_FIELDS))
+@pytest.mark.parametrize("custom_conf", [0.95, 0.99])
+def test_confident_custom_acuity_value_beats_high_handwritten(field, custom_conf):
+    assert _acuity(field, "20/30", custom_conf, "20/80", Confidence.HIGH) == "20/30"
+
+
+@pytest.mark.parametrize("field", sorted(VISUAL_ACUITY_FIELDS))
+def test_confident_custom_acuity_blank_beats_high_handwritten(field):
+    # the custom model is sure the box is empty -> it stays empty
+    assert _acuity(field, "", 0.98, "20/40", Confidence.HIGH) == ""
+
+
+def test_confident_custom_acuity_value_is_not_blanked_by_handwritten():
+    field = "visual_acuity.corrected_both"
+    assert _acuity(field, "20/30", 0.96, "", Confidence.LOW) == "20/30"
+
+
+@pytest.mark.parametrize(
+    ("custom_conf", "hw_conf", "expected"),
+    [
+        (0.949, Confidence.HIGH, "20/80"),  # below 0.95: high handwritten wins
+        (0.9, Confidence.LOW, "20/30"),  # above 0.75: low handwritten loses
+        (0.7, Confidence.LOW, "20/80"),  # 0.75 or below: low handwritten wins
+        (None, Confidence.HIGH, "20/80"),  # no confidence: existing rule
+    ],
+)
+def test_acuity_below_095_follows_the_existing_rule(custom_conf, hw_conf, expected):
+    field = "visual_acuity.corrected_right"
+    assert _acuity(field, "20/30", custom_conf, "20/80", hw_conf) == expected
+
+
+def test_095_rule_applies_only_to_visual_acuity():
+    # a non-acuity field at 0.99 still loses to a high handwritten reading
+    assert _one("", 0.99, "26/30", Confidence.HIGH) == "26/30"
 
 
 def test_metadata_and_uncertain_fields_carried():
