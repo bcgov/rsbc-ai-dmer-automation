@@ -8,6 +8,9 @@ Overwrite rule, for every handwritten field (the keys in
 ``dmer_field_schema.json``) that the custom model also output -- decided by the
 two confidences:
 
+- a visual acuity field (``VISUAL_ACUITY_FIELDS``) the custom model read with
+  confidence ``VISUAL_ACUITY_KEEP_CONFIDENCE`` (0.95) or above -> the
+  custom-model value, whatever the handwritten reading, an empty value included;
 - handwritten (DI OCR + LLM) confidence ``high`` -> the handwritten value;
 - handwritten confidence ``low``:
   - custom-model confidence above ``CUSTOM_MODEL_KEEP_CONFIDENCE`` (0.75) -> the
@@ -34,6 +37,17 @@ from .schemas import (
 # with a confidence above this.
 CUSTOM_MODEL_KEEP_CONFIDENCE = 0.75
 
+# The visual acuity grid: a custom-model reading at or above
+# VISUAL_ACUITY_KEEP_CONFIDENCE is kept over any handwritten reading. The
+# handwriting LLM reads this grid inconsistently between runs (values swapped
+# between rows, or one row's values copied into another).
+VISUAL_ACUITY_FIELDS = frozenset(
+    f"visual_acuity.{correction}_{eye}"
+    for correction in ("corrected", "uncorrected")
+    for eye in ("left", "right", "both")
+)
+VISUAL_ACUITY_KEEP_CONFIDENCE = 0.95
+
 
 def merge(
     document_id: str,
@@ -57,7 +71,7 @@ def merge(
     for key, hw in handwritten.fields.items():
         if key not in fields:
             continue  # handwritten path never introduces new keys
-        if _keep_custom_model(hw.confidence, top_level.fields[key].confidence):
+        if _keep_custom_model(key, hw.confidence, top_level.fields[key].confidence):
             continue
         fields[key] = hw.value
 
@@ -73,11 +87,19 @@ def merge(
 
 
 def _keep_custom_model(
-    handwritten_confidence: Confidence, custom_confidence: float | None
+    key: str, handwritten_confidence: Confidence, custom_confidence: float | None
 ) -> bool:
     """True when the custom-model value is kept instead of the handwritten one:
-    the handwritten reading is low confidence and the custom model read the field
-    with a confidence above ``CUSTOM_MODEL_KEEP_CONFIDENCE``."""
+    a visual acuity field the custom model read with a confidence of
+    ``VISUAL_ACUITY_KEEP_CONFIDENCE`` or above, or a low-confidence handwritten
+    reading of a field the custom model read with a confidence above
+    ``CUSTOM_MODEL_KEEP_CONFIDENCE``."""
+    if (
+        key in VISUAL_ACUITY_FIELDS
+        and custom_confidence is not None
+        and custom_confidence >= VISUAL_ACUITY_KEEP_CONFIDENCE
+    ):
+        return True
     if handwritten_confidence is Confidence.HIGH:
         return False
     return (

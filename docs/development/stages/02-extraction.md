@@ -51,7 +51,10 @@ quota, not by cost). See `../services/azure-container-apps.md` for the KEDA scal
    read — it does not resolve a `driver`, attach a `driver_key`, or touch `driver_evaluation`.
 8. **Combine and hash.** Merge the custom-model result and the handwriting result into one JSON,
    write it to `extracted-dmer`, and compute the canonical comparison hash used later for duplicate
-   detection. For every handwritten field the custom model also output, the confidences decide:
+   detection. For every handwritten field the custom model also output, the confidences decide.
+   The six visual acuity fields (`visual_acuity.corrected_*` / `uncorrected_*`, right, left and
+   both) keep the custom-model value whenever the custom model read them with confidence 0.95 or
+   above — an empty value included — whatever the handwriting result. Otherwise,
    a `high` handwriting result replaces the custom-model value; a `low` one replaces it unless the
    custom model read the field with confidence above 0.75, in which case the custom-model value is
    kept. The handwriting value used can be empty. The custom model defines the keys, and the
