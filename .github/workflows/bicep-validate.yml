@@ -47,7 +47,7 @@ jobs:
       run:
         working-directory: infrastructure/bicep
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install/upgrade the Bicep CLI
         run: az bicep install
@@ -87,9 +87,9 @@ jobs:
     needs: build-and-lint
     if: github.event_name == 'pull_request' && vars.AZURE_CLIENT_ID != ''
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: azure/login@v2
+      - uses: azure/login@v3
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
