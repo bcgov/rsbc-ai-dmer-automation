@@ -1,0 +1,22 @@
+-- create-principal.sql
+--
+-- Registers di-processor's user-assigned Managed Identity
+-- (id-rsbc-dmer-di-processor-<env>-<instance>, main.bicep) as a Postgres role
+-- mapped to its Microsoft Entra identity. The role name is the identity's own
+-- name -- the same value main.bicep passes the Container App as POSTGRES_USER.
+--
+-- Same rules as services/intake-processor/create-principal.sql (see its header
+-- for the evidence behind each):
+--   * run against the server's default `postgres` database, NOT `dmer` --
+--     the pgaadauth_* functions only exist there;
+--   * connect as a Microsoft Entra administrator of the server, not the
+--     password admin (rsbc_dmer_admin) -- only an Entra-mapped connection may
+--     apply the security label pgaadauth_create_principal sets.
+--
+-- apply_roles.sh (this directory) runs this file and then roles.sql, each
+-- against the right database, filling in :identity_name.
+--
+-- :'identity_name' is single-quoted: a string-literal argument here, unlike
+-- roles.sql where it is a role identifier.
+
+SELECT * FROM pgaadauth_create_principal(:'identity_name', false, false);

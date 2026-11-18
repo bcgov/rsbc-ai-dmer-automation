@@ -13,7 +13,7 @@
 
 1. Acknowledge the Azure Monitor alert.
 2. Check `docs/operations/troubleshooting.md` for the relevant known procedure.
-3. For Sev 1/2, open an incident channel and post correlation IDs / affected `mercuryCaseId`s.
+3. For Sev 1/2, open an incident channel and post document IDs / affected `mercuryCaseId`s.
 4. Root-cause and remediate; for Sev 1, prepare a written post-incident review.
 
 ## Escalation

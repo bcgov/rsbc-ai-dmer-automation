@@ -1,0 +1,428 @@
+{
+  "form": "Driver's Medical Examination",
+  "sections": [
+    {
+      "section": "Introductory Instructions",
+      "labels": [
+        "Sections B and C must be completed.",
+        "Use sections A and D to provide details of any condition(s) that in your opinion may affect driving."
+      ]
+    },
+    {
+      "section": "A. HISTORY",
+      "labels": [
+        "Link to CCMTA Medical Standards with BC Specific Guidelines is provided on back of form."
+      ]
+    },
+    {
+      "section": "VISION",
+      "labels": [
+        "Acuity loss",
+        "Cause",
+        "Field defect",
+        "Monocular",
+        "Date of Onset"
+      ]
+    },
+    {
+      "section": "HEARING",
+      "labels": [
+        "Hearing loss",
+        "With Hearing Aids",
+        "No Aids",
+        "Drop Attacks (Tumarkin's crisis)",
+        "Date",
+        "Vertigo",
+        "with warnings",
+        "without warnings",
+        "Date of last vertigo episode",
+        "Other"
+      ]
+    },
+    {
+      "section": "MUSCULOSKELETAL",
+      "labels": [
+        "Amputation",
+        "Date",
+        "Right - Sided",
+        "Left - Sided",
+        "Cause",
+        "Upper Limb",
+        "Above Elbow",
+        "Below Elbow",
+        "Lower Limb",
+        "Above Knee",
+        "Below Knee",
+        "Uses Prosthesis",
+        "Without Prosthesis",
+        "With Vehicle Modifications",
+        "None",
+        "Weakness, specify",
+        "Range of motion loss, specify",
+        "Other"
+      ]
+    },
+    {
+      "section": "CARDIOVASCULAR / PVD",
+      "labels": [
+        "Syncope",
+        "CAD (M.I., angioplasty, CABG)",
+        "Date",
+        "Arrhythmia",
+        "Type",
+        "Pacemaker",
+        "ICD",
+        "Primary",
+        "Secondary",
+        "ICD Therapy (Disabling ATP/Shock)",
+        "Congestive heart failure",
+        "LVEF",
+        "NYHA",
+        "Aneurysm",
+        "Site",
+        "Size",
+        "Peripheral Vascular Disease",
+        "Other"
+      ]
+    },
+    {
+      "section": "PSYCHIATRIC",
+      "labels": [
+        "Psychosis / Psychotic episode",
+        "Date",
+        "Psych Diagnosis",
+        "Impaired judgment, insight",
+        "On Medication(s)",
+        "Non-medical therapy",
+        "Compliant w/ Treatment",
+        "Non-compliant",
+        "Stable Psych condition",
+        "Unstable Psych condition",
+        "Other"
+      ]
+    },
+    {
+      "section": "CNS / Cognition / Narcolepsy / Seizure / CVA",
+      "labels": [
+        "CVA",
+        "TIA",
+        "Date",
+        "Epilepsy",
+        "Provoked Seizure",
+        "Cause",
+        "Date of last seizure",
+        "Narcolepsy",
+        "Controlled w/ meds",
+        "Uncontrolled",
+        "Non-progressive / Stable (Cerebral palsy, plegia, etc.)",
+        "Progressive deficit (Parkinson's, MS, ALS, etc.)",
+        "Cognitive impairment",
+        "MOCA",
+        "Trails B",
+        "Dementia diagnosis, details",
+        "Significant head injury",
+        "Intracranial Tumor",
+        "Other"
+      ]
+    },
+    {
+      "section": "DRUGS / ALCOHOL",
+      "labels": [
+        "Alcohol Use Disorder (AUD) diagnosed, ACTIVE",
+        "Substance Use Disorder (SUD) diagnosed, ACTIVE",
+        "Alcohol Withdrawal Seizure",
+        "Prescribed drugs that could impair",
+        "Psychoactive drugs",
+        "Narcotics",
+        "Compliant w/ Treatment",
+        "Non-Compliant",
+        "Other"
+      ]
+    },
+    {
+      "section": "RESPIRATORY / Sleep Apnea",
+      "labels": [
+        "O2 continuous",
+        "O2 intermittent",
+        "O2 when driving",
+        "Obstructive Sleep Apnea",
+        "Mild",
+        "Mod",
+        "Severe",
+        "On CPAP",
+        "Compliant",
+        "Non-Compliant",
+        "Apnea Hypopnea Index (AHI)",
+        "Epworth Score",
+        "No Daytime Sleepiness",
+        "With Daytime Sleepiness",
+        "Other"
+      ]
+    },
+    {
+      "section": "ENDOCRINE",
+      "labels": [
+        "Diabetes, treated with:",
+        "Diet/Exercise",
+        "Oral Meds",
+        "Insulin",
+        "Insulin Secretagogues",
+        "Compliant w/ Treatment",
+        "Non-Compliant",
+        "Stable BG Control",
+        "HbA1C",
+        "Severe hypoglycemia, unable to self-treat",
+        "Hypoglycemia unawareness",
+        "Persistent Hypoglycemia Unawareness",
+        "Other"
+      ]
+    },
+    {
+      "section": "OTHER CONDITIONS",
+      "labels": [
+        "General debility, Frailty, or functional decline",
+        "Other (see guide)"
+      ]
+    },
+    {
+      "section": "B. VISION SCREENING AND PHYSICAL FINDINGS AFFECTING DRIVING",
+      "labels": [
+        "May include EVF/VFT done within one year if available."
+      ]
+    },
+    {
+      "section": "VISUAL ACUITY",
+      "labels": [
+        "Uncorrected",
+        "R",
+        "L",
+        "Both",
+        "Corrected",
+        "VISUAL FIELD",
+        "Normal",
+        "Abnormal",
+        "Both visual acuity and visual field meet",
+        "YES",
+        "Physician's Guide criteria for licence class"
+      ]
+    },
+    {
+      "section": "C. OPINION",
+      "labels": [
+        "Having completed A & B as applicable, in your opinion, does patient have a condition that may affect driving:",
+        "NO",
+        "YES",
+        "May in future - recommend follow-up in",
+        "years"
+      ]
+    },
+    {
+      "section": "D. DETAILS OF CONDITION(S) THAT AFFECT OR MAY AFFECT DRIVING",
+      "labels": [
+        "May include relevant specialists' reports or lab results."
+      ]
+    },
+    {
+      "section": "E. RECOMMENDATION(S)",
+      "labels": [
+        "Specialist Consult - Type",
+        "Enclosed:",
+        "Yes",
+        "No",
+        "I will arrange:",
+        "Yes",
+        "No",
+        "Road test to assess",
+        "Rationale for road test",
+        "Restrictions (Reason & Type)"
+      ]
+    },
+    {
+      "section": "F. DRIVER'S CERTIFICATION AND CONSENT TO RELEASE INFORMATION",
+      "labels": [
+        "1. I certify that the information I have given to the Physician or Nurse Practitioner completing this report is to the best of my knowledge true and complete.",
+        "2. I understand that inaccurate, misleading, missing or false information may lead to denial or cancellation of my driver's licence.",
+        "3. I authorize the release of this medical report and all past or future reports pertaining to diseases, disabilities and conditions that may affect driving to the Superintendent of Motor Vehicles.",
+        "Patient's Signature",
+        "Date"
+      ]
+    },
+    {
+      "section": "G. RELATIONSHIP WITH PATIENT",
+      "labels": [
+        "Family physician or NP for",
+        "years",
+        "Locum",
+        "Walk-in",
+        "First Visit",
+        "NP",
+        "Specialist"
+      ]
+    },
+    {
+      "section": "Examiner Information",
+      "labels": [
+        "EXAMINING PHYSICIAN'S OR NP'S NAME AND ADDRESS",
+        "(Print Name or use rubber stamp)",
+        "Examination Date",
+        "Physician's or NP's Signature",
+        "TELEPHONE NO."
+      ]
+    },
+    {
+      "section": "Submission Instructions",
+      "labels": [
+        "PHYSICIAN OR NP: FAX TO 250-952-6888 OR MAIL TO RoadSafetyBC, P.O. BOX 9254, STN PROV GOVT, VICTORIA, BC, V8W 9J2"
+      ]
+    }
+  ],
+  "all_labels": [
+    "Sections B and C must be completed.",
+    "Use sections A and D to provide details of any condition(s) that in your opinion may affect driving.",
+    "Link to CCMTA Medical Standards with BC Specific Guidelines is provided on back of form.",
+    "Acuity loss",
+    "Cause",
+    "Field defect",
+    "Monocular",
+    "Date of Onset",
+    "Hearing loss",
+    "With Hearing Aids",
+    "No Aids",
+    "Drop Attacks (Tumarkin's crisis)",
+    "Date",
+    "Vertigo",
+    "with warnings",
+    "without warnings",
+    "Date of last vertigo episode",
+    "Other",
+    "Amputation",
+    "Right - Sided",
+    "Left - Sided",
+    "Upper Limb",
+    "Above Elbow",
+    "Below Elbow",
+    "Lower Limb",
+    "Above Knee",
+    "Below Knee",
+    "Uses Prosthesis",
+    "Without Prosthesis",
+    "With Vehicle Modifications",
+    "None",
+    "Weakness, specify",
+    "Range of motion loss, specify",
+    "Syncope",
+    "CAD (M.I., angioplasty, CABG)",
+    "Arrhythmia",
+    "Type",
+    "Pacemaker",
+    "ICD",
+    "Primary",
+    "Secondary",
+    "ICD Therapy (Disabling ATP/Shock)",
+    "Congestive heart failure",
+    "LVEF",
+    "NYHA",
+    "Aneurysm",
+    "Site",
+    "Size",
+    "Peripheral Vascular Disease",
+    "Psychosis / Psychotic episode",
+    "Psych Diagnosis",
+    "Impaired judgment, insight",
+    "On Medication(s)",
+    "Non-medical therapy",
+    "Compliant w/ Treatment",
+    "Non-compliant",
+    "Stable Psych condition",
+    "Unstable Psych condition",
+    "CVA",
+    "TIA",
+    "Epilepsy",
+    "Provoked Seizure",
+    "Date of last seizure",
+    "Narcolepsy",
+    "Controlled w/ meds",
+    "Uncontrolled",
+    "Non-progressive / Stable (Cerebral palsy, plegia, etc.)",
+    "Progressive deficit (Parkinson's, MS, ALS, etc.)",
+    "Cognitive impairment",
+    "MOCA",
+    "Trails B",
+    "Dementia diagnosis, details",
+    "Significant head injury",
+    "Intracranial Tumor",
+    "Alcohol Use Disorder (AUD) diagnosed, ACTIVE",
+    "Substance Use Disorder (SUD) diagnosed, ACTIVE",
+    "Alcohol Withdrawal Seizure",
+    "Prescribed drugs that could impair",
+    "Psychoactive drugs",
+    "Narcotics",
+    "Obstructive Sleep Apnea",
+    "Mild",
+    "Mod",
+    "Severe",
+    "O2 continuous",
+    "O2 intermittent",
+    "O2 when driving",
+    "On CPAP",
+    "Compliant",
+    "Non-Compliant",
+    "Apnea Hypopnea Index (AHI)",
+    "Epworth Score",
+    "No Daytime Sleepiness",
+    "With Daytime Sleepiness",
+    "Diabetes, treated with:",
+    "Diet/Exercise",
+    "Oral Meds",
+    "Insulin",
+    "Insulin Secretagogues",
+    "Stable BG Control",
+    "HbA1C",
+    "Severe hypoglycemia, unable to self-treat",
+    "Hypoglycemia unawareness",
+    "Persistent Hypoglycemia Unawareness",
+    "General debility, Frailty, or functional decline",
+    "Other (see guide)",
+    "May include EVF/VFT done within one year if available.",
+    "Uncorrected",
+    "R",
+    "L",
+    "Both",
+    "Corrected",
+    "VISUAL FIELD",
+    "Normal",
+    "Abnormal",
+    "Both visual acuity and visual field meet",
+    "YES",
+    "Physician's Guide criteria for licence class",
+    "Having completed A & B as applicable, in your opinion, does patient have a condition that may affect driving:",
+    "NO",
+    "May in future - recommend follow-up in",
+    "years",
+    "May include relevant specialists' reports or lab results.",
+    "Specialist Consult - Type",
+    "Enclosed:",
+    "Yes",
+    "No",
+    "I will arrange:",
+    "Road test to assess",
+    "Rationale for road test",
+    "Restrictions (Reason & Type)",
+    "1. I certify that the information I have given to the Physician or Nurse Practitioner completing this report is to the best of my knowledge true and complete.",
+    "2. I understand that inaccurate, misleading, missing or false information may lead to denial or cancellation of my driver's licence.",
+    "3. I authorize the release of this medical report and all past or future reports pertaining to diseases, disabilities and conditions that may affect driving to the Superintendent of Motor Vehicles.",
+    "Patient's Signature",
+    "Family physician or NP for",
+    "Locum",
+    "Walk-in",
+    "First Visit",
+    "NP",
+    "Specialist",
+    "EXAMINING PHYSICIAN'S OR NP'S NAME AND ADDRESS",
+    "(Print Name or use rubber stamp)",
+    "Examination Date",
+    "Physician's or NP's Signature",
+    "TELEPHONE NO.",
+    "PHYSICIAN OR NP: FAX TO 250-952-6888 OR MAIL TO RoadSafetyBC, P.O. BOX 9254, STN PROV GOVT, VICTORIA, BC, V8W 9J2"
+  ]
+}

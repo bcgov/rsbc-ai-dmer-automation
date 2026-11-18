@@ -1,6 +1,12 @@
 
 # audit-service
 
+> **Superseded / open question.** The revised architecture has no equivalent service — the
+> `dmer_stage_run` audit table and related tables serve as the audit trail directly. See
+> [`docs/development/services/azure-database-postgresql.md`](../development/services/azure-database-postgresql.md#alignment-gaps-vs-current-code)
+> and [`docs/development/README.md`](../development/README.md#open-questions--decisions-required)
+> for the open decision on whether to retire or repurpose this service.
+
 **Azure compute:** Azure Container Apps (read API)
 
 ## Responsibilities

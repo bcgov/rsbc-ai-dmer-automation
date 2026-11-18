@@ -1,6 +1,12 @@
 
 # rule-engine
 
+> **Superseded.** The rule engine is now an in-process library call inside a Durable Functions
+> activity, not a standalone HTTP-triggered Function. See
+> [`docs/development/stages/05-activity-rule-engine.md`](../development/stages/05-activity-rule-engine.md)
+> for the current implementation reference — the responsibilities below are from the original
+> architecture.
+
 **Azure compute:** Azure Functions (HTTP-triggered activity)
 
 ## Responsibilities

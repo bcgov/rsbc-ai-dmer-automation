@@ -1,0 +1,78 @@
+# Dependabot version updates.
+#
+# Opens pull requests to keep dependencies current; the team reviews and merges
+# them like any other change. Security updates (PRs for known vulnerabilities)
+# are enabled separately in the repository settings: Settings > Code security >
+# Dependabot alerts and Dependabot security updates. GitHub opens those against
+# the default branch.
+#
+# Version-update PRs target dev, where changes are integrated and deployed first.
+# Minor and patch updates are grouped into one PR per ecosystem and week to keep
+# review load low; major updates open individually.
+
+version: 2
+
+updates:
+  # Python: the shared library, every service, and the repo-wide dev tooling.
+  - package-ecosystem: pip
+    directories:
+      - /
+      - /libs/dmer_common
+      - /services/audit-service
+      - /services/di-processor
+      - /services/driver-orchestrator
+      - /services/intake-processor
+      - /services/intake-processor/tests/local/mock-mercury-function-app
+      - /services/normalizer-service
+      - /services/post-processing
+      - /services/reliability
+      - /services/rule-engine
+      - /services/workflow-orchestrator
+    target-branch: dev
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: America/Vancouver
+    open-pull-requests-limit: 5
+    ignore:
+      # Our own library (libs/dmer_common), installed from source, not from PyPI.
+      - dependency-name: dmer-common
+    groups:
+      python-minor-and-patch:
+        update-types:
+          - minor
+          - patch
+    commit-message:
+      prefix: chore(deps)
+
+  # Container base images (only di-processor builds an image today).
+  - package-ecosystem: docker
+    directories:
+      - /services/di-processor
+    target-branch: dev
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: America/Vancouver
+    open-pull-requests-limit: 2
+    commit-message:
+      prefix: chore(deps)
+
+  # GitHub Actions used by the workflows in .github/workflows.
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: dev
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: America/Vancouver
+    open-pull-requests-limit: 3
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: chore(deps)
