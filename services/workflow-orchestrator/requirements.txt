@@ -5,7 +5,7 @@ sqlalchemy[asyncio]>=2.0,<2.1
 asyncpg
 azure-identity
 # dmer_common[triage]: the triage LLM converts the procedures PDF to text.
-pdfplumber==0.11.9  # see libs/dmer_common/pyproject.toml [triage]
+pdfplumber==0.11.10  # see libs/dmer_common/pyproject.toml [triage]
 # The triage evaluation date is BC's (zoneinfo America/Vancouver); tzdata
 # supplies the time-zone database where the OS has none.
 tzdata
