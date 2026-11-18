@@ -10,7 +10,7 @@
 #   docker build -f services/di-processor/Dockerfile -t di-processor .
 
 # ---- builder: install deps into a venv ------------------------------------
-FROM python:3.12-slim AS builder
+FROM python:3.15-slim AS builder
 
 ENV PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
@@ -30,7 +30,7 @@ RUN pip install /build/libs/dmer_common
 RUN pip install "pymupdf>=1.24,<2" "pillow>=10,<12"
 
 # ---- runtime: minimal, non-root -------------------------------------------
-FROM python:3.12-slim AS runtime
+FROM python:3.15-slim AS runtime
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
