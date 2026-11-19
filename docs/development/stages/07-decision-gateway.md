@@ -16,15 +16,20 @@ outbox rows so the decision and the intent to deliver it cannot be separated.
 | | |
 |---|---|
 | Type | Durable activity inside the Driver Orchestrator |
-| Reads | Mercury `GET by driver_licence`; `dmer_document` and `dmer_extraction` for every document of the driver; `rule_evaluation` for each |
+| Reads | Mercury `POST drivers/lookup`; `dmer_document` and `dmer_extraction` for every document of the driver; `rule_evaluation` for each |
 | Writes | `driver_evaluation` only — nothing else until the decision is final |
 | Runs | Once per driver batch, never concurrently for the same driver (see `../06-driver-orchestration.md`) |
 
 ## Step 1 — Completeness
 
-Call Mercury `GET by driver_licence`. Take the documents whose `mercury_document_status` is
-`Uploaded` **and** whose `dps_date` is empty (question I-9: an empty `dps_date` is a reliable
-"not yet triaged" signal). Per question I-8 (answered): a document with status `Rejected` **does
+Call Mercury `POST drivers/lookup`. Take the documents whose `document_status` is
+`Uploaded` (`MERCURY_WAITING_DOCUMENT_STATUSES`). Only the status is checked, **not `dps_date`**
+(decided 2026-11-19; this replaces the earlier "and `dps_date` is empty" rule from I-9).
+**Documents we have already given an outcome are skipped** (matched by the lookup's `document_id`,
+our `document_guid`, against `UPDATE_OUTCOME` rows in `mercury_outbox`): Mercury keeps a DMER
+`Uploaded` until a person reviews it — through our AI Processed mark and our posted outcome — so a
+DMER decided in an earlier batch would otherwise count as waiting for the driver's next one
+(I-10), e.g. a re-fax arriving before Intake has reviewed the first copy. Per question I-8 (answered): a document with status `Rejected` **does
 count** toward "all documents processed" — do not wait on it.
 
 If any qualifying document has not reached `RULES_APPLIED` in our database, set
@@ -108,7 +113,7 @@ the reason and licence in the comment) itself — see [Post-Processing](08-post-
 
 ## Failure handling
 
-A Mercury `GET by driver_licence` failure at Step 1 is transient — retry with backoff; if the
+A Mercury `POST drivers/lookup` failure at Step 1 is transient — retry with backoff; if the
 retry budget is exhausted, leave `driver_evaluation.status = WAITING` rather than guessing at
 completeness, and let the [Reconciliation Sweeper](09-reliability-components.md) retry the whole
 gateway pass later. Never proceed to Steps 2–6 on stale or partial completeness data.
@@ -140,7 +145,7 @@ near-clinical content; see §9.2).
 
 - This activity has no placeholder code anywhere in the repo — see
   `06-driver-orchestration.md#alignment-gaps-vs-current-code` for the recommended service folder.
-- `libs/dmer_common/src/dmer_common/mercury_client/__init__.py` needs the `GET by driver_licence`
+- `libs/dmer_common/src/dmer_common/mercury_client/__init__.py` needs the `POST drivers/lookup`
   call added (currently an empty docstring stub) — question M-5 confirms this endpoint returns only
   DMERs, which simplifies the completeness filter (no need to exclude non-DMER document types).
 - The comparison-hash lookup (`dmer_extraction.comparison_hash`, indexed per `../data-model.md`)

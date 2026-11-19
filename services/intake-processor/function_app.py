@@ -9,9 +9,9 @@
 #   DMER, then marks every record on the page AI Processed in Mercury (which
 #   is what makes the next GET return the next page).
 # - Ingest Function (Service Bus trigger on dmer-ingest): downloads the
-#   source PDF (from `dmer_document.document_url`, not the queue message --
-#   see that column's comment in database/migrations/V0001__*.sql for why),
-#   writes it to `raw-dmer`, publishes to `dmer-raw`.
+#   source PDF from Mercury by the row's document guid
+#   (`GET {MERCURY_API_BASE_URL}/{documentRecordId}/files`), writes it to
+#   `raw-dmer`, publishes to `dmer-raw`.
 # - Webhook Listener (HTTP, scaffolded but inactive): Mercury doesn't emit
 #   new-DMER events yet (question M-8, confirmed) -- this has no live data
 #   source, so it's registered but returns 501 rather than being wired to
@@ -40,8 +40,6 @@ import asyncio
 import functools
 import json
 import os
-import urllib.error
-import urllib.request
 from datetime import UTC, datetime
 from typing import Any
 
@@ -149,15 +147,10 @@ def _parse_mercury_datetime(value: str | None) -> datetime | None:
     return datetime.fromisoformat(value)
 
 
-def _mercury_auth_headers() -> dict[str, str]:
-    return {"Authorization": f"Bearer {os.environ['MERCURY_API_KEY']}"}
-
-
-def _download_source_pdf(document_url: str) -> bytes:
-    """Blocking download of the source PDF from Mercury's pre-signed URL."""
-    request = urllib.request.Request(document_url, method="GET")
-    with urllib.request.urlopen(request, timeout=60) as response:
-        return response.read()
+def _download_source_pdf(document_guid: str) -> bytes:
+    """Blocking download of the source PDF from Mercury
+    (``GET {MERCURY_API_BASE_URL}/{documentRecordId}/files``)."""
+    return MercuryClient().download_dmer(document_guid)
 
 
 def _runtime_blob_service() -> BlobServiceClient:
@@ -222,8 +215,8 @@ def _envelope(
 ) -> dict:
     """The one shared envelope shape (message-contracts.md) -- `blob_url` is
     left null on a dmer-ingest message (nothing to point at yet; Ingest
-    reads document_url from dmer_document instead, see that column's
-    comment) and populated on dmer-raw once the download exists.
+    downloads the file from Mercury by the document guid) and populated on
+    dmer-raw once the download exists.
     """
     return {
         "schemaVersion": "1.0",
@@ -458,10 +451,6 @@ async def dmer_ingest(msg: func.ServiceBusMessage) -> None:
                     extra={"pipeline_status": row.pipeline_status},
                 )
                 return
-            if not row.document_url:
-                _log.error("dmer_ingest: dmer_document row has no document_url")
-                return
-
             now = datetime.now(UTC)
             run_id = await stage_run_repo.start(
                 document_id=document_id,
@@ -471,7 +460,7 @@ async def dmer_ingest(msg: func.ServiceBusMessage) -> None:
             )
 
             try:
-                content = await _run_sync(_download_source_pdf, row.document_url)
+                content = await _run_sync(_download_source_pdf, row.document_guid)
                 raw_blob_url = await _run_sync(
                     _upload_raw_dmer_blob,
                     content,

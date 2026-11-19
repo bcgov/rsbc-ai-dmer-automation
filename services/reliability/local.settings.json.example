@@ -42,6 +42,7 @@
     "POSTGRES_PASSWORD": "",
     "POSTGRES_SSLMODE": "require",
     "MERCURY_WRITE_API_BASE_URL": "https://func-mock-mercury-api-dev.azurewebsites.net/api/mercury",
+    "MERCURY_AUTH_TOKEN_URL": "",
     "MERCURY_API_KEY": ""
   }
 }

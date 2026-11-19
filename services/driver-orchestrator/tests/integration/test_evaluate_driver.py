@@ -27,7 +27,7 @@ _MIGRATIONS = Path(__file__).resolve().parents[4] / "database/migrations"
 _SCHEMA = sorted(_MIGRATIONS.glob("V*.sql"), key=lambda path: int(path.name[1:5]))
 LICENCE = "01234567"
 TYPES = frozenset({"dmer"})
-STATUSES = frozenset({"rejected"})
+STATUSES = frozenset({"uploaded"})
 
 
 def _mercury(waiting: int):
@@ -150,7 +150,7 @@ def _evaluate(engine, driver_key, mercury):
         driver_key,
         mercury_lookup=mercury,
         counted_types=TYPES,
-        uncounted_statuses=STATUSES,
+        waiting_statuses=STATUSES,
     )
 
 
@@ -183,6 +183,56 @@ def test_waits_while_mercury_holds_more_dmers():
             # refreshed from Mercury, check time recorded, nothing decided
             assert (status, expected, decisions) == ("WAITING", 3, 0)
             assert checked is not None
+
+    asyncio.run(run())
+
+
+def test_a_dmer_decided_in_an_earlier_batch_is_not_waited_for():
+    # A re-fax: the driver's first DMER was decided and its outcome posted, but
+    # Mercury still shows it Uploaded (no one has reviewed it yet). The new
+    # batch holds only the re-fax; it must not wait for the first DMER (I-10).
+    async def run():
+        async with database(documents=(("CP", "h1"),)) as (engine, key, _, docs):
+            async with engine.begin() as conn:
+                earlier_doc, earlier_guid = (
+                    await conn.execute(
+                        text(
+                            "INSERT INTO dmer_document (document_guid, "
+                            "pipeline_status, current_stage, driver_key) VALUES "
+                            "(gen_random_uuid(), 'COMPLETED', 'POST', :k) "
+                            "RETURNING id, document_guid"
+                        ),
+                        {"k": key},
+                    )
+                ).one()
+                await conn.execute(
+                    text(
+                        "INSERT INTO mercury_outbox (document_id, operation, "
+                        "payload, idempotency_key, status) VALUES (:d, "
+                        "'UPDATE_OUTCOME', '{}'::jsonb, :i, 'SENT')"
+                    ),
+                    {"d": earlier_doc, "i": f"{earlier_doc}:UPDATE_OUTCOME"},
+                )
+                new_guid = await _scalar(
+                    conn,
+                    "SELECT document_guid FROM dmer_document WHERE id = :d",
+                    d=docs[0],
+                )
+
+            def mercury(_licence):
+                uploaded = {"document_type": "DMER", "document_status": "Uploaded"}
+                return [
+                    {
+                        "active_documents": [
+                            {**uploaded, "document_guid": str(earlier_guid).upper()},
+                            {**uploaded, "document_guid": str(new_guid)},
+                        ]
+                    }
+                ]
+
+            result = await _evaluate(engine, key, mercury)
+            assert result.result is Result.DECIDED
+            assert (result.expected, result.decided_count) == (1, 1)
 
     asyncio.run(run())
 
@@ -430,7 +480,7 @@ def test_final_attempt_with_mercury_still_down_goes_to_manual_review():
                 driver_key,
                 mercury_lookup=_mercury_down,
                 counted_types=TYPES,
-                uncounted_statuses=STATUSES,
+                waiting_statuses=STATUSES,
                 final_attempt=True,
             )
             assert result.result is Result.MANUAL_REVIEW
@@ -483,7 +533,7 @@ def test_a_non_final_attempt_with_mercury_down_still_waits():
                 driver_key,
                 mercury_lookup=_mercury_down,
                 counted_types=TYPES,
-                uncounted_statuses=STATUSES,
+                waiting_statuses=STATUSES,
                 final_attempt=False,
             )
             assert result.result is Result.WAITING

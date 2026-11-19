@@ -148,7 +148,7 @@ def test_handle_schedules_after_an_unverified_evaluation(monkeypatch):
     class _Mercury:
         class driver_settings:
             counted_document_types = frozenset({"dmer"})
-            uncounted_document_statuses = frozenset({"rejected"})
+            waiting_document_statuses = frozenset({"uploaded"})
 
         def get_driver_by_licence(self, licence):  # pragma: no cover
             return []
@@ -198,7 +198,7 @@ def test_only_the_last_recheck_is_final(monkeypatch, attempt, final):
     class _Mercury:
         class driver_settings:
             counted_document_types = frozenset({"dmer"})
-            uncounted_document_statuses = frozenset({"rejected"})
+            waiting_document_statuses = frozenset({"uploaded"})
 
         def get_driver_by_licence(self, licence):  # pragma: no cover
             return []

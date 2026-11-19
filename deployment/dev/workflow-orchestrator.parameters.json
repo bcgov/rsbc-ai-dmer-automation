@@ -32,6 +32,9 @@
     "postgresPort": { "value": "5432" },
     "postgresDatabase": { "value": "dmer" },
     "dataStorageAccountName": { "value": "stdmerdevcac001" },
+    "mercuryAuthTokenUrl": {
+      "value": "https://func-mock-mercury-api-dev.azurewebsites.net/api/mercury/Authentication/token"
+    },
     "mercuryDriverLicenceApiBaseUrl": {
       "value": "https://func-mock-mercury-api-dev.azurewebsites.net/api/mercury/drivers"
     },

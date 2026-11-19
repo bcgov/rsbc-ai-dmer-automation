@@ -8,7 +8,7 @@ document toward the driver's evaluation, so both must exist before it runs.
    licence read off the page differs, record the mismatch.
 2. Otherwise use the licence read off the page -- none readable goes to
    ``MANUAL_REVIEW`` (I-12).
-3. Look the licence up with Mercury's ``GET by driver_licence``: no driver,
+3. Look the licence up with Mercury's ``POST drivers/lookup``: no driver,
    or more than one, goes to ``MANUAL_REVIEW``; exactly one is upserted and
    attached (a page-read match is flagged for the Decision Gateway's
    ``MAP_DRIVER``, I-11).
@@ -77,18 +77,18 @@ def expected_document_count(
     mercury_driver: dict[str, Any],
     *,
     counted_types: frozenset[str],
-    uncounted_statuses: frozenset[str],
+    waiting_statuses: frozenset[str],
 ) -> int:
     """How many of the driver's active documents the batch waits for:
-    those of a counted type (default DMER) not in an uncounted status
-    (default Rejected). Both lists come from configuration."""
+    those of a counted type (default DMER) in a waiting status (default
+    Uploaded). Both lists come from configuration."""
     documents = mercury_driver.get("active_documents") or []
     return sum(
         1
         for d in documents
         if isinstance(d, dict)
         and str(d.get("document_type", "")).strip().lower() in counted_types
-        and str(d.get("document_status", "")).strip().lower() not in uncounted_statuses
+        and str(d.get("document_status", "")).strip().lower() in waiting_statuses
     )
 
 
@@ -156,7 +156,7 @@ async def driver_lookup_activity(payload: dict) -> dict:
                     expected = expected_document_count(
                         drivers[0],
                         counted_types=settings.counted_document_types,
-                        uncounted_statuses=settings.uncounted_document_statuses,
+                        waiting_statuses=settings.waiting_document_statuses,
                     )
                     driver_key, evaluation_id = await repository.attach_driver(
                         run.run_id,

@@ -98,7 +98,7 @@ per row via `next_attempt_at`, alert on a growing count of `PENDING` rows past S
 | Documents in a non-terminal `pipeline_status` whose `updated_at` is older than the stage SLA | Re-publish to the appropriate queue, increment `attempt_count`, alert after N sweeps. |
 | `driver_evaluation` rows in `WAITING` where every document for that driver has in fact reached `RULES_APPLIED` | Re-signal the driver orchestration. **This is the direct remedy for the lost-update race** described in [Driver Orchestration](06-driver-orchestration.md#why-serialization-is-required). |
 | `mercury_outbox` rows `PENDING` beyond a threshold, or with a high `attempt_count` | Alert — a sustained backlog here means Mercury is unavailable or rejecting. |
-| Documents present in Mercury's `GET by driver_licence` response with no `dmer_document` row at all | Ingest them — this catches a lost webhook delivery and a page the poller skipped. |
+| Documents present in Mercury's `POST drivers/lookup` response with no `dmer_document` row at all | Ingest them — this catches a lost webhook delivery and a page the poller skipped. |
 
 ### Database writes
 

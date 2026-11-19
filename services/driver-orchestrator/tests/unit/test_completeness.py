@@ -24,22 +24,45 @@ def _batch(*statuses):
 # --- counting Mercury's waiting DMERs -----------------------------------------
 
 
-def test_counts_untriaged_dmers_only():
+def test_counts_uploaded_dmers_only():
     driver = {
         "active_documents": [
             _doc(),
-            _doc(type_=" dmer "),  # case and spacing
+            _doc(type_=" dmer ", status=" UPLOADED "),  # case and spacing
             _doc(status="Rejected"),  # I-8: does not hold the batch up
-            _doc(dps_date="2026-10-01T00:00:00Z"),  # already triaged (I-9)
+            _doc(status="Reviewed"),  # any status but Uploaded: not waiting
             _doc(type_="Test Report"),  # not a DMER
         ]
     }
     assert mercury_waiting_count([driver]) == 2
 
 
-def test_missing_or_null_dps_date_counts_as_untriaged():
-    driver = {"active_documents": [{"document_type": "DMER"}, _doc(dps_date=None)]}
-    assert mercury_waiting_count([driver]) == 2
+def test_dps_date_is_not_consulted():
+    driver = {
+        "active_documents": [
+            _doc(dps_date="2026-10-01T00:00:00Z"),  # Uploaded: waiting
+            _doc(status="Rejected", dps_date=None),  # not Uploaded: not waiting
+        ]
+    }
+    assert mercury_waiting_count([driver]) == 1
+
+
+def test_dmers_already_decided_here_are_not_waiting():
+    # Mercury keeps a decided DMER Uploaded until a person reviews it (I-10).
+    driver = {
+        "active_documents": [
+            {**_doc(), "document_guid": "AAAA-1"},  # decided in an earlier batch
+            {**_doc(), "document_guid": "bbbb-2"},  # this batch, still waiting
+            _doc(),  # no id: never skipped on a guess
+        ]
+    }
+    assert mercury_waiting_count([driver], already_decided={"aaaa-1"}) == 2
+    assert mercury_waiting_count([driver]) == 3
+
+
+def test_a_document_without_a_status_is_not_waiting():
+    driver = {"active_documents": [{"document_type": "DMER"}]}
+    assert mercury_waiting_count([driver]) == 0
 
 
 @pytest.mark.parametrize("drivers", [[], [{}, {}]])
@@ -55,7 +78,7 @@ def test_counted_types_and_statuses_are_configurable():
     driver = {"active_documents": [_doc(type_="Report"), _doc(status="On Hold")]}
     assert (
         mercury_waiting_count(
-            [driver], counted_types={"Report", "DMER"}, uncounted_statuses={"On Hold"}
+            [driver], counted_types={"Report", "DMER"}, waiting_statuses={"On Hold"}
         )
         == 1
     )

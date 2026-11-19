@@ -7,25 +7,31 @@
 #
 # Read endpoints (write-back endpoints for the Outbox Publisher are at the end):
 #
+#   GET  /api/mercury/Authentication/token?secret=
+#       A bearer token ({"token", "expiresIn"}). 401 for a wrong secret when
+#       MOCK_MERCURY_SECRET is set; the other endpoints don't check tokens.
 #   GET  /api/mercury/dmers?pageSize=
 #       Mercury's GET dmers, in its shape (camelCase "items"): the first
 #       pageSize documents not yet marked AI Processed -- DMERs and, like
 #       Mercury, other document types (no documentUrl). Claim-based: the
 #       same call returns the next ones once these are marked.
+#       documentUrl is a relative path, as in Mercury -- not a link.
+#   GET  /api/mercury/dmers/{documentRecordId}/files
+#       The DMER's PDF bytes (application/pdf); 404 for an unknown id.
 #   POST /api/mercury/dmers/BatchSetDmerAIProccessedStatus  {"dmerIds": [...]}
 #       Marks documents AI Processed: one blob per guid in
 #       MOCK_AI_PROCESSED_CONTAINER (default "mock-ai-processed"). Delete a
 #       blob there to make that document come back.
-#   GET /api/mercury/drivers/{licence_number}
-#       The driver-licence lookup Driver Lookup reads: the driver, every
-#       active document Mercury holds for them, and their case. 404 when no
-#       driver has that licence. 7- and 8-digit forms of a licence match.
+#   POST /api/mercury/drivers/lookup  {"driverLicenceNumber": "..."}
+#       The driver-licence lookup Driver Lookup reads, in Mercury's shape
+#       (snake_case): the driver, their "documents" (file_name, document_type,
+#       document_status, uploaded_date, document_id, and dps_date once
+#       triaged), and their case. 404 when no driver has that licence. 7- and
+#       8-digit forms of a licence match.
 #
 # Dynamic: every request lists the PDFs in this app's own storage account
-# (container MOCK_DMER_CONTAINER, default "mock-dmers"). Each document_url is
-# a freshly signed, read-only, single-blob SAS URL -- the Azure equivalent of
-# an S3 presigned URL -- expiring after MOCK_URL_TTL_MINUTES (default 60). To
-# add or remove test documents, just upload to / delete from that container.
+# (container MOCK_DMER_CONTAINER, default "mock-dmers"). To add or remove test
+# documents, just upload to / delete from that container.
 #
 # How blob names shape the mock data:
 #
@@ -35,7 +41,7 @@
 #   driver and case: the folder is the driver.
 # - "nodriver" in the name: no driver (`driver: null` in GET dmers).
 # - "report" in the file name: document_type "Test Report". These appear in
-#   the driver's active_documents, and in GET dmers with an empty
+#   the driver's documents, and in GET dmers with an empty
 #   documentUrl, as Mercury's non-DMER items do.
 # - "rejected" in the file name: document_status "Rejected", with a dps_date.
 #
@@ -46,9 +52,8 @@
 # Why this app's own storage account (the one in AzureWebJobsStorage) and
 # not rsbcstorage: this app runs on a Linux Consumption plan, which can't
 # join the VNet, and rsbcstorage only accepts traffic through its private
-# endpoints -- so this app can neither list nor sign against it. This
-# account accepts public traffic but has anonymous blob access disabled, so
-# a blob is only readable through a signed URL, like a private S3 bucket.
+# endpoints -- so this app can't list it. This account has anonymous blob
+# access disabled; PDFs are served only through GET dmers/{id}/files.
 #
 # NOT part of the DMER pipeline. Delete this Function App (and its storage
 # account, stmockmercuryapi01) once Azure testing is done.
@@ -62,15 +67,12 @@ from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import azure.functions as func
-from azure.storage.blob import BlobSasPermissions, BlobServiceClient, generate_blob_sas
+from azure.storage.blob import BlobServiceClient
 
 app = func.FunctionApp()
 
 _DEFAULT_PAGE_SIZE = 50
 _MAX_PAGE_SIZE = 100
-# Signed URLs start slightly in the past so a small clock difference between
-# this app and the downloader doesn't make a brand-new URL "not yet valid".
-_SAS_CLOCK_SKEW = timedelta(minutes=5)
 _ISO = "%Y-%m-%dT%H:%M:%SZ"
 
 
@@ -98,20 +100,6 @@ def _pdfs(service: BlobServiceClient) -> list:
         ),
         key=lambda b: b.name,
     )
-
-
-def _signed_url(service: BlobServiceClient, blob_name: str, now: datetime) -> str:
-    ttl = timedelta(minutes=int(os.environ.get("MOCK_URL_TTL_MINUTES", "60")))
-    sas = generate_blob_sas(
-        account_name=service.account_name,
-        container_name=_container(),
-        blob_name=blob_name,
-        account_key=service.credential.account_key,
-        permission=BlobSasPermissions(read=True),
-        start=now - _SAS_CLOCK_SKEW,
-        expiry=now + ttl,
-    )
-    return f"{service.get_blob_client(_container(), blob_name).url}?{sas}"
 
 
 def _file_name(blob_name: str) -> str:
@@ -152,14 +140,15 @@ def _received(blob) -> str:
     return blob.last_modified.astimezone(UTC).strftime(_ISO)
 
 
-def _document(blob, document_url: str) -> dict:
+def _document(blob) -> dict:
+    """One of the driver's documents, as POST drivers/lookup returns it."""
     rejected = "rejected" in _file_name(blob.name).lower()
     document = {
         "file_name": _stem(blob.name),
         "document_type": _document_type(blob.name),
         "document_status": "Rejected" if rejected else "Uploaded",
         "uploaded_date": _received(blob),
-        "document_url": document_url,
+        "document_id": _guid(blob.name),
     }
     if rejected:
         triaged = blob.last_modified.astimezone(UTC) + timedelta(days=1)
@@ -274,15 +263,30 @@ def _ai_processed() -> set[str]:
     return {b.name for b in _ai_processed_container().list_blobs()}
 
 
-def _documents_by_group(service: BlobServiceClient, blobs: list, now: datetime):
-    """Each blob's signed URL, and each driver group's document list."""
-    urls = {b.name: _signed_url(service, b.name, now) for b in blobs}
+def _documents_by_group(blobs: list) -> dict[str, list[dict]]:
+    """Each driver group's document list."""
     groups: dict[str, list[dict]] = {}
     for blob in blobs:
         group = _driver_group(blob.name)
         if group is not None:
-            groups.setdefault(group, []).append(_document(blob, urls[blob.name]))
-    return urls, groups
+            groups.setdefault(group, []).append(_document(blob))
+    return groups
+
+
+@app.route(
+    route="mercury/Authentication/token",
+    methods=["GET"],
+    auth_level=func.AuthLevel.ANONYMOUS,
+)
+def mercury_token(req: func.HttpRequest) -> func.HttpResponse:
+    """Mercury's GET Authentication/token?secret=: a bearer token for the
+    other calls. When MOCK_MERCURY_SECRET is set, any other secret gets a
+    401. The other mock endpoints do not check the token."""
+    expected = os.environ.get("MOCK_MERCURY_SECRET", "")
+    if expected and req.params.get("secret") != expected:
+        return _json({"error": "invalid secret"}, 401)
+    ttl = int(os.environ.get("MOCK_TOKEN_TTL_SECONDS", "3600"))
+    return _json({"token": f"mock-{uuid.uuid4()}", "expiresIn": ttl})
 
 
 @app.route(route="mercury/dmers", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
@@ -294,8 +298,9 @@ def mercury_dmers(req: func.HttpRequest) -> func.HttpResponse:
     marked = _ai_processed()
     waiting = [b for b in _pdfs(service) if _guid(b.name) not in marked]
     page = waiting[:page_size]
-    now = datetime.now(UTC)
-    items = [_dmers_item(b, _signed_url(service, b.name, now)) for b in page]
+    # Mercury's documentUrl is a path inside Mercury, not a link; the file
+    # comes from GET dmers/{documentRecordId}/files (mercury_dmer_file).
+    items = [_dmers_item(b, f"dfp_driver/mock/{_file_name(b.name)}") for b in page]
     # Mercury's nextLink is the same request again (relative); null when
     # nothing waits beyond this page.
     next_link = f"/Dmers?pageSize={page_size}" if len(waiting) > page_size else None
@@ -304,6 +309,23 @@ def mercury_dmers(req: func.HttpRequest) -> func.HttpResponse:
         mimetype="application/json",
         status_code=200,
     )
+
+
+@app.route(
+    route="mercury/dmers/{guid}/files",
+    methods=["GET"],
+    auth_level=func.AuthLevel.ANONYMOUS,
+)
+def mercury_dmer_file(req: func.HttpRequest) -> func.HttpResponse:
+    """The DMER's PDF by its documentRecordId, as Mercury's
+    GET dmers/{documentRecordId}/files. 404 when no mock blob has that id."""
+    blob_name = _source_blob(req.route_params.get("guid", ""))
+    if blob_name is None:
+        return _json({"error": "document not found"}, 404)
+    content = (
+        _service().get_blob_client(_container(), blob_name).download_blob().readall()
+    )
+    return func.HttpResponse(content, mimetype="application/pdf", status_code=200)
 
 
 @app.route(
@@ -339,20 +361,24 @@ def _same_licence(a: str, b: str) -> bool:
 
 
 @app.route(
-    route="mercury/drivers/{licence_number}",
-    methods=["GET"],
+    route="mercury/drivers/lookup",
+    methods=["POST"],
     auth_level=func.AuthLevel.ANONYMOUS,
 )
 def mercury_driver(req: func.HttpRequest) -> func.HttpResponse:
-    licence_number = req.route_params.get("licence_number", "")
-    service = _service()
-    blobs = _pdfs(service)
-    _, groups = _documents_by_group(service, blobs, datetime.now(UTC))
+    """Mercury's POST drivers/lookup {"driverLicenceNumber": ...}."""
+    try:
+        licence_number = str(req.get_json().get("driverLicenceNumber") or "")
+    except (ValueError, AttributeError):
+        return _json({"error": "body must be JSON with driverLicenceNumber"}, 400)
+    if not licence_number:
+        return _json({"error": "driverLicenceNumber is required"}, 400)
+    groups = _documents_by_group(_pdfs(_service()))
     for group, documents in groups.items():
         if _same_licence(_licence(group), licence_number):
             body = {
                 **_driver_identity(group),
-                "active_documents": documents,
+                "documents": documents,
                 "case": _case(group),
             }
             return func.HttpResponse(
@@ -464,8 +490,7 @@ def _record_write(req: func.HttpRequest, guid: str, what: str) -> func.HttpRespo
 )
 def mercury_driver_cases(req: func.HttpRequest) -> func.HttpResponse:
     driver_id = req.route_params.get("driver_id", "")
-    service = _service()
-    _, groups = _documents_by_group(service, _pdfs(service), datetime.now(UTC))
+    groups = _documents_by_group(_pdfs(_service()))
     for group in groups:
         if _driver_identity(group)["driver_id"] == driver_id:
             return _json({"value": [_case(group)]})

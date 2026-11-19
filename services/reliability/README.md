@@ -123,7 +123,7 @@ az deployment group create -g rg-rsbc-dmer-dev   -f infrastructure/bicep/reliabi
 ```
 
 `mercuryApiKey` must be supplied on every deploy (it defaults to empty, and an empty
-`MERCURY_API_KEY` fails every run with `ConfigError`).
+`MERCURY_API_KEY` (or `MERCURY_AUTH_TOKEN_URL`) fails every run with `ConfigError`).
 
 Then the Postgres role (once per environment): run `services/intake-processor/create-principal.sql`
 against `postgres` and `roles.sql` against `dmer` with `function_app_name` set to this app's name

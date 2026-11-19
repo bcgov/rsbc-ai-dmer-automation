@@ -92,6 +92,9 @@
     "reconciliationSchedule": {
       "value": "0 0 13 * * *"
     },
+    "mercuryAuthTokenUrl": {
+      "value": "https://func-mock-mercury-api-dev.azurewebsites.net/api/mercury/Authentication/token"
+    },
     "mercuryApiBaseUrl": {
       "value": "https://func-mock-mercury-api-dev.azurewebsites.net/api/mercury/dmers"
     },

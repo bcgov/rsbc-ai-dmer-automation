@@ -59,6 +59,9 @@
     "postgresDatabase": {
       "value": "dmer"
     },
+    "mercuryAuthTokenUrl": {
+      "value": "https://func-mock-mercury-api-dev.azurewebsites.net/api/mercury/Authentication/token"
+    },
     "mercuryDriverLicenceApiBaseUrl": {
       "value": "https://func-mock-mercury-api-dev.azurewebsites.net/api/mercury/drivers"
     },

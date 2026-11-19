@@ -3,12 +3,33 @@
 import json
 
 import pytest
+from dmer_common import mercury_client as client_module
 from dmer_common.config import MercuryWriteSettings
 from dmer_common.mercury_client import MercuryClient, MercuryWriteError
 from dmer_common.retry import CircuitBreaker
 
 WRITE = MercuryWriteSettings(base_url="https://mercury.test/api", api_key="SECRET-KEY")
 GUID = "123e4567-e89b-12d3-a456-426614174000"
+
+
+class _FakeAuth:
+    """A bearer token without the token endpoint (tested in test_mercury_auth)."""
+
+    token_value = "test-token"
+
+    def token(self):
+        return self.token_value
+
+    def invalidate(self, token):
+        pass
+
+
+@pytest.fixture(autouse=True)
+def _fake_token(monkeypatch):
+    monkeypatch.setattr(
+        client_module, "shared_auth", lambda settings, *, http_get: _FakeAuth()
+    )
+    monkeypatch.setattr(client_module, "mercury_auth_settings", lambda: None)
 
 
 class FakeHttp:
@@ -54,7 +75,7 @@ def test_update_outcome_puts_the_outcome_with_the_idempotency_key():
         f"https://mercury.test/api/documents/{GUID}/outcome",
     )
     assert headers["Idempotency-Key"] == "dec-1:UPDATE_OUTCOME"
-    assert headers["Authorization"] == "Bearer SECRET-KEY"
+    assert headers["Authorization"] == "Bearer test-token"
     assert body == {"outcome_code": "PU", "comment": "c", "decided_by": "AI"}
 
 

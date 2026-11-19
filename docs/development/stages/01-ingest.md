@@ -8,7 +8,7 @@ band, "Stage 1 — Ingest"). Data model: `../data-model.md`. Messages: `../messa
 Move a DMER from Mercury into our control, idempotently, one document at a time. This is
 **two separate Azure Functions**, not one — the original architecture performed page retrieval,
 download, blob write, DB write and publish in a single invocation, which couples the fate of every
-document in a page together: one unreadable pre-signed URL fails the whole batch, and the retry
+document in a page together: one failed download fails the whole batch, and the retry
 re-downloads the forty-nine documents that already succeeded. Splitting page retrieval (Page
 Poller) from per-document download (Ingest Function) gives per-document retry and dead-lettering.
 
@@ -17,7 +17,7 @@ Poller) from per-document download (Ingest Function) gives per-document retry an
 | Component | Trigger | Reads | Writes |
 |---|---|---|---|
 | **Page Poller** | Timer, ~5 min (question I-14 sets the real SLA) | Mercury `GET dmers`, one page per invocation | `dmer_document`, `driver`, `poll_checkpoint`; Mercury's AI Processed status |
-| **Ingest Function** | Service Bus queue trigger on `dmer-ingest` | The queue message (for `document_id`); `dmer_document.document_url` for the pre-signed URL itself | `raw-dmer` blob container, `dmer_document`, `dmer_stage_run` |
+| **Ingest Function** | Service Bus queue trigger on `dmer-ingest` | The queue message (for `document_id`); the `dmer_document` row (its `document_guid`); Mercury `GET dmers/{documentRecordId}/files` for the PDF | `raw-dmer` blob container, `dmer_document`, `dmer_stage_run` |
 | **Webhook Listener** (optional, real-time path) | HTTP trigger | Mercury's real-time payload | Same as Page Poller (shares the upsert + publish) |
 
 All three are recommended to live in one Azure Functions app (Flex Consumption or Premium plan —
@@ -83,7 +83,7 @@ orchestration's completeness call — a point where overwriting is safe — not 
 
 | Table | Operation | Fields |
 |---|---|---|
-| `dmer_document` | `INSERT ... ON CONFLICT (document_guid) DO NOTHING` | `id` (generated — this row's own id doubles as the tracing key on every log line/message; no separate `correlation_id`), `document_guid`, `document_name`, `mercury_document_status`, `document_priority`, `received_date`, `dps_date`, `queue`, `business_area`, `mercury_case_id`, `driver_key` (if supplied), `document_url` (Mercury's pre-signed URL — the Ingest Function reads it back from here, not from the queue message), `pipeline_status = RECEIVED`, `current_stage = INGEST`, `attempt_count = 0`, `first_seen_at`, `updated_at`. |
+| `dmer_document` | `INSERT ... ON CONFLICT (document_guid) DO NOTHING` | `id` (generated — this row's own id doubles as the tracing key on every log line/message; no separate `correlation_id`), `document_guid`, `document_name`, `mercury_document_status`, `document_priority`, `received_date`, `dps_date`, `queue`, `business_area`, `mercury_case_id`, `driver_key` (if supplied), `document_url` (Mercury's `documentUrl`, a path inside Mercury — kept for reference, not used to download), `pipeline_status = RECEIVED`, `current_stage = INGEST`, `attempt_count = 0`, `first_seen_at`, `updated_at`. |
 | `driver` | `INSERT ... ON CONFLICT (licence_number) DO UPDATE` | `driver_key`, `licence_number`, `mercury_driver_id`, `first_name`, `last_name`, `last_synced_at`. Only when Mercury returned a driver object. |
 | `poll_checkpoint` | `UPDATE` | `source`, `last_cursor` (null), `last_received_date`, `last_run_at`. |
 
@@ -106,8 +106,10 @@ upsert absorb it.
 1. Load the `dmer_document` row (by `document_id` from the message). **If `pipeline_status` is
    already `DOWNLOADED` or later, complete the message and return.** This is the replay guard — a
    redelivered message must not re-download and must not re-publish.
-2. Download the document from `document_url` on the row just loaded — not from the queue message,
-   which carries no such field (see [data-model.md](../data-model.md) on why).
+2. Download the PDF from Mercury by the row's `document_guid`:
+   `GET {MERCURY_API_BASE_URL}/{documentRecordId}/files` (bearer key, as `GET dmers`). Mercury's
+   `documentUrl` is a path inside Mercury (`dfp_driver/<driverId>/…`), not a link we can fetch. The
+   response must be the PDF itself (it must start with `%PDF-`); anything else fails the download.
 3. Write it to the `raw-dmer` container at a **deterministic path**:
    `raw-dmer/{yyyy}/{MM}/{document_guid}.pdf` — so a retry overwrites the same blob rather than
    creating a second copy.
@@ -132,12 +134,10 @@ Scales freely. One document per invocation.
 
 ### Failure handling
 
-**Pre-signed URL expiry is a real constraint on the whole design.** If a message reaches the DLQ
-and is replayed hours later, it will fail on an expired link, and the replay is worthless unless
-a fresh URL can be obtained. Question M-1 (TTL, and whether a fresh URL can be requested per
-document later) is **open** — see [Open Questions](#open-questions--decisions-required). Build the
-DLQ Drain's "re-poll for a fresh URL" branch from the start (see
-[DLQ Drain](10-dlq-drain.md)) rather than discovering the need during the first incident.
+The download is retried with backoff inside the invocation (behind the Mercury circuit breaker);
+if it still fails, the message is redelivered and finally dead-lettered. Because the file is
+fetched by `documentRecordId` on demand — not from a pre-signed URL — there is nothing to expire:
+a DLQ replay hours later downloads the same document again (question M-1, answered).
 
 ## Webhook Listener (optional, real-time path)
 
@@ -156,14 +156,14 @@ than Mercury itself.
 
 | Variable | Purpose |
 |---|---|
-| `MERCURY_API_BASE_URL` | Mercury `GET dmers` endpoint (`https://<host>/Dmers`); the AI Processed call is `<it>/BatchSetDmerAIProccessedStatus`. |
+| `MERCURY_API_BASE_URL` | Mercury `GET dmers` endpoint (`https://<host>/Dmers`); the AI Processed call is `<it>/BatchSetDmerAIProccessedStatus` and the file download `<it>/{documentRecordId}/files`. |
 | `MERCURY_PAGE_SIZE` | Records per `GET dmers` call (default 50). |
 | `MERCURY_RECEIVED_DATE_TIMEZONE` | IANA zone `receivedDate` is read in when it has no offset (default `America/Vancouver`). |
-| `MERCURY_AUTH_*` | Mercury credentials, from Key Vault (see `../services/azure-key-vault.md`). Network path is ExpressRoute (question M-4, confirmed). |
+| `MERCURY_AUTH_TOKEN_URL` | Mercury's token endpoint (`https://<host>/Authentication/token`). Every Mercury call carries `Authorization: Bearer <token>`; the token comes from `GET <this>?secret=<MERCURY_API_KEY>`, is shared by the process, reused until it expires (`expiresIn`/`expiresAt` in the response, else the JWT `exp`, else `MERCURY_TOKEN_TTL_SECONDS`, default 1800) and fetched again early, or at once when an API answers 401. |
+| `MERCURY_API_KEY` | The secret exchanged for the token, from Key Vault (see `../services/azure-key-vault.md`). Never logged, nor the token URL that carries it. Network path is ExpressRoute (question M-4, confirmed). |
 | `POLL_INTERVAL_MINUTES` | Timer schedule (default ~5; question I-14 may adjust). |
 | `SERVICEBUS_NAMESPACE`, `DMER_INGEST_QUEUE`, `DMER_RAW_QUEUE` | Service Bus wiring — see `../message-contracts.md`. |
 | `RAW_DMER_CONTAINER` | Blob container name (default `raw-dmer`). |
-| `PRESIGNED_URL_REUSE_POLICY` | Not yet defined — depends on M-1's answer. |
 
 ## Authentication / identity
 
@@ -206,9 +206,9 @@ bound for the life of the document. **Never log the licence number or clinical c
 
 ## Open Questions / Decisions Required
 
-- **M-1** — Pre-signed URL TTL, and whether a fresh URL can be requested for a single document
-  later. Blocks whether a DLQ replay can work at all; if not, the DLQ Drain must re-poll Mercury for
-  a fresh URL rather than resubmitting the original message.
+- **M-1** — *Answered:* there is no pre-signed URL; the PDF is downloaded on demand with
+  `GET dmers/{documentRecordId}/files`, so a DLQ replay simply downloads again. Still to confirm with
+  Mercury: the response is the raw PDF (`application/pdf`), and 404 means an unknown document.
 - **M-6** — Do Mercury's POST/PUT endpoints honour an idempotency key? Affects the Outbox Publisher,
   not Ingest directly, but the same integration-confidence question applies to every Mercury write.
 - Poller singleton mechanism (Durable singleton vs. advisory lock vs. accepting the harmless race) —

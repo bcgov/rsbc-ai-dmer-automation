@@ -133,8 +133,11 @@ param postgresDatabase string = 'dmer'
 @description('Mercury GET dmers endpoint, e.g. https://<mercury-host>/Dmers (MERCURY_API_BASE_URL). The Page Poller calls it with ?pageSize= and marks what it read AI Processed at <this URL>/BatchSetDmerAIProccessedStatus.')
 param mercuryApiBaseUrl string = ''
 
+@description('Mercury token endpoint, e.g. https://<mercury-host>/Authentication/token (MERCURY_AUTH_TOKEN_URL). Called with ?secret=<mercuryApiKey>; the bearer token it returns is reused until it expires.')
+param mercuryAuthTokenUrl string = ''
+
 @secure()
-@description('Bearer token for the Mercury API. Supply via a pipeline secret, never checked into a parameters.json file.')
+@description('Secret for the Mercury Authentication/token endpoint (MERCURY_API_KEY): exchanged for the bearer token every Mercury call carries. Supply at deploy time, never checked into a parameters.json file; never logged.')
 param mercuryApiKey string = ''
 
 @description('IANA time zone Mercury\'s receivedDate is read in when it carries no offset (Mercury sends "MM/DD/YYYY HH:MM:SS"). Pacific until Mercury confirms the zone.')
@@ -198,6 +201,7 @@ var appSettings = {
   POSTGRES_DATABASE: postgresDatabase
   POSTGRES_USER: functionAppName
   MERCURY_API_BASE_URL: mercuryApiBaseUrl
+  MERCURY_AUTH_TOKEN_URL: mercuryAuthTokenUrl
   MERCURY_API_KEY: mercuryApiKey
   MERCURY_PAGE_SIZE: mercuryPageSize
   MERCURY_RECEIVED_DATE_TIMEZONE: mercuryReceivedDateTimezone

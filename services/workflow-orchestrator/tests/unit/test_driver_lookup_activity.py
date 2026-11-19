@@ -49,7 +49,7 @@ SETTINGS = MercuryDriverSettings(
     base_url="https://mercury/drivers",
     api_key="key",  # pragma: allowlist secret
     counted_document_types=frozenset({"dmer"}),
-    uncounted_document_statuses=frozenset({"rejected"}),
+    waiting_document_statuses=frozenset({"uploaded"}),
 )
 
 
@@ -99,9 +99,9 @@ def test_page_licence_found_once_is_attached_and_flagged_as_a_lookup(dependencie
     d.engine.dispose.assert_awaited_once()
 
 
-def test_expected_count_is_counted_types_not_in_uncounted_statuses(dependencies):
+def test_expected_count_is_counted_types_in_waiting_statuses(dependencies):
     _run()
-    # DMER/Rejected and Test Report/Uploaded are not counted.
+    # Only DMER/Uploaded: DMER/Rejected and Test Report/Uploaded are not counted.
     assert (
         dependencies.repo.attach_driver.call_args.kwargs["expected_document_count"] == 1
     )
@@ -110,9 +110,10 @@ def test_expected_count_is_counted_types_not_in_uncounted_statuses(dependencies)
 @pytest.mark.parametrize(
     "types,statuses,expected",
     [
-        ({"dmer"}, set(), 2),
-        ({"dmer", "test report"}, {"rejected"}, 2),
-        ({"dmer", "test report"}, set(), 3),
+        ({"dmer"}, {"uploaded"}, 1),
+        ({"dmer"}, set(), 0),
+        ({"dmer", "test report"}, {"uploaded"}, 2),
+        ({"dmer", "test report"}, {"uploaded", "rejected"}, 3),
     ],
 )
 def test_expected_count_follows_configuration(types, statuses, expected):
@@ -120,7 +121,7 @@ def test_expected_count_follows_configuration(types, statuses, expected):
         activity.expected_document_count(
             MERCURY_DRIVER,
             counted_types=frozenset(types),
-            uncounted_statuses=frozenset(statuses),
+            waiting_statuses=frozenset(statuses),
         )
         == expected
     )

@@ -20,6 +20,27 @@ from dmer_common.mercury_client import MercuryApiError, MercuryClient
 
 SECRET_KEY = "super-secret-mercury-key"  # pragma: allowlist secret
 
+
+class _FakeAuth:
+    """A bearer token without the token endpoint (tested in test_mercury_auth)."""
+
+    token_value = "test-token"
+
+    def token(self):
+        return self.token_value
+
+    def invalidate(self, token):
+        pass
+
+
+@pytest.fixture(autouse=True)
+def _fake_token(monkeypatch):
+    monkeypatch.setattr(
+        client_module, "shared_auth", lambda settings, *, http_get: _FakeAuth()
+    )
+    monkeypatch.setattr(client_module, "mercury_auth_settings", lambda: None)
+
+
 SETTINGS = MercurySettings(
     base_url="https://mercury.example.com/Dmers",
     api_key=SECRET_KEY,
@@ -184,7 +205,7 @@ def test_no_next_link_means_nothing_more_waits():
 def test_get_page_sends_bearer_auth_header():
     http = _FakeHttp()
     MercuryClient(settings=SETTINGS, http_get=http).get_page()
-    assert http.calls[0]["headers"]["Authorization"] == f"Bearer {SECRET_KEY}"
+    assert http.calls[0]["headers"]["Authorization"] == "Bearer test-token"
 
 
 def test_get_page_retries_transient_failure():
@@ -259,7 +280,7 @@ def test_set_ai_processed_posts_the_ids():
         == "https://mercury.example.com/Dmers/BatchSetDmerAIProccessedStatus"
     )
     assert json.loads(call["body"]) == {"dmerIds": GUIDS}
-    assert call["headers"]["Authorization"] == f"Bearer {SECRET_KEY}"
+    assert call["headers"]["Authorization"] == "Bearer test-token"
     assert call["headers"]["Content-Type"] == "application/json"
 
 
@@ -291,56 +312,213 @@ def test_set_ai_processed_logs_a_count_not_the_ids_or_key(caplog):
     assert SECRET_KEY not in logged
 
 
-# ---------------------------------------------------------------------------
-# GET by driver_licence
-# ---------------------------------------------------------------------------
+# -- file download: GET {base}/{documentRecordId}/files --------------------
 
-from dmer_common.config import MercuryDriverSettings
-
-LICENCE = "01234567"
-DRIVER_SETTINGS = MercuryDriverSettings(
-    base_url="https://mercury.example.com/api/mercury/drivers",
-    api_key=SECRET_KEY,
-    counted_document_types=frozenset({"dmer"}),
-    uncounted_document_statuses=frozenset({"rejected"}),
-)
-DRIVER = {"driver_id": "D1234", "licence_number": "1234567", "active_documents": []}
+PDF = b"%PDF-1.7\n% test DMER\n%%EOF\n"
+GUID = "26946190-c3b4-ee11-b84f-00505683d8c0"
 
 
-def _driver_client(status: int, body: object = None, *, fail_times: int = 0):
+def _file_client(status: int = 200, body: bytes = PDF, *, fail_times: int = 0):
     calls: list[dict] = []
 
     def http_get(url, *, headers):
         calls.append({"url": url, "headers": headers})
         if len(calls) <= fail_times:
             raise ConnectionError("transient network error")
-        return status, json.dumps(body).encode("utf-8")
+        return status, body
 
-    return MercuryClient(driver_settings=DRIVER_SETTINGS, http_get=http_get), calls
-
-
-def test_driver_lookup_appends_the_licence_and_sends_the_bearer_key():
-    client, calls = _driver_client(200, DRIVER)
-    assert client.get_driver_by_licence(LICENCE) == [DRIVER]
-    assert (
-        calls[0]["url"] == f"https://mercury.example.com/api/mercury/drivers/{LICENCE}"
-    )
-    assert calls[0]["headers"]["Authorization"] == f"Bearer {SECRET_KEY}"
+    return MercuryClient(settings=SETTINGS, http_get=http_get), calls
 
 
-def test_driver_lookup_not_found_is_an_empty_list():
-    client, _ = _driver_client(404, {"error": "driver not found"})
+def test_download_dmer_gets_the_file_by_document_record_id():
+    # GIVEN Mercury serving the PDF WHEN it is downloaded by the guid
+    client, calls = _file_client()
+    content = client.download_dmer(GUID)
+    # THEN the bytes come back, from {base}/{guid}/files with the bearer key
+    assert content == PDF
+    assert calls[0]["url"] == f"https://mercury.example.com/Dmers/{GUID}/files"
+    assert calls[0]["headers"]["Authorization"] == "Bearer test-token"
+
+
+def test_download_dmer_retries_transient_failure():
+    client, calls = _file_client(fail_times=1)
+    assert client.download_dmer(GUID) == PDF
+    assert len(calls) == 2
+
+
+def test_download_dmer_not_found_raises():
+    client, _ = _file_client(404, b'{"error": "not found"}')
+    with pytest.raises(MercuryApiError):
+        client.download_dmer(GUID)
+
+
+def test_download_dmer_rejects_a_body_that_is_not_a_pdf():
+    # GIVEN Mercury answering 200 with JSON instead of the file
+    client, _ = _file_client(200, b'{"content": "JVBERi0..."}')
+    # THEN it is not stored as a DMER
+    with pytest.raises(MercuryApiError, match="not return a PDF"):
+        client.download_dmer(GUID)
+
+
+def test_download_dmer_logs_neither_the_guid_nor_the_key(caplog):
+    client, _ = _file_client()
+    with caplog.at_level(logging.INFO, logger=client_module._log.name):
+        client.download_dmer(GUID)
+    logged = caplog.text + " ".join(str(r.__dict__) for r in caplog.records)
+    assert GUID not in logged
+    assert SECRET_KEY not in logged
+
+
+# ---------------------------------------------------------------------------
+# POST drivers/lookup {"driverLicenceNumber": ...}
+# ---------------------------------------------------------------------------
+
+from dmer_common.config import MercuryDriverSettings
+
+LICENCE = "01234567"
+DRIVER_SETTINGS = MercuryDriverSettings(
+    base_url="https://mercury.example.com/drivers",
+    api_key=SECRET_KEY,
+    counted_document_types=frozenset({"dmer"}),
+    waiting_document_statuses=frozenset({"uploaded"}),
+)
+# Mercury's POST drivers/lookup response (the shape Mercury shared,
+# 2026-11-19): snake_case, "documents", and the driver's case.
+CASE = {
+    "case_id": "C1234",
+    "case_title": "01234567 - DRIVER - RSBC - 1",
+    "case_type": "RSBC",
+    "case_priority": "Regular",
+    "case_owner": "Team - Intake",
+}
+MERCURY_DRIVER = {
+    "driver_id": "D1234",
+    "first_name": "MOCK",
+    "middle_name": "",
+    "last_name": "DRIVER",
+    "licence_number": "01234567",
+    "documents": [
+        {
+            "file_name": "DMER-0001-TEST",
+            "document_type": "DMER",
+            "document_status": "Uploaded",
+            "uploaded_date": "2024-10-03T07:11:00Z",
+            "dps_date": "2024-10-04T07:11:00Z",
+            "document_id": "7450c41a-07e2-f111-b873-00505683d8c0",
+        },
+        {
+            "file_name": "DMER-0002-TEST",
+            "document_type": "DMER",
+            "document_status": "Uploaded",
+            "uploaded_date": "2024-10-04T08:12:00Z",
+            "document_id": "8561d52b-07e2-f111-b873-00505683d8c0",
+        },
+    ],
+    "case": CASE,
+}
+PIPELINE_DRIVER = {
+    "driver_id": "D1234",
+    "first_name": "MOCK",
+    "middle_name": None,
+    "last_name": "DRIVER",
+    "licence_number": "01234567",
+    "active_documents": [
+        {
+            "document_guid": "7450c41a-07e2-f111-b873-00505683d8c0",
+            "document_name": "DMER-0001-TEST",
+            "document_type": "DMER",
+            "document_status": "Uploaded",
+            "uploaded_date": "2024-10-03T07:11:00Z",
+            "dps_date": "2024-10-04T07:11:00Z",
+            "document_url": None,
+        },
+        {
+            "document_guid": "8561d52b-07e2-f111-b873-00505683d8c0",
+            "document_name": "DMER-0002-TEST",
+            "document_type": "DMER",
+            "document_status": "Uploaded",
+            "uploaded_date": "2024-10-04T08:12:00Z",
+            "dps_date": None,
+            "document_url": None,
+        },
+    ],
+    "case": CASE,
+}
+
+
+def _driver_client(status: int, body: object = None, *, fail_times: int = 0):
+    calls: list[dict] = []
+
+    def http_send(method, url, *, headers, body: bytes | None):
+        calls.append(
+            {"method": method, "url": url, "headers": headers, "body": json.loads(body)}
+        )
+        if len(calls) <= fail_times:
+            raise ConnectionError("transient network error")
+        return status, b"" if payload is None else json.dumps(payload).encode()
+
+    payload = body
+    client = MercuryClient(driver_settings=DRIVER_SETTINGS, http_send=http_send)
+    return client, calls
+
+
+def test_driver_lookup_posts_the_licence_with_the_bearer_token():
+    client, calls = _driver_client(200, MERCURY_DRIVER)
+    assert client.get_driver_by_licence(LICENCE) == [PIPELINE_DRIVER]
+    assert calls[0]["method"] == "POST"
+    assert calls[0]["url"] == "https://mercury.example.com/drivers/lookup"
+    assert calls[0]["body"] == {"driverLicenceNumber": LICENCE}
+    assert calls[0]["headers"]["Authorization"] == "Bearer test-token"
+    assert calls[0]["headers"]["Content-Type"] == "application/json"
+
+
+def test_driver_lookup_reads_the_camel_case_driver_shape_too():
+    camel_driver = {
+        "driverId": "D1",
+        "licenceNumber": "1234567",
+        "documents": [
+            {
+                "fileName": "DMER.PDF",
+                "documentType": "DMER",
+                "submittalStatus": "Uploaded",
+                "documentRecordId": "g1",
+            }
+        ],
+    }
+    client, _ = _driver_client(200, camel_driver)
+    (driver,) = client.get_driver_by_licence(LICENCE)
+    assert driver["driver_id"] == "D1"
+    (document,) = driver["active_documents"]
+    assert document["document_guid"] == "g1"
+    assert document["document_name"] == "DMER.PDF"
+    assert document["document_status"] == "Uploaded"
+    assert driver["case"] is None
+
+
+@pytest.mark.parametrize(
+    ("status", "body"),
+    [(404, {"error": "driver not found"}), (200, None), (200, []), (200, {})],
+)
+def test_driver_lookup_not_found_is_an_empty_list(status, body):
+    client, _ = _driver_client(status, body)
     assert client.get_driver_by_licence(LICENCE) == []
 
 
 def test_driver_lookup_returning_several_drivers_returns_them_all():
-    client, _ = _driver_client(200, [DRIVER, {**DRIVER, "driver_id": "D9"}])
-    assert len(client.get_driver_by_licence(LICENCE)) == 2
+    other = {**MERCURY_DRIVER, "driver_id": "D9"}
+    client, _ = _driver_client(200, [MERCURY_DRIVER, other])
+    drivers = client.get_driver_by_licence(LICENCE)
+    assert [d["driver_id"] for d in drivers] == ["D1234", "D9"]
+
+
+def test_driver_lookup_reads_an_items_envelope():
+    client, _ = _driver_client(200, {"items": [MERCURY_DRIVER]})
+    assert client.get_driver_by_licence(LICENCE) == [PIPELINE_DRIVER]
 
 
 def test_driver_lookup_retries_transient_failures():
-    client, calls = _driver_client(200, DRIVER, fail_times=1)
-    assert client.get_driver_by_licence(LICENCE) == [DRIVER]
+    client, calls = _driver_client(200, MERCURY_DRIVER, fail_times=1)
+    assert client.get_driver_by_licence(LICENCE) == [PIPELINE_DRIVER]
     assert len(calls) == 2
 
 
@@ -356,7 +534,7 @@ def test_driver_lookup_never_logs_the_licence_or_key(caplog):
     logging.getLogger(client_module.__name__).addHandler(handler)
     try:
         for status in (200, 500):
-            client, _ = _driver_client(status, DRIVER)
+            client, _ = _driver_client(status, MERCURY_DRIVER)
             try:
                 client.get_driver_by_licence(LICENCE)
             except MercuryApiError:
@@ -384,8 +562,8 @@ def test_driver_settings_from_environment(monkeypatch):
     )
     monkeypatch.setenv("MERCURY_API_KEY", SECRET_KEY)
     monkeypatch.setenv("MERCURY_COUNTED_DOCUMENT_TYPES", "DMER, Test Report")
-    monkeypatch.delenv("MERCURY_UNCOUNTED_DOCUMENT_STATUSES", raising=False)
+    monkeypatch.delenv("MERCURY_WAITING_DOCUMENT_STATUSES", raising=False)
     settings = mercury_driver_settings()
     assert settings.base_url == "https://m.example.com/drivers"
     assert settings.counted_document_types == {"dmer", "test report"}
-    assert settings.uncounted_document_statuses == {"rejected"}
+    assert settings.waiting_document_statuses == {"uploaded"}

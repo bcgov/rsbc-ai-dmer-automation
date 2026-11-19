@@ -10,9 +10,9 @@ never a silent return.
 document arrived; this re-counts from a **fresh** Mercury ``GET by
 driver_licence`` at decision time, because a new DMER may have arrived since.
 
-Mercury's ``active_documents`` carry no document id we can match to ours (the
-mock API's shape; real Mercury's is open question M-5), so completeness is a
-count: Mercury's waiting DMERs against the batch's finished documents.
+Completeness is a count: Mercury's waiting DMERs against the batch's
+finished documents. (Mercury's lookup now gives each document's id --
+``document_guid`` after translation -- so it could match by id instead.)
 """
 
 from __future__ import annotations
@@ -26,9 +26,10 @@ AWAITING = "AWAITING_DRIVER_COMPLETION"
 MANUAL_REVIEW = "MANUAL_REVIEW"
 
 # Defaults match Driver Lookup's configuration (MERCURY_COUNTED_DOCUMENT_TYPES,
-# MERCURY_UNCOUNTED_DOCUMENT_STATUSES): DMERs count, Rejected ones don't (I-8).
+# MERCURY_WAITING_DOCUMENT_STATUSES): DMERs whose status is Uploaded are
+# waiting; any other status (Rejected, I-8, included) is not.
 DEFAULT_COUNTED_TYPES = frozenset({"dmer"})
-DEFAULT_UNCOUNTED_STATUSES = frozenset({"rejected"})
+DEFAULT_WAITING_STATUSES = frozenset({"uploaded"})
 
 
 class WaitReason(StrEnum):
@@ -73,28 +74,44 @@ def mercury_waiting_count(
     drivers: Sequence[Mapping[str, Any]],
     *,
     counted_types: Iterable[str] = DEFAULT_COUNTED_TYPES,
-    uncounted_statuses: Iterable[str] = DEFAULT_UNCOUNTED_STATUSES,
+    waiting_statuses: Iterable[str] = DEFAULT_WAITING_STATUSES,
+    already_decided: Iterable[str] = (),
 ) -> int | None:
-    """How many of the driver's DMERs Mercury still holds as not yet triaged.
+    """How many of the driver's DMERs are still waiting for a decision.
 
-    Counts ``active_documents`` of a counted type, not in an uncounted status,
-    with an empty ``dps_date`` (I-9: empty means not yet triaged). Returns None
-    unless Mercury returned exactly one driver -- completeness can't be
-    verified, so the batch waits.
+    Counts ``active_documents`` of a counted type whose ``document_status`` is
+    a waiting status (default ``Uploaded``), except those whose
+    ``document_guid`` is in *already_decided*. Mercury keeps a DMER
+    ``Uploaded`` until a person reviews it -- through our AI Processed mark
+    and our posted outcome -- so a DMER decided in an earlier batch is still
+    ``Uploaded`` and only our own records can say it's done. ``dps_date`` is
+    not consulted. Returns None unless Mercury returned exactly one driver --
+    completeness can't be verified, so the batch waits.
     """
     if len(drivers) != 1:
         return None
     types = {t.strip().lower() for t in counted_types}
-    skipped = {s.strip().lower() for s in uncounted_statuses}
-    documents = drivers[0].get("active_documents") or []
+    waiting = {s.strip().lower() for s in waiting_statuses}
+    decided = {g.strip().lower() for g in already_decided}
     return sum(
         1
-        for d in documents
+        for d in waiting_documents(drivers[0], types, waiting)
+        if str(d.get("document_guid") or "").strip().lower() not in decided
+    )
+
+
+def waiting_documents(
+    driver: Mapping[str, Any], types: set[str], waiting: set[str]
+) -> list[Mapping[str, Any]]:
+    """The driver's documents of a counted type in a waiting status
+    (*types* and *waiting* lower-case)."""
+    return [
+        d
+        for d in driver.get("active_documents") or []
         if isinstance(d, Mapping)
         and str(d.get("document_type", "")).strip().lower() in types
-        and str(d.get("document_status", "")).strip().lower() not in skipped
-        and not str(d.get("dps_date") or "").strip()
-    )
+        and str(d.get("document_status", "")).strip().lower() in waiting
+    ]
 
 
 def check_completeness(expected: int | None, batch: Sequence[Member]) -> Completeness:

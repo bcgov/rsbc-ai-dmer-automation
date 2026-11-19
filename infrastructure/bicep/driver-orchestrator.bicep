@@ -124,18 +124,21 @@ param postgresPort string = '5432'
 @description('Postgres database name.')
 param postgresDatabase string = 'dmer'
 
-@description('Mercury GET by driver_licence base URL (the licence is appended as a path segment) -- the Decision Gateway\'s completeness re-check.')
+@description('Mercury drivers root, e.g. https://<mercury-host>/drivers (MERCURY_DRIVER_LICENCE_API_BASE_URL): the Decision Gateway completeness re-check calls POST <this URL>/lookup with {"driverLicenceNumber": ...}.')
 param mercuryDriverLicenceApiBaseUrl string = ''
 
+@description('Mercury token endpoint, e.g. https://<mercury-host>/Authentication/token (MERCURY_AUTH_TOKEN_URL). Called with ?secret=<mercuryApiKey>; the bearer token it returns is reused until it expires.')
+param mercuryAuthTokenUrl string = ''
+
 @secure()
-@description('Mercury API key, if the endpoint needs one. Supply at deploy time; never logged.')
+@description('Secret for the Mercury Authentication/token endpoint (MERCURY_API_KEY): exchanged for the bearer token every Mercury call carries. Supply at deploy time, never checked into a parameters.json file; never logged.')
 param mercuryApiKey string = ''
 
 @description('Comma-separated Mercury document types that count toward a driver\'s batch (shared with Driver Lookup).')
 param mercuryCountedDocumentTypes string = 'DMER'
 
-@description('Comma-separated Mercury document statuses that do not count (I-8: Rejected does not hold the batch up).')
-param mercuryUncountedDocumentStatuses string = 'Rejected'
+@description('Comma-separated Mercury document statuses that mean a document is still waiting (only these hold the batch up; Rejected, I-8, does not).')
+param mercuryWaitingDocumentStatuses string = 'Uploaded'
 
 @description('Cost center tag value.')
 param costCenter string = 'RSBC'
@@ -185,9 +188,10 @@ var appSettings = {
   POSTGRES_USER: functionAppName
   POSTGRES_SSLMODE: 'require'
   MERCURY_DRIVER_LICENCE_API_BASE_URL: mercuryDriverLicenceApiBaseUrl
+  MERCURY_AUTH_TOKEN_URL: mercuryAuthTokenUrl
   MERCURY_API_KEY: mercuryApiKey
   MERCURY_COUNTED_DOCUMENT_TYPES: mercuryCountedDocumentTypes
-  MERCURY_UNCOUNTED_DOCUMENT_STATUSES: mercuryUncountedDocumentStatuses
+  MERCURY_WAITING_DOCUMENT_STATUSES: mercuryWaitingDocumentStatuses
 }
 
 module functionApp 'modules/compute/function-app.bicep' = {

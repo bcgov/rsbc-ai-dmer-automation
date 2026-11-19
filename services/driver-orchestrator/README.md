@@ -17,7 +17,7 @@ Each signal runs `evaluate.evaluate_driver`:
 1. Take the driver's advisory lock and find its open `driver_evaluation`.
 2. Load the batch (documents counted into it) with extraction values and the
    latest rule evaluation.
-3. Re-check Mercury `GET by driver_licence`; check completeness.
+3. Re-check Mercury `POST drivers/lookup`; check completeness.
 4. Not complete: record `WAITING` (reason, Mercury check time, refreshed
    count) and stop. If the reason is that **Mercury couldn't verify** the
    batch (down, timing out, no driver or several), the function schedules its
@@ -85,7 +85,7 @@ az deployment group create -g rg-rsbc-dmer-dev   -f infrastructure/bicep/driver-
 ```
 
 `mercuryApiKey` must be supplied on every deploy: it defaults to empty, and an empty
-`MERCURY_API_KEY` fails every signal (`ConfigError`) until the messages dead-letter.
+`MERCURY_API_KEY` (or `MERCURY_AUTH_TOKEN_URL`) fails every signal (`ConfigError`) until the messages dead-letter.
 
 Then the Postgres role (once per environment): run `services/intake-processor/create-principal.sql`
 against `postgres` and `roles.sql` against `dmer` with `function_app_name` set to this app's name

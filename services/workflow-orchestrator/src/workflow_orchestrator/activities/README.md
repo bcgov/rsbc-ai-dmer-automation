@@ -5,7 +5,7 @@ docs/development/stages/03-document-orchestration.md).
 
 - **Driver Lookup** (`driver_lookup.py`) -- first: keeps the driver Mercury
   supplied, or looks up the licence read off the page with Mercury's
-  `GET by driver_licence`; creates or attaches the driver's open
+  `POST drivers/lookup`; creates or attaches the driver's open
   `driver_evaluation` with `expected_document_count`. Unresolvable documents
   go to `MANUAL_REVIEW`. DB unit of work: `dmer_common.db.driver_lookup`.
 - **Normalize** (`normalize.py`) -- calls Azure OpenAI to derive rule-ready

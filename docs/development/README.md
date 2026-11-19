@@ -184,7 +184,8 @@ implements them — don't re-litigate them without a reason:
   confirmation** (I-6).
 - "Duplicate" maps to Mercury's `Rejected` status (I-7).
 - `Rejected` documents count toward "all documents processed" (I-8).
-- Empty `dps_date` is a reliable "not yet triaged" signal (I-9).
+- Empty `dps_date` is a reliable "not yet triaged" signal (I-9) — but completeness checks only
+  `document_status = Uploaded`, not `dps_date` (decided 2026-11-19).
 - A new DMER arriving after a batch is posted is evaluated separately, not by reopening the batch
   (I-10) — mechanics not fully specified, see [data-model.md](data-model.md#open-questions--decisions-required).
 - AI may map an unmapped driver automatically via the Mercury API (I-11).
@@ -253,9 +254,9 @@ instantiations, and CODEOWNERS.
 
 ### Mercury integration (unanswered questions from the Mercury/Dynamics platform team)
 
-- **M-1** — pre-signed URL TTL and fresh-URL-on-demand availability. Blocks whether DLQ replay works
-  by resubmission or must always re-poll Mercury. See [Ingest](stages/01-ingest.md#failure-handling)
-  and [DLQ Drain](stages/10-dlq-drain.md#pre-signed-url-replay-caveat).
+- **M-1** — *Answered:* no pre-signed URL; Ingest downloads the PDF on demand with
+  `GET dmers/{documentRecordId}/files`, so DLQ replay works by resubmission. See
+  [Ingest](stages/01-ingest.md#failure-handling).
 - **M-6** — does Mercury's POST/PUT honour an idempotency key, and what's the duplicate-submit
   behaviour? See [Post-Processing](stages/08-post-processing.md#open-questions--decisions-required).
 - **M-10** — expected concurrent load / throttling on Mercury's write APIs. Sets the Outbox

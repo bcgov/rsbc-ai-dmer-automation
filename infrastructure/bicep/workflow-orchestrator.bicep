@@ -168,18 +168,21 @@ param triagePolicyContainer string = 'triage-policy'
 ])
 param decisionEngine string = 'rules'
 
-@description('Mercury driver-by-licence API base URL (Driver Lookup).')
+@description('Mercury drivers root, e.g. https://<mercury-host>/drivers (MERCURY_DRIVER_LICENCE_API_BASE_URL): Driver Lookup calls POST <this URL>/lookup with {"driverLicenceNumber": ...}.')
 param mercuryDriverLicenceApiBaseUrl string = ''
 
+@description('Mercury token endpoint, e.g. https://<mercury-host>/Authentication/token (MERCURY_AUTH_TOKEN_URL). Called with ?secret=<mercuryApiKey>; the bearer token it returns is reused until it expires.')
+param mercuryAuthTokenUrl string = ''
+
 @secure()
-@description('Bearer token for the Mercury API. Supply at deploy time, never checked into a parameters.json file.')
+@description('Secret for the Mercury Authentication/token endpoint (MERCURY_API_KEY): exchanged for the bearer token every Mercury call carries. Supply at deploy time, never checked into a parameters.json file; never logged.')
 param mercuryApiKey string = ''
 
 @description('Mercury document types that count toward a driver\'s evaluation (comma-separated).')
 param mercuryCountedDocumentTypes string = 'DMER'
 
-@description('Mercury document statuses that don\'t count (comma-separated).')
-param mercuryUncountedDocumentStatuses string = 'Rejected'
+@description('Mercury document statuses that mean a document is still waiting (comma-separated).')
+param mercuryWaitingDocumentStatuses string = 'Uploaded'
 
 @description('External Azure OpenAI (AI Hub) endpoint for Normalize.')
 @minLength(1)
@@ -268,9 +271,10 @@ var appSettings = {
   TRIAGE_POLICY_CONTAINER: triagePolicyContainer
   DECISION_ENGINE: decisionEngine
   MERCURY_DRIVER_LICENCE_API_BASE_URL: mercuryDriverLicenceApiBaseUrl
+  MERCURY_AUTH_TOKEN_URL: mercuryAuthTokenUrl
   MERCURY_API_KEY: mercuryApiKey
   MERCURY_COUNTED_DOCUMENT_TYPES: mercuryCountedDocumentTypes
-  MERCURY_UNCOUNTED_DOCUMENT_STATUSES: mercuryUncountedDocumentStatuses
+  MERCURY_WAITING_DOCUMENT_STATUSES: mercuryWaitingDocumentStatuses
   AZURE_OPENAI_ENDPOINT: azureOpenAiEndpoint
   // The documented Managed Identity exception (external AI Hub key) --
   // resolved from Key Vault by this app's identity, never stored here.

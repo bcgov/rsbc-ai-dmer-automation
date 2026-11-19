@@ -2,15 +2,22 @@
 
 Wraps the ``GET dmers`` API used by the Page Poller (see
 ``docs/development/stages/01-ingest.md``), the AI Processed status call that
-claims what it read, and the ``GET by driver_licence`` lookup used by Driver
-Lookup (``03-document-orchestration.md``). ``GET dmers`` is claim-based: each
-call returns the next records not yet marked AI Processed, so paging is
-"mark, then call again" (:meth:`MercuryClient.set_ai_processed`), not a
-cursor. Mercury's camelCase items are translated here into the snake_case
-records the rest of the pipeline reads. Bearer-token auth from a Key Vault reference
-(Mercury is outside our tenant boundary, over ExpressRoute -- key/credential
-auth, not Managed Identity, per question M-4), and retry/circuit-breaker
-wrapping, matching every other external client in this package.
+claims what it read, the file download the Ingest Function uses
+(``GET {base}/{documentRecordId}/files``), and the ``POST drivers/lookup``
+lookup (``POST drivers/lookup``) used by Driver Lookup
+(``03-document-orchestration.md``). ``GET dmers``
+is claim-based: each call returns the next records not yet marked AI
+Processed, so paging is "mark, then call again"
+(:meth:`MercuryClient.set_ai_processed`), not a cursor. Mercury's camelCase
+items are translated here into the snake_case records the rest of the
+pipeline reads.
+
+Every call carries a bearer token: the key (a Key Vault reference) buys one
+from ``Authentication/token``, and it is reused until it expires or Mercury
+answers 401 (:mod:`.auth`). Mercury is outside our tenant boundary, over
+ExpressRoute -- key/credential auth, not Managed Identity, per question M-4.
+Calls are wrapped in retry and a circuit breaker, matching every other
+external client in this package.
 
 It also wraps the **write-back** the Outbox Publisher needs
 (:meth:`MercuryClient.send_outbox`, one call per ``mercury_outbox`` row).
@@ -32,6 +39,7 @@ from __future__ import annotations
 import json
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Protocol
@@ -39,9 +47,11 @@ from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
 from ..config import (
+    MercuryAuthSettings,
     MercuryDriverSettings,
     MercurySettings,
     MercuryWriteSettings,
+    mercury_auth_settings,
     mercury_driver_settings,
     mercury_settings,
     mercury_write_settings,
@@ -49,6 +59,7 @@ from ..config import (
 from ..retry import CircuitBreaker, mercury_breaker, mercury_retry
 from ..retry.circuit_breaker import CircuitOpenError
 from ..telemetry import get_logger
+from .auth import MercuryAuth, MercuryAuthError, shared_auth
 
 _log = get_logger(__name__)
 
@@ -125,6 +136,61 @@ class MercuryPage:
 
 # Mercury's endpoint name, spelling included.
 _AI_PROCESSED_PATH = "BatchSetDmerAIProccessedStatus"
+_DRIVER_LOOKUP_PATH = "lookup"
+
+
+def _first(item: dict[str, Any], *keys: str) -> Any:
+    """The first of *keys* present in *item* (camelCase from Mercury, or the
+    pipeline's snake_case), with "" read as None."""
+    for key in keys:
+        if key in item:
+            return _value(item[key])
+    return None
+
+
+def _lookup_document(doc: dict[str, Any]) -> dict[str, Any]:
+    """One of the driver's documents. Mercury's ``document_id`` is its
+    document record id -- the pipeline's ``document_guid``, not our own
+    ``document_id``. Mercury gives no ``document_url`` here (the file is
+    fetched by id), and ``dps_date`` only once the document is triaged."""
+    return {
+        "document_guid": _first(
+            doc, "document_id", "documentId", "documentRecordId", "document_guid"
+        ),
+        "document_name": _first(
+            doc, "file_name", "fileName", "documentName", "document_name"
+        ),
+        "document_type": _first(doc, "documentType", "document_type"),
+        "document_status": _first(
+            doc, "submittalStatus", "documentStatus", "document_status"
+        ),
+        "uploaded_date": _first(doc, "uploadedDate", "uploaded_date"),
+        "dps_date": _first(doc, "dpsDate", "dps_date"),
+        "document_url": _first(doc, "documentUrl", "document_url"),
+    }
+
+
+def _lookup_driver(driver: dict[str, Any]) -> dict[str, Any]:
+    """One driver from ``drivers/lookup`` in the pipeline's shape.
+
+    Mercury answers in snake_case: the driver's fields, ``documents`` and the
+    driver's ``case``. The camelCase of ``GET dmers``' ``driver`` object is
+    read as well, in case the lookup is ever aligned with it."""
+    documents = _first(driver, "documents", "activeDocuments", "active_documents")
+    case = _first(driver, "case", "dmerDocumentCaseRecord")
+    return {
+        "driver_id": _first(driver, "driverId", "driver_id"),
+        "first_name": _first(driver, "firstName", "first_name"),
+        "middle_name": _first(driver, "middleName", "middle_name"),
+        "last_name": _first(driver, "lastName", "last_name"),
+        "licence_number": _first(driver, "licenceNumber", "licence_number"),
+        "active_documents": [
+            _lookup_document(d) for d in documents or [] if isinstance(d, dict)
+        ],
+        "case": case if isinstance(case, dict) else None,
+    }
+
+
 _RECEIVED_DATE_FORMAT = "%m/%d/%Y %H:%M:%S"  # e.g. "05/06/2025 10:03:01"
 
 
@@ -215,6 +281,9 @@ class MercuryClient:
         call without hitting a real endpoint).
     breaker:
         Optional shared circuit breaker (defaults to a Mercury-tuned breaker).
+    auth:
+        Optional bearer-token provider; defaults to the process-wide one for
+        :func:`dmer_common.config.mercury_auth_settings`, read on first use.
     """
 
     def __init__(
@@ -226,6 +295,8 @@ class MercuryClient:
         http_get: _HttpGet = _default_http_get,
         http_send: _HttpSend = _default_http_send,
         breaker: CircuitBreaker | None = None,
+        auth: MercuryAuth | None = None,
+        auth_settings: MercuryAuthSettings | None = None,
     ) -> None:
         self._batch_settings = settings
         self._driver_settings = driver_settings
@@ -233,6 +304,45 @@ class MercuryClient:
         self._http_get = http_get
         self._http_send = http_send
         self._breaker = breaker or mercury_breaker()
+        self._auth_provider = auth
+        self._auth_settings = auth_settings
+
+    @property
+    def _auth(self) -> MercuryAuth:
+        if self._auth_provider is None:
+            self._auth_provider = shared_auth(
+                self._auth_settings or mercury_auth_settings(),
+                http_get=self._http_get,
+            )
+        return self._auth_provider
+
+    def _get(self, url: str, headers: dict[str, str]) -> tuple[int, bytes]:
+        """GET with the bearer token; on a 401 the token is dropped and the
+        call made once more with a new one."""
+        return self._authorised(lambda h: self._http_get(url, headers=h), headers)
+
+    def _send(
+        self, method: str, url: str, headers: dict[str, str], body: bytes | None
+    ) -> tuple[int, bytes]:
+        """As :meth:`_get`, for a call with a body."""
+        return self._authorised(
+            lambda h: self._http_send(method, url, headers=h, body=body), headers
+        )
+
+    def _authorised(
+        self,
+        call: Callable[[dict[str, str]], tuple[int, bytes]],
+        headers: dict[str, str],
+    ) -> tuple[int, bytes]:
+        token = self._auth.token()
+        status, body = call({**headers, "Authorization": f"Bearer {token}"})
+        if status != 401:
+            return status, body
+        # The token expired early or was revoked: fetch a new one, once.
+        _log.info("mercury rejected the bearer token; fetching a new one")
+        self._auth.invalidate(token)
+        token = self._auth.token()
+        return call({**headers, "Authorization": f"Bearer {token}"})
 
     @property
     def _settings(self) -> MercurySettings:
@@ -268,10 +378,9 @@ class MercuryClient:
 
     def _fetch(self, url: str) -> MercuryPage:
         headers = {
-            "Authorization": f"Bearer {self._settings.api_key}",
             "Accept": "application/json",
         }
-        status, body = self._http_get(url, headers=headers)
+        status, body = self._get(url, headers)
         if status < 200 or status >= 300:
             _log.error(
                 "mercury batch API call failed",
@@ -294,6 +403,35 @@ class MercuryClient:
         )
         return MercuryPage(records=records, has_more=bool(payload.get("nextLink")))
 
+    def download_dmer(self, document_guid: str) -> bytes:
+        """The DMER's PDF (``GET {base}/{documentRecordId}/files``), as bytes.
+
+        Mercury's ``documentUrl`` is a path inside Mercury, not a link we can
+        fetch; the file is downloaded by the document guid instead, with the
+        batch API's base URL and key. Retried with backoff, behind the Mercury
+        circuit breaker; raises :class:`MercuryApiError` on a non-2xx response
+        or when the body is not a PDF. Neither the URL (it carries the guid)
+        nor the content is logged.
+        """
+        url = f"{self._settings.base_url}/{quote(document_guid, safe='')}/files"
+        headers = {
+            "Accept": "application/pdf, application/octet-stream",
+        }
+
+        @mercury_retry()
+        def _run() -> bytes:
+            status, body = self._get(url, headers)
+            if status < 200 or status >= 300:
+                _log.error("mercury file download failed", extra={"status": status})
+                raise MercuryApiError(f"Mercury file download returned HTTP {status}")
+            if not body.lstrip()[:5] == b"%PDF-":
+                raise MercuryApiError("Mercury file download did not return a PDF")
+            return body
+
+        content = self._breaker.call(_run)
+        _log.info("mercury file downloaded", extra={"size_bytes": len(content)})
+        return content
+
     def set_ai_processed(self, document_guids: list[str]) -> None:
         """Mark *document_guids* AI Processed in Mercury
         (``POST {base}/BatchSetDmerAIProccessedStatus``, ``{"dmerIds": [...]}``):
@@ -306,7 +444,6 @@ class MercuryClient:
             return
         url = f"{self._settings.base_url}/{_AI_PROCESSED_PATH}"
         headers = {
-            "Authorization": f"Bearer {self._settings.api_key}",
             "Accept": "application/json",
             "Content-Type": "application/json",
         }
@@ -314,7 +451,7 @@ class MercuryClient:
 
         @mercury_retry()
         def _run() -> None:
-            status, _ = self._http_send("POST", url, headers=headers, body=body)
+            status, _ = self._send("POST", url, headers, body)
             if status < 200 or status >= 300:
                 _log.error(
                     "mercury AI processed status call failed", extra={"status": status}
@@ -330,37 +467,40 @@ class MercuryClient:
         )
 
     def get_driver_by_licence(self, licence_number: str) -> list[dict[str, Any]]:
-        """Every driver Mercury holds under *licence_number* (``GET by
-        driver_licence``): ``[]`` when there is none (HTTP 404), one driver
-        normally, more if Mercury returns a list of several.
+        """Every driver Mercury holds under *licence_number*
+        (``POST {base}/lookup`` with ``{"driverLicenceNumber": ...}``): ``[]``
+        when there is none (HTTP 404, or an empty answer), one driver
+        normally, more if Mercury returns a list of several. Each driver is
+        translated to the pipeline's shape (:func:`_lookup_driver`).
 
-        The licence is part of the URL, so neither the URL nor the licence is
-        ever logged (architecture doc §9.2). Retried with backoff on
-        transient failure, behind the Mercury circuit breaker.
+        The licence travels in the body, and neither it nor the response is
+        logged (architecture doc §9.2). Retried with backoff on transient
+        failure, behind the Mercury circuit breaker.
         """
-        settings = self.driver_settings
-        url = f"{settings.base_url}/{quote(licence_number, safe='')}"
-        headers = {
-            "Authorization": f"Bearer {settings.api_key}",
-            "Accept": "application/json",
-        }
+        url = f"{self.driver_settings.base_url}/{_DRIVER_LOOKUP_PATH}"
+        headers = {"Accept": "application/json", "Content-Type": "application/json"}
+        body = json.dumps({"driverLicenceNumber": licence_number}).encode("utf-8")
 
         @mercury_retry()
         def _run() -> list[dict[str, Any]]:
-            status, body = self._http_get(url, headers=headers)
+            status, raw = self._send("POST", url, headers, body)
             if status == 404:
                 return []
             if status < 200 or status >= 300:
                 _log.error("mercury driver lookup failed", extra={"status": status})
                 raise MercuryApiError(f"Mercury driver lookup returned HTTP {status}")
-            payload = json.loads(body.decode("utf-8"))
+            payload = json.loads(raw.decode("utf-8")) if raw.strip() else None
+            if isinstance(payload, dict) and isinstance(payload.get("items"), list):
+                payload = payload["items"]
+            if payload is None or payload == {}:
+                payload = []
             drivers = payload if isinstance(payload, list) else [payload]
             if not all(isinstance(d, dict) for d in drivers):
                 raise MercuryApiError(
                     "Mercury driver lookup returned an unexpected shape"
                 )
             _log.info("mercury driver lookup", extra={"driver_count": len(drivers)})
-            return drivers
+            return [_lookup_driver(d) for d in drivers]
 
         return self._breaker.call(_run)
 
@@ -450,7 +590,6 @@ class MercuryClient:
         settings = self.write_settings
         url = f"{settings.base_url}/{path}"
         headers = {
-            "Authorization": f"Bearer {settings.api_key}",
             "Accept": "application/json",
         }
         data = None
@@ -462,12 +601,19 @@ class MercuryClient:
 
         def _run() -> tuple[int, bytes]:
             try:
-                status, raw = self._http_send(method, url, headers=headers, body=data)
+                status, raw = self._send(method, url, headers, data)
             except (urllib.error.URLError, TimeoutError, OSError) as exc:
                 raise MercuryWriteError(
                     f"Mercury write {method} failed: {type(exc).__name__}",
                     status=None,
                     retryable=True,
+                ) from exc
+            except MercuryAuthError as exc:
+                # No token: worth retrying only if Mercury was struggling.
+                raise MercuryWriteError(
+                    f"Mercury write {method} failed: no bearer token",
+                    status=exc.status,
+                    retryable=exc.status is not None and _retryable(exc.status),
                 ) from exc
             if _retryable(status):
                 # counted by the breaker: Mercury is struggling

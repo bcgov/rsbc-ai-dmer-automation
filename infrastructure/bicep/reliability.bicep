@@ -196,8 +196,11 @@ param postgresPort string = '5432'
 @description('Postgres database name.')
 param postgresDatabase string = 'dmer'
 
+@description('Mercury token endpoint, e.g. https://<mercury-host>/Authentication/token (MERCURY_AUTH_TOKEN_URL). Called with ?secret=<mercuryApiKey>; the bearer token it returns is reused until it expires.')
+param mercuryAuthTokenUrl string = ''
+
 @secure()
-@description('Mercury API key, if the write endpoints need one. Supply at deploy time; never logged.')
+@description('Secret for the Mercury Authentication/token endpoint (MERCURY_API_KEY): exchanged for the bearer token every Mercury call carries. Supply at deploy time, never checked into a parameters.json file; never logged.')
 param mercuryApiKey string = ''
 
 @description('Cost center tag value.')
@@ -276,6 +279,7 @@ var appSettings = {
   POSTGRES_USER: functionAppName
   POSTGRES_SSLMODE: 'require'
   MERCURY_WRITE_API_BASE_URL: mercuryWriteApiBaseUrl
+  MERCURY_AUTH_TOKEN_URL: mercuryAuthTokenUrl
   MERCURY_API_KEY: mercuryApiKey
 }
 

@@ -9,12 +9,14 @@ Run it alongside Azurite, the local Postgres container, and `func start` (see
 Then point local.settings.json at it and restart `func start`:
 
     "MERCURY_API_BASE_URL": "http://localhost:8899/Dmers",
+    "MERCURY_AUTH_TOKEN_URL": "http://localhost:8899/Authentication/token",
     "MERCURY_API_KEY": "local-dev-key"  # pragma: allowlist secret -- example value, not a real key
 
 What it serves matches Mercury's GET dmers shape (camelCase `items`): three
 DMERs (one without a driver) and one non-DMER (an HRDIR report with no
-documentUrl, which the poller skips but still marks). Each DMER's
-documentUrl points back at this server, which serves a tiny dummy PDF so
+documentUrl, which the poller skips but still marks). As in Mercury, a
+DMER's documentUrl is a relative path, not a link; the file comes from
+GET /Dmers/{documentRecordId}/files, which serves a tiny dummy PDF so
 `_download_source_pdf` has something real to fetch.
 
 Claim-based, like Mercury: GET /Dmers?pageSize=N returns the first N records
@@ -63,7 +65,7 @@ def _dmer(guid: str, name: str, received: str, driver: dict | None, case: dict) 
         "documentRecordId": guid,
         "queue": "Team - Intake",
         "documentName": name,
-        "documentUrl": f"{BASE}/files/{guid}.pdf",
+        "documentUrl": f"dfp_driver/mock/{guid}.PDF",
         "documentType": "DMER",
         "submittalStatus": "Uploaded",
         "documentPriority": "Regular",
@@ -124,6 +126,15 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         query = parse_qs(parsed.query)
 
+        if parsed.path.lower() == "/authentication/token":
+            ok = bool(query.get("secret", [""])[0])
+            print(f"[mock-mercury] GET /Authentication/token -> {200 if ok else 401}")
+            if not ok:
+                self.send_error(401, "secret required")
+                return
+            self._send_json({"token": "local-mock-token", "expiresIn": 3600})
+            return
+
         if parsed.path.lower() == "/dmers":
             auth = self.headers.get("Authorization", "")
             page_size = int(query.get("pageSize", ["50"])[0])
@@ -144,9 +155,16 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
 
-        if parsed.path.startswith("/files/") and parsed.path.endswith(".pdf"):
+        parts = parsed.path.strip("/").split("/")
+        if len(parts) == 3 and parts[0].lower() == "dmers" and parts[2] == "files":
+            known = {r["documentRecordId"] for r in _RECORDS if r["documentUrl"]}
+            if parts[1] not in known:
+                print(f"[mock-mercury] GET /Dmers/{parts[1]}/files -> 404")
+                self.send_error(404, "Unknown document")
+                return
             print(
-                f"[mock-mercury] GET {parsed.path} -> serving dummy PDF ({len(_DUMMY_PDF)} bytes)"
+                f"[mock-mercury] GET /Dmers/{parts[1]}/files -> "
+                f"serving dummy PDF ({len(_DUMMY_PDF)} bytes)"
             )
             self._send_bytes(_DUMMY_PDF, "application/pdf")
             return
@@ -192,6 +210,7 @@ if __name__ == "__main__":
     server = ThreadingHTTPServer((HOST, PORT), Handler)
     print(f"[mock-mercury] Serving mock Mercury API on {BASE}")
     print(f"[mock-mercury]   MERCURY_API_BASE_URL = {BASE}/Dmers")
+    print(f"[mock-mercury]   MERCURY_AUTH_TOKEN_URL = {BASE}/Authentication/token")
     print("[mock-mercury] Ctrl+C to stop")
     try:
         server.serve_forever()

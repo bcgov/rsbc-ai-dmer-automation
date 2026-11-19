@@ -14,6 +14,7 @@
     "DMER_RAW_CONTAINER": "raw",
     "DMER_POLL_SCHEDULE": "0 */5 * * * *",
     "MERCURY_API_BASE_URL": "",
+    "MERCURY_AUTH_TOKEN_URL": "",
     "MERCURY_API_KEY": "",
     "MERCURY_PAGE_SIZE": "50",
     "MERCURY_RECEIVED_DATE_TIMEZONE": "America/Vancouver"

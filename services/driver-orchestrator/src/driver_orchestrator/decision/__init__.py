@@ -6,6 +6,7 @@ from .completeness import (
     WaitReason,
     check_completeness,
     mercury_waiting_count,
+    waiting_documents,
 )
 from .gateway import decide
 from .models import BatchDecision, DocumentDecision, DocumentFacts, Path, RuleOutcome
@@ -22,4 +23,5 @@ __all__ = [
     "check_completeness",
     "decide",
     "mercury_waiting_count",
+    "waiting_documents",
 ]

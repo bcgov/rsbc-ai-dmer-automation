@@ -27,6 +27,9 @@
     "postgresHost": { "value": "psql-rsbc-dmer-shared-dev-001.postgres.database.azure.com" },
     "postgresPort": { "value": "5432" },
     "postgresDatabase": { "value": "dmer" },
+    "mercuryAuthTokenUrl": {
+      "value": "https://func-mock-mercury-api-dev.azurewebsites.net/api/mercury/Authentication/token"
+    },
     "mercuryApiBaseUrl": {
       "value": "https://func-mock-mercury-api-dev.azurewebsites.net/api/mercury/dmers"
     },

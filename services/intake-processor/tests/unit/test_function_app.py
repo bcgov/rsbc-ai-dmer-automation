@@ -31,14 +31,9 @@ def test_parse_mercury_datetime_parses_iso8601():
     )
 
 
-def test_mercury_auth_headers_uses_api_key_env(monkeypatch):
-    monkeypatch.setenv("MERCURY_API_KEY", "test-key-123")
-    assert fa._mercury_auth_headers() == {"Authorization": "Bearer test-key-123"}
-
-
 def test_envelope_defaults_blob_url_to_none_for_dmer_ingest():
-    """The dmer-ingest message has nothing to point at yet (module docstring:
-    Ingest reads document_url from dmer_document, not the queue message)."""
+    """The dmer-ingest message has nothing to point at yet (Ingest downloads
+    the file from Mercury by the document guid)."""
     envelope = fa._envelope(
         document_id="doc-1", document_guid="DMER-1", driver_key=None, blob_url=None
     )
@@ -531,3 +526,88 @@ def test_engine_keeps_bound_values_out_of_error_text(monkeypatch):
         assert "DL1234567" not in str(exc)
     else:
         raise AssertionError("expected an error")
+
+
+class _IngestRow:
+    def __init__(self):
+        self.pipeline_status = "RECEIVED"
+        self.document_guid = "26946190-c3b4-ee11-b84f-00505683d8c0"
+        self.document_url = None  # Mercury's documentUrl is not used to download
+        self.attempt_count = 0
+
+
+class _FakeDocRepoForIngest:
+    def __init__(self, row):
+        self._row = row
+        self.downloaded = []
+
+    async def get_by_id(self, _document_id):
+        return self._row
+
+    async def mark_downloaded(self, document_id, *, raw_blob_url, now):
+        self.downloaded.append((document_id, raw_blob_url))
+
+
+class _FakeStageRuns:
+    def __init__(self):
+        self.events = []
+
+    async def start(self, **kwargs):
+        self.events.append("start")
+        return 1
+
+    async def succeed(self, run_id, **kwargs):
+        self.events.append("succeed")
+
+    async def fail(self, run_id, **kwargs):
+        self.events.append("fail")
+
+
+def test_dmer_ingest_downloads_from_mercury_by_document_guid(monkeypatch):
+    """Ingest fetches the PDF by the row's document guid (Mercury's
+    GET dmers/{documentRecordId}/files), not from documentUrl -- which is a
+    path inside Mercury, and may be empty -- then stores and hands it on."""
+    row = _IngestRow()
+    docs = _FakeDocRepoForIngest(row)
+    runs = _FakeStageRuns()
+
+    async def fake_get_async_engine():
+        return _FakeEngine()
+
+    downloads, uploads, published = [], [], []
+    monkeypatch.setattr(fa, "_get_async_engine", fake_get_async_engine)
+    monkeypatch.setattr(fa, "DmerDocumentRepository", lambda engine: docs)
+    monkeypatch.setattr(fa, "DmerStageRunRepository", lambda engine: runs)
+    monkeypatch.setattr(
+        fa, "_download_source_pdf", lambda guid: downloads.append(guid) or b"%PDF-1.7"
+    )
+    monkeypatch.setattr(
+        fa,
+        "_upload_raw_dmer_blob",
+        lambda content, guid, container: uploads.append((content, guid))
+        or f"https://raw/{guid}.pdf",
+    )
+    monkeypatch.setattr(
+        fa, "_publish_message", lambda queue, *a, **k: published.append(queue)
+    )
+
+    asyncio.run(fa.dmer_ingest(_make_ingest_message(document_guid=row.document_guid)))
+
+    assert downloads == [row.document_guid]
+    assert uploads == [(b"%PDF-1.7", row.document_guid)]
+    assert docs.downloaded == [("doc-1", f"https://raw/{row.document_guid}.pdf")]
+    assert published == ["dmer-raw"]
+    assert runs.events == ["start", "succeed"]
+
+
+def test_download_source_pdf_uses_the_mercury_client(monkeypatch):
+    calls = []
+
+    class FakeClient:
+        def download_dmer(self, guid):
+            calls.append(guid)
+            return b"%PDF-1.7"
+
+    monkeypatch.setattr(fa, "MercuryClient", FakeClient)
+    assert fa._download_source_pdf("G1") == b"%PDF-1.7"
+    assert calls == ["G1"]

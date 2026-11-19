@@ -42,6 +42,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 from typing import Any
+from uuid import UUID
 
 from sqlalchemy import (
     BigInteger,
@@ -66,14 +67,24 @@ from .dmer_document import _pipeline_status_enum, _stage_enum
 from .dmer_stage_run import dmer_stage_run
 from .driver import driver
 from .mercury_outbox import (
+    OutboxOperation,
     decision_rows,
     fallback_comment,
     fallback_rows,
+    mercury_outbox,
     queue_outbox_rows,
 )
 from .processing_error import FailureCategory, record_processing_error
 
 metadata = MetaData()
+
+
+def _uuid_text(value: object) -> str | None:
+    """*value* as a canonical lower-case UUID string, or None if it isn't one."""
+    try:
+        return str(UUID(str(value).strip()))
+    except (ValueError, AttributeError):
+        return None
 
 
 class EvaluationStatus(StrEnum):
@@ -329,6 +340,35 @@ class DriverDecisionRepository:
                     )
                 )
             ).scalar_one_or_none()
+
+    async def already_decided(self, document_guids: Collection[str]) -> frozenset[str]:
+        """Of *document_guids* (the ``document_id``s of the driver's documents
+        in Mercury's lookup -- our ``document_guid``), those this pipeline has
+        already given an outcome: an ``UPDATE_OUTCOME`` outbox row, which
+        every AI decision and every fallback outcome writes.
+
+        Mercury keeps a DMER ``Uploaded`` until a person reviews it, even
+        after our outcome is posted; without this, a DMER decided in an
+        earlier batch would count as still waiting for the driver's next one
+        (I-10). Returned lower-case; ids that are not UUIDs can't be ours.
+        """
+        guids = sorted(
+            {g for g in (_uuid_text(d) for d in document_guids) if g is not None}
+        )
+        if not guids:
+            return frozenset()
+        self._check_session()
+        async with self._conn.begin():
+            rows = await self._conn.execute(
+                select(_document.c.document_guid)
+                .distinct()
+                .join(mercury_outbox, mercury_outbox.c.document_id == _document.c.id)
+                .where(
+                    _document.c.document_guid.in_(guids),
+                    mercury_outbox.c.operation == OutboxOperation.UPDATE_OUTCOME.value,
+                )
+            )
+            return frozenset(str(r.document_guid).lower() for r in rows)
 
     async def load_batch(self, evaluation_id: str) -> list[BatchDocument]:
         """Every document counted into *evaluation_id*, oldest first, joined

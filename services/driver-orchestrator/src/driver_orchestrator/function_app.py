@@ -165,7 +165,7 @@ async def handle_driver_signal(
                 driver_key,
                 mercury_lookup=mercury.get_driver_by_licence,
                 counted_types=settings.counted_document_types,
-                uncounted_statuses=settings.uncounted_document_statuses,
+                waiting_statuses=settings.waiting_document_statuses,
                 # No re-check left after this one: if Mercury still can't
                 # verify, send the batch to manual review instead of waiting.
                 final_attempt=recheck_delay(message.attempt) is None,

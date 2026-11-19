@@ -139,8 +139,8 @@ departs from the text above:
   without routing the batch's documents -- the Reconciliation Sweeper owns stuck evaluations.
 - **A dead letter with no known document** (no `documentId`, or no `dmer_document` row) can't have a
   `processing_error` row; it is logged at ERROR and completed.
-- **Ingest redrive re-sends the same pre-signed URL** -- re-polling Mercury for a fresh one waits on
-  M-1 (see below). An expired URL fails again and ends in manual review after the redrive budget.
+- **Ingest redrive downloads again** -- the PDF is fetched by `documentRecordId` on demand
+  (`GET dmers/{documentRecordId}/files`), so there is no URL to go stale (M-1, answered; see below).
 
 ## Database writes
 
@@ -172,17 +172,13 @@ there is no business rule that says "a lock expired, therefore this driver is `I
 
 ## Pre-signed URL replay caveat
 
-If a message dead-letters at [Ingest](01-ingest.md) and is replayed hours later, it may fail again
-on an **expired pre-signed URL** (question M-1, open — see `01-ingest.md#failure-handling`). If the
-TTL is short and no fresh-URL mechanism exists, DLQ Drain's remedy for an Ingest-stage dead letter
-is **not** "resubmit the original message" but "re-poll that document through the Mercury batch API
-to obtain a new URL." Build this branch from the start; do not discover the need during the first
-incident.
+**Resolved (M-1):** Mercury has no pre-signed URL. Ingest downloads the PDF on demand with
+`GET dmers/{documentRecordId}/files` (see `01-ingest.md#failure-handling`), so resubmitting an
+Ingest-stage dead letter simply downloads again — no re-poll is needed.
 
-Crucially, an expired-URL failure is **`TRANSIENT`**, not `PERMANENT_BUSINESS` — the document itself
-is fine, only the URL went stale. It must be routed to operational recovery (re-poll + redrive), and
-it must **never** receive a fallback `IN` decision. Misclassifying it as permanent would fabricate a
-business outcome for a document that could have processed cleanly with a fresh URL.
+A download that failed because Mercury was unavailable is still **`TRANSIENT`**, not
+`PERMANENT_BUSINESS`: the document itself is fine. It must be routed to operational recovery
+(redrive), and it must **never** receive a fallback `IN` decision.
 
 ## Interaction with upstream/downstream
 
@@ -322,18 +318,15 @@ generated stubs under `services/reliability/tests/` must cover before this funct
   `dmer_stage_run.error_code`. If richer signals become available, they refine classification but do
   not relax the safety rule.
 - **Assumption A-3:** an unreadable/malformed PDF and a `document_guid` that no longer exists in
-  Mercury are genuinely permanent (retry can never succeed). If Ingest gains a fresh-URL-on-demand
-  mechanism (question M-1), a document that dead-lettered on an *expired pre-signed URL* is
-  `TRANSIENT`, not `PERMANENT_BUSINESS`, and must be redriven after re-polling Mercury — not given a
-  fallback decision.
+  Mercury are genuinely permanent (retry can never succeed). A download that failed only because
+  Mercury was unavailable is `TRANSIENT`, not `PERMANENT_BUSINESS`, and must be redriven — not given
+  a fallback decision.
 
 ## Open Questions / Decisions Required
 
-- **M-1** — pre-signed URL TTL / fresh-URL-on-demand availability (see
-  [Pre-signed URL replay caveat](#pre-signed-url-replay-caveat)) — blocks whether Ingest-stage DLQ
-  replay can work via resubmission at all, or must always re-poll Mercury. **Interacts with the
-  categorization model:** an expired-URL dead-letter is `TRANSIENT` (redrive after re-poll), not
-  `PERMANENT_BUSINESS` (see Assumption A-3) — it must never receive a fallback decision.
+- **M-1** — *Answered:* no pre-signed URL; the PDF is downloaded on demand by `documentRecordId`,
+  so Ingest-stage DLQ replay works by resubmission (see
+  [Pre-signed URL replay caveat](#pre-signed-url-replay-caveat)).
 - Drain trigger mechanism (timer sweep vs. continuous peek-lock consumer per DLQ) — not specified;
   this doc assumes a timer for consistency with the other reliability functions.
 - **Reason-code catalogue ownership** — the [reason codes](#reason-codes) here are a proposed
