@@ -54,22 +54,31 @@ Each layer covers a failure the previous one cannot.
 | Table | Operation | Fields |
 |---|---|---|
 | `mercury_outbox` | `UPDATE` | On success: `status = SENT`, `sent_at`, `mercury_response`. On failure: `attempt_count` incremented, `last_error`, `next_attempt_at` set by exponential backoff. After the attempt ceiling: `status = FAILED` and an alert. |
-| `dmer_document` | `UPDATE` | `pipeline_status = COMPLETED` once **every** outbox row for the document is `SENT`. |
+| `dmer_document` | `UPDATE` | `pipeline_status = COMPLETED` once **every** outbox row for the document is `SENT`; `MANUAL_REVIEW` instead when its driver link (`MAP_DRIVER`) failed for good but its outcome was sent, as an error, to Intake (2026-11-20). |
 | `driver_evaluation` | `UPDATE` | `status = POSTED` once **every** outbox row in the batch is `SENT`. |
 
 ### Implementation
 
 `services/reliability/` (the `OutboxPublisher` timer) over
 `dmer_common.db.outbox_publisher.publish_due`; Mercury writes via
-`MercuryClient.send_outbox` (**provisional endpoints until M-6** -- the dev mock implements them).
+`MercuryClient.send_outbox`: the outcome via Mercury's `SetDmerAIProccessedStatus` (see
+[Post-Processing](08-post-processing.md#mercury-write-back--setdmeraiproccessedstatus-confirmed-2026-11-20));
+the driver mapping via Mercury's `add_driver`, the case via `add_case` (the dev mock implements all
+of them).
 
 - **Claim with a lease:** a run claims up to `OUTBOX_BATCH_SIZE` documents with a due `PENDING`
   row, with all their `PENDING` rows (`FOR UPDATE SKIP LOCKED`), and moves `next_attempt_at`
   `OUTBOX_LEASE_SECONDS` ahead; a run that dies mid-send leaves the rows to be claimed again.
   The send itself is outside any transaction.
-- **Per-document order:** `MAP_DRIVER`, `CREATE_CASE`, `MARK_DUPLICATE`, `UPDATE_OUTCOME`. A
+- **Per-document order:** `MAP_DRIVER`, `CREATE_CASE`, `UPDATE_OUTCOME` (and `MARK_DUPLICATE`, for
+  rows queued before duplicates moved onto the outcome). A
   failure stops the document: the rows after it wait for the failed row's next attempt, so an
-  outcome is never written before its driver or case.
+  outcome is never written before its driver or case. **Exception (2026-11-20):** when
+  `MAP_DRIVER` (`add_driver`) fails for good, the outcome still goes — as a processing error
+  (`Error`, IN, Team - Intake) with the driver-link error in its notes, for Intake to review by
+  hand; only `CREATE_CASE` is blocked. When `CREATE_CASE` (`add_case`) fails for good, the
+  outcome goes as usual with the case error added to its notes. While either is still being
+  retried, the outcome waits.
 - **Retryable vs rejected:** network errors, timeouts, 408, 429 and 5xx (and the circuit breaker
   open) back off exponentially; any other 4xx marks the row `FAILED` at once, and the document's
   later rows `FAILED` as "blocked" -- a person resolves it.

@@ -68,6 +68,7 @@ from .dmer_stage_run import dmer_stage_run
 from .driver import driver
 from .mercury_outbox import (
     OutboxOperation,
+    ProposedDriver,
     decision_rows,
     fallback_comment,
     fallback_rows,
@@ -168,6 +169,7 @@ _document = Table(
     Column("current_stage", _stage_enum),
     Column("updated_at", DateTime(timezone=True)),
     Column("driver_resolved_by", Text),
+    Column("mercury_case_id", Text),
 )
 
 _outcome_enum = PG_ENUM(
@@ -695,7 +697,7 @@ class DriverDecisionRepository:
         - one ``dmer_decision`` per document: outcome IN, ``decided_by =
           FALLBACK``, *note* in ``decision_reason`` (architecture 6.4: failing
           to decide must not mean failing to appear);
-        - its ``UPDATE_OUTCOME`` outbox row: IN with "AI could not process"
+        - its ``UPDATE_OUTCOME`` outbox row: IN with "Unable to AI process due to error"
           and *note* -- the comment Intake sees (I-1).
 
         Raises :class:`DriverDecisionStateError` (nothing written) if the
@@ -817,14 +819,39 @@ class DriverDecisionRepository:
         driver_keys = {self._driver_key} | {
             d.proposed_driver_key for d in decisions if d.proposed_driver_key
         }
-        mercury_ids = {
-            str(r.driver_key): r.mercury_driver_id
+        drivers = {
+            str(r.driver_key): r
             for r in await self._conn.execute(
-                select(driver.c.driver_key, driver.c.mercury_driver_id).where(
-                    driver.c.driver_key.in_(list(driver_keys))
+                select(
+                    driver.c.driver_key,
+                    driver.c.mercury_driver_id,
+                    driver.c.licence_number,
+                    driver.c.first_name,
+                    driver.c.last_name,
+                ).where(driver.c.driver_key.in_(list(driver_keys)))
+            )
+        }
+        mercury_ids = {key: r.mercury_driver_id for key, r in drivers.items()}
+        batch_driver = drivers.get(self._driver_key)
+        case_ids = {
+            str(r.id): r.mercury_case_id
+            for r in await self._conn.execute(
+                select(_document.c.id, _document.c.mercury_case_id).where(
+                    _document.c.id.in_([d.document_id for d in decisions])
                 )
             )
         }
+
+        def proposed(key: str | None) -> ProposedDriver | None:
+            r = drivers.get(key) if key else None
+            if r is None:
+                return None
+            return ProposedDriver(
+                licence_number=r.licence_number,
+                first_name=r.first_name,
+                last_name=r.last_name,
+            )
+
         rows = [
             row
             for d in decisions
@@ -848,6 +875,9 @@ class DriverDecisionRepository:
                     if d.proposed_driver_key
                     else None
                 ),
+                proposed_driver_details=proposed(d.proposed_driver_key),
+                licence_number=batch_driver.licence_number if batch_driver else None,
+                mercury_case_id=case_ids.get(d.document_id),
             )
         ]
         await queue_outbox_rows(self._conn, rows, now=now)

@@ -21,11 +21,10 @@ external client in this package.
 
 It also wraps the **write-back** the Outbox Publisher needs
 (:meth:`MercuryClient.send_outbox`, one call per ``mercury_outbox`` row).
-**The write endpoints and bodies are provisional**: Mercury has not shared
-its POST/PUT structure or idempotency behaviour yet (question M-6). The shape
-here is what the dev mock implements; when M-6 is answered only
-:meth:`MercuryClient.send_outbox` and the mock should need to change. Every
-write sends the row's idempotency key as the ``Idempotency-Key`` header.
+The outcome goes through Mercury's ``SetDmerAIProccessedStatus``
+(:mod:`.ai_status`), the driver mapping through ``add_driver``
+(:mod:`.driver_link`) and the case through ``add_case`` (:mod:`.case_link`). Every write sends the row's
+idempotency key as the ``Idempotency-Key`` header.
 
 Case/webhook payload parsing is not implemented here yet. Extend this module
 rather than adding a second Mercury client.
@@ -59,7 +58,15 @@ from ..config import (
 from ..retry import CircuitBreaker, mercury_breaker, mercury_retry
 from ..retry.circuit_breaker import CircuitOpenError
 from ..telemetry import get_logger
+from .ai_status import AI_STATUS_PATH, UnknownOutcomeError, ai_status_request
 from .auth import MercuryAuth, MercuryAuthError, shared_auth
+from .case_link import (
+    ADD_CASE_PATH,
+    DRIVER_LOOKUP_PATH,
+    add_case_request,
+    open_case_id,
+)
+from .driver_link import ADD_DRIVER_PATH, add_driver_request
 
 _log = get_logger(__name__)
 
@@ -136,6 +143,15 @@ class MercuryPage:
 
 # Mercury's endpoint name, spelling included.
 _AI_PROCESSED_PATH = "BatchSetDmerAIProccessedStatus"
+
+
+def _has_driver_details(payload: dict[str, Any]) -> bool:
+    return all(
+        str(payload.get(k) or "").strip()
+        for k in ("licence_number", "first_name", "last_name")
+    )
+
+
 _DRIVER_LOOKUP_PATH = "lookup"
 
 
@@ -512,71 +528,103 @@ class MercuryClient:
         """Apply one ``mercury_outbox`` row to Mercury; returns Mercury's
         response (stored as ``mercury_response``).
 
-        Provisional endpoints (M-6), relative to ``MERCURY_WRITE_API_BASE_URL``:
+        Endpoints, relative to ``MERCURY_WRITE_API_BASE_URL``:
 
-        - ``UPDATE_OUTCOME`` -- ``PUT documents/{guid}/outcome``;
-        - ``MARK_DUPLICATE`` -- ``PUT documents/{guid}/status`` (Rejected,
-          detached from the case, I-7);
-        - ``MAP_DRIVER`` -- ``PUT documents/{guid}/driver`` (I-11);
-        - ``CREATE_CASE`` -- live check ``GET drivers/{id}/cases?status=open``,
-          then ``PUT documents/{guid}/case`` to attach to the open case, or
-          ``POST cases`` when there is none (I-13).
+        - ``UPDATE_OUTCOME`` -- ``POST dmers/SetDmerAIProccessedStatus``
+          (Mercury's API, :mod:`.ai_status`): the outcome's priority, queue
+          and status with the comment as notes; a fallback (``decided_by``
+          FALLBACK) as a processing error; a duplicate as the duplicate flag
+          only;
+        - ``MARK_DUPLICATE`` -- the same call, duplicate flag only. No longer
+          queued (a duplicate's ``UPDATE_OUTCOME`` carries ``is_duplicate``);
+          kept for rows queued before that change.
+
+        - ``MAP_DRIVER`` -- ``POST dmers/{guid}/add_driver`` (Mercury's API,
+          I-11): links the driver matched from the licence to the DMER;
+          Mercury answers with the driver's open case, if any.
+
+        - ``CREATE_CASE`` -- (I-13) skipped when the DMER already has a case;
+          otherwise a live ``POST drivers/lookup`` by licence, skipped when
+          the driver has an open case; otherwise ``POST
+          dmers/{guid}/add_case`` (Mercury's API, :mod:`.case_link`).
 
         Raises :class:`MercuryWriteError` (``retryable`` set). No retry here:
         the publisher backs off per row. The payload carries clinical content
         and the URL a document id -- neither is logged.
         """
         guid = quote(str(payload["document_guid"]), safe="")
-        body = {k: v for k, v in payload.items() if k != "document_guid"}
-        if operation == "UPDATE_OUTCOME":
-            return self._write(
-                "PUT", f"documents/{guid}/outcome", body, idempotency_key
-            )
-        if operation == "MARK_DUPLICATE":
-            return self._write(
-                "PUT",
-                f"documents/{guid}/status",
-                {**body, "detach_from_case": True},
-                idempotency_key,
+        if operation in ("UPDATE_OUTCOME", "MARK_DUPLICATE"):
+            try:
+                request = ai_status_request(
+                    str(payload["document_guid"]),
+                    outcome_code=payload.get("outcome_code"),
+                    notes=payload.get("comment"),
+                    processing_error=payload.get("decided_by") == "FALLBACK",
+                    is_duplicate=(
+                        operation == "MARK_DUPLICATE"
+                        or bool(payload.get("is_duplicate"))
+                    ),
+                    duplicate_of_document_guid=payload.get(
+                        "duplicate_of_document_guid"
+                    ),
+                    driver_link_error=payload.get("driver_link_error"),
+                    case_error=payload.get("case_error"),
+                )
+            except UnknownOutcomeError as exc:
+                raise MercuryWriteError(str(exc), status=None, retryable=False) from exc
+            return self._write("POST", AI_STATUS_PATH, request, idempotency_key)
+        if operation == "MAP_DRIVER" and not _has_driver_details(payload):
+            raise MercuryWriteError(
+                "MAP_DRIVER needs the driver's licence, first name and surname",
+                status=None,
+                retryable=False,
             )
         if operation == "MAP_DRIVER":
-            return self._write("PUT", f"documents/{guid}/driver", body, idempotency_key)
-        if operation == "CREATE_CASE":
-            return self._ensure_case(
-                guid, str(payload["document_guid"]), body, idempotency_key
+            return self._write(
+                "POST",
+                ADD_DRIVER_PATH.format(guid=guid),
+                add_driver_request(payload),
+                idempotency_key,
             )
+        if operation == "CREATE_CASE":
+            return self._ensure_case(guid, payload, idempotency_key)
         raise MercuryWriteError(
             f"unknown outbox operation {operation!r}", status=None, retryable=False
         )
 
     def _ensure_case(
-        self, guid: str, document_guid: str, body: dict[str, Any], idempotency_key: str
+        self, guid: str, payload: dict[str, Any], idempotency_key: str
     ) -> dict[str, Any]:
-        driver_id = body.get("mercury_driver_id")
-        if not driver_id:
+        """``CREATE_CASE``: give the DMER a case only when it has none and its
+        driver has no open case (live lookup); otherwise nothing is sent."""
+        if payload.get("mercury_case_id"):
+            return {
+                "action": "skipped",
+                "reason": "dmer_has_case",
+                "case_id": payload["mercury_case_id"],
+            }
+        licence = str(payload.get("licence_number") or "").strip()
+        if not licence:
             raise MercuryWriteError(
-                "CREATE_CASE needs the driver's Mercury id",
+                "CREATE_CASE needs the driver's licence number",
                 status=None,
                 retryable=False,
             )
-        cases = self._write(
-            "GET",
-            f"drivers/{quote(str(driver_id), safe='')}/cases?status=open",
-            None,
-            None,
+        lookup = self._write(
+            "POST", DRIVER_LOOKUP_PATH, {"driverLicenceNumber": licence}, None
         )
-        open_cases = cases.get("value", []) if isinstance(cases, dict) else cases
-        if open_cases:
-            case_id = open_cases[0]["case_id"]
-            response = self._write(
-                "PUT",
-                f"documents/{guid}/case",
-                {"case_id": case_id, "comment": body.get("comment")},
-                idempotency_key,
-            )
-            return {"action": "attached", "case_id": case_id, "response": response}
+        case_id = open_case_id(lookup)
+        if case_id:
+            return {
+                "action": "skipped",
+                "reason": "driver_has_open_case",
+                "case_id": case_id,
+            }
         response = self._write(
-            "POST", "cases", {**body, "document_guid": document_guid}, idempotency_key
+            "POST",
+            ADD_CASE_PATH.format(guid=guid),
+            add_case_request(licence),
+            idempotency_key,
         )
         return {"action": "created", "response": response}
 
@@ -642,6 +690,25 @@ class MercuryClient:
         if not raw:
             return {}
         try:
-            return json.loads(raw.decode("utf-8"))
+            response = json.loads(raw.decode("utf-8"))
         except ValueError:
             return {"raw": raw.decode("utf-8", errors="replace")[:1000]}
+        if isinstance(response, dict) and response.get("errorStatus") not in (
+            None,
+            0,
+            "0",
+        ):
+            # Mercury's error shape ({"errorStatus", "replyMessage", ...}),
+            # which may come with a 2xx. replyMessage is not logged (it may
+            # repeat what was sent); it is kept on the row's last_error.
+            _log.error(
+                "mercury write rejected",
+                extra={"method": method, "status": status, "error_status": True},
+            )
+            raise MercuryWriteError(
+                f"Mercury write {method} rejected: "
+                f"{str(response.get('replyMessage') or '')[:300]}",
+                status=status,
+                retryable=False,
+            )
+        return response

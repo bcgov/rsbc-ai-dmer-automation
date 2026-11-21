@@ -53,8 +53,13 @@ isolation from the others.
    `document_guid`** so duplicate detection suppresses repeats within the detection window.
 7. **Mark every record on the page AI Processed** — DMERs and non-DMERs alike:
    `POST {MERCURY_API_BASE_URL}/BatchSetDmerAIProccessedStatus` with `{"dmerIds": [<document_guid>, …]}`
-   (Mercury's endpoint name, spelling included). Mercury moves them to the AI Processed Queue, out
-   of the DPS queues, and `GET dmers` stops returning them — this is what brings the next page.
+   (Mercury's endpoint name, spelling included). Mercury sets their `aiProcessedStatus` to
+   **InProgress** (confirmed 2026-11-20 — the pipeline never sets InProgress itself), moves them to
+   the AI Processed Queue, out of the DPS queues, and `GET dmers` stops returning them — this is
+   what brings the next page. The outcome call (`SetDmerAIProccessedStatus`, see
+   [Post-Processing](08-post-processing.md)) later sets Proccessed or Error. A record that never
+   gets an outcome (a non-DMER, or a DMER that stalls without one) stays InProgress in Mercury —
+   open question whether non-DMERs should get an outcome call too.
    It comes **last**, once the DMERs are stored and queued: if it fails, the poll fails and the next
    tick gets the same records again, which steps 3–6 handle idempotently. Marking first could hide
    a DMER from the DPS queues that the pipeline never stored.

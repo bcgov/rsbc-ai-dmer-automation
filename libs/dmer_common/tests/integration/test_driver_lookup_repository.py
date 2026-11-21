@@ -273,7 +273,7 @@ def test_manual_review_routes_the_document_and_replays_its_reason():
                     "outcome_code": "IN",
                     "decided_by": "FALLBACK",
                     "comment": (
-                        "AI could not process. The driver's file could not be "
+                        "Unable to AI process due to error. The driver's file could not be "
                         "found or mapped in Mercury. Mercury has no driver with "
                         f"the page's licence. Licence read from the DMER: {LICENCE}."
                     ),

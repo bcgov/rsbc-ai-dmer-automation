@@ -17,21 +17,27 @@ as the decision. `OutboxPublisher` drains them about once a minute
 
 1. claim up to `OUTBOX_BATCH_SIZE` documents with a due `PENDING` row, leasing their rows
    (`OUTBOX_LEASE_SECONDS`) so a crashed run's rows come back rather than being lost;
-2. send each document's rows in order -- `MAP_DRIVER`, `CREATE_CASE`, `MARK_DUPLICATE`,
-   `UPDATE_OUTCOME` -- with the row's idempotency key; a failure stops that document so the
-   outcome is never written before its driver or case;
+2. send each document's rows in order -- `MAP_DRIVER`, `CREATE_CASE`, `UPDATE_OUTCOME` -- with the row's idempotency key; a failure stops that document so the
+   outcome is never written before its driver or case -- except that a driver link
+   (`MAP_DRIVER`) that fails for good still lets the outcome go, as a processing error for
+   Intake with the error in its notes (the case write is blocked), and a case write
+   (`CREATE_CASE`) that fails for good lets the outcome go as usual, the error in its notes;
 3. record `SENT`, or back off exponentially (`OUTBOX_BACKOFF_INITIAL_SECONDS` doubling to
    `OUTBOX_BACKOFF_MAX_SECONDS`), or `FAILED` when Mercury rejects the write (a 4xx) or after
    `OUTBOX_MAX_ATTEMPTS` -- logged at ERROR for the alert; the document's later rows fail as
    "blocked";
-4. a document whose rows are all `SENT` goes `POSTING` -> `COMPLETED`, and its driver
-   evaluation `DECIDED` -> `POSTED` once the whole batch is sent. Fallback outcomes for documents
-   in `MANUAL_REVIEW` leave their status alone.
+4. a document whose rows are all `SENT` goes `POSTING` -> `COMPLETED`; one whose driver link
+   failed but whose outcome went (as an error, to Intake) goes `POSTING` -> `MANUAL_REVIEW`, its
+   `FAILED` rows kept as the record. Its driver evaluation goes `DECIDED` -> `POSTED` once every
+   document of the batch is finished either way. Fallback outcomes for documents already in
+   `MANUAL_REVIEW` leave their status alone.
 
-**Mercury's write API is provisional** (question M-6: Mercury hasn't shared its POST/PUT
-structure or idempotency behaviour). `MercuryClient.send_outbox` and the dev mock
-(`services/intake-processor/tests/local/mock-mercury-function-app`) implement the assumed
-endpoints; only those two should need to change once M-6 is answered. The mock records every
+**Mercury's write API:** the outcome goes through Mercury's `SetDmerAIProccessedStatus`
+(`dmer_common.mercury_client.ai_status`), the driver mapping through `add_driver`
+(`dmer_common.mercury_client.driver_link`) and the case through `add_case`
+(`dmer_common.mercury_client.case_link`); Mercury's idempotency behaviour is still open (M-6). `MercuryClient.send_outbox` and the dev
+mock (`services/intake-processor/tests/local/mock-mercury-function-app`) implement them; only
+those two should need to change as Mercury shares the rest. The mock records every
 write under `mock-writes/<source PDF name>/<operation>/` (so a batch prefix such as
 `t20261016e-` lists one job's writes) and can simulate an outage with
 `MOCK_WRITE_FAIL_STATUS` (e.g. `503`).
@@ -54,7 +60,7 @@ message, in one transaction (`dmer_common.db.dlq_drain.drain_dead_letter`):
    message id, after `DLQ_REDRIVE_BACKOFF_SECONDS` doubling per re-send), at most
    `DLQ_REDRIVE_MAX_ATTEMPTS` times; after that it goes to a person as below;
 3. **can never succeed** (`PERMANENT_BUSINESS`: an unreadable PDF) -> `MANUAL_REVIEW` and the
-   fallback outcome queued to `mercury_outbox`: IN, "AI could not process" and the reason
+   fallback outcome queued to `mercury_outbox`: IN, "Unable to AI process due to error" and the reason
    (question I-1) -- the one case that produces a decision;
 4. **a logical error or an unknown reason** (`UNKNOWN`) -> `MANUAL_REVIEW`, no decision.
 

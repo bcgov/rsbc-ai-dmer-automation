@@ -105,7 +105,7 @@ DRIVER_FILE_NOT_FOUND: Final = (
 
 
 def unidentified_driver_comment(reason: str, licence_read: str | None) -> str:
-    """The comment on an I-12/I-22 fallback: "AI could not process", that the
+    """The comment on an I-12/I-22 fallback: "Unable to AI process due to error", that the
     driver's file could not be found or mapped, the reason and the licence
     read from the page. Goes to Mercury -- licence is PII, never log it."""
     licence = (licence_read or "").strip()

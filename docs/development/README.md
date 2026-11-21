@@ -171,7 +171,7 @@ reaches `DECIDED` and exactly one outbox row exists per document.
 These are answered in the architecture document and are treated as settled in every stage doc that
 implements them — don't re-litigate them without a reason:
 
-- Fallback outcome is `IN` with comment "AI could not process," written back to Mercury (I-1) —
+- Fallback outcome is `IN` with comment "Unable to AI process due to error," written back to Mercury (I-1) —
   **only** for a permanent-business failure (an un-processable DMER), never for a transient,
   processing, or unknown failure (see [ADR-0002](../architecture/decision-records/0002-dlq-fallback-decisions-gated-by-failure-category.md)).
 - AI never revises a decision after a human has reviewed it (I-2).

@@ -288,7 +288,7 @@ def test_the_outbox_backlog_counts_what_needs_an_alert():
                             source_id=f"{doc}:FALLBACK",
                             document_id=doc,
                             document_guid=str(uuid4()),
-                            comment="AI could not process.",
+                            comment="Unable to AI process due to error.",
                         ),
                         now=OLD - timedelta(hours=1),
                     )
@@ -333,7 +333,7 @@ def test_failed_rows_alone_do_not_alert_every_sweep():
                         source_id=f"{doc}:FALLBACK",
                         document_id=doc,
                         document_guid=str(uuid4()),
-                        comment="AI could not process.",
+                        comment="Unable to AI process due to error.",
                     ),
                     now=NOW,
                 )

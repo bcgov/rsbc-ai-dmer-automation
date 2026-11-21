@@ -50,9 +50,9 @@ Each signal runs `evaluate.evaluate_driver`:
 
 **Post-Processing** (architecture 4.5) runs inside the same transactions: deciding a batch
 also queues each decision's `mercury_outbox` rows (`MAP_DRIVER`, `CREATE_CASE`,
-`MARK_DUPLICATE`, `UPDATE_OUTCOME` -- see `dmer_common.db.mercury_outbox`) and moves the
+`UPDATE_OUTCOME`, flagged as a duplicate where it is one -- see `dmer_common.db.mercury_outbox`) and moves the
 documents to `POSTING`; the Mercury-unverified fallback queues an `UPDATE_OUTCOME` IN with
-"AI could not process" and its note. Nothing calls Mercury here: the Outbox Publisher
+"Unable to AI process due to error" and its note. Nothing calls Mercury here: the Outbox Publisher
 drains the rows.
 
 ## Deploy

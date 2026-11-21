@@ -72,7 +72,7 @@ Classification is conservative: **if a message cannot be confidently classified 
 3. Route by category:
    - **`PERMANENT_BUSINESS`** — set `pipeline_status = MANUAL_REVIEW`, and (only here) queue a
      **fallback outcome** to `mercury_outbox`: `IN`, `decided_by = FALLBACK`, with a `reason_code`
-     and the Mercury comment **"AI could not process"** (question I-1, answered), written back as
+     and the Mercury comment **"Unable to AI process due to error"** (question I-1, answered), written back as
      part of the POST/PUT — not just logged. This is the one category where making failure visible
      means producing a decision.
    - **`TRANSIENT`** — do **not** write any decision. Set `pipeline_status = MANUAL_REVIEW` (so the
@@ -149,7 +149,7 @@ departs from the text above:
 | `processing_error` | `INSERT` | **all** | `document_id`, `stage`, `error_class` / `failure_category` (`PERMANENT_BUSINESS`, `TRANSIENT`, `PROCESSING`, `UNKNOWN`), `reason_code`, `message` (raw dead-letter reason), `dlq_message_id`, `occurred_at`. |
 | `dmer_document` | `UPDATE` | **all** | `pipeline_status = MANUAL_REVIEW`, `updated_at`. |
 | `dmer_decision` | `INSERT` | **`PERMANENT_BUSINESS` only** | `outcome_code = IN`, `decided_by = FALLBACK`, `fallback_reason_code`, `decision_reason` (jsonb: category, failed stage, dead-letter reason). Governed by question I-1's confirmed answer above. **Never written for `TRANSIENT`, `PROCESSING`, or `UNKNOWN`.** |
-| `mercury_outbox` | `INSERT` | **`PERMANENT_BUSINESS` only** | `operation = UPDATE_OUTCOME` carrying the fallback outcome and the "AI could not process" comment, so the document still reaches Intake. **Never written for the other three categories.** |
+| `mercury_outbox` | `INSERT` | **`PERMANENT_BUSINESS` only** | `operation = UPDATE_OUTCOME` carrying the fallback outcome and the "Unable to AI process due to error" comment, so the document still reaches Intake. **Never written for the other three categories.** |
 
 Note this inserts `dmer_decision` and `mercury_outbox` directly — unlike the normal path where only
 [Post-Processing](08-post-processing.md) writes these tables. DLQ Drain is the one other writer, and
@@ -260,7 +260,7 @@ generated for `TRANSIENT`, `PROCESSING`, or `UNKNOWN`.
 {
   "document_guid": "123e4567-e89b-...",
   "outcome_code": "IN",
-  "comment": "AI could not process",
+  "comment": "Unable to AI process due to error",
   "decided_by": "FALLBACK",
   "fallback_reason_code": "PERMANENT_UNREADABLE_DOCUMENT",
   "failure_category": "PERMANENT_BUSINESS",
@@ -309,7 +309,7 @@ generated stubs under `services/reliability/tests/` must cover before this funct
 ## Assumptions made in this revision
 
 - **Assumption A-1:** the *only* explicit business rule permitting a fallback decision is question
-  I-1 ("un-processable DMER defaults to `IN` with comment 'AI could not process'"). No business rule
+  I-1 ("un-processable DMER defaults to `IN` with comment 'Unable to AI process due to error'"). No business rule
   authorizes a fallback for transient/processing/unknown failures, so this revision introduces none.
   If Intake later defines such a rule, add the category to `FALLBACK_ENABLED_CATEGORIES` and document
   the rule here first — do not enable it in code alone.

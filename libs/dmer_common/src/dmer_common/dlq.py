@@ -45,7 +45,7 @@ UNKNOWN_LOGICAL_ERROR: Final = "UNKNOWN_LOGICAL_ERROR"
 UNKNOWN_UNCLASSIFIED: Final = "UNKNOWN_UNCLASSIFIED"
 UNKNOWN_REDRIVE_EXHAUSTED: Final = "UNKNOWN_REDRIVE_EXHAUSTED"
 
-# The comment on a fallback IN, after "AI could not process." (I-1). Goes to
+# The comment on a fallback IN, after "Unable to AI process due to error." (I-1). Goes to
 # Mercury, so it says what happened without any document content.
 FALLBACK_REASONS: Final = {
     PERMANENT_UNREADABLE_DOCUMENT: "The DMER PDF could not be read.",

@@ -302,12 +302,7 @@ def test_decides_when_complete_and_writes_one_decision_per_document():
                 ).all()
             ops = {d: sorted(op for doc, op in outbox if doc == d) for d in docs}
             assert ops[newer] == ["CREATE_CASE", "MAP_DRIVER", "UPDATE_OUTCOME"]
-            assert ops[older] == [
-                "CREATE_CASE",
-                "MAP_DRIVER",
-                "MARK_DUPLICATE",
-                "UPDATE_OUTCOME",
-            ]
+            assert ops[older] == ["CREATE_CASE", "MAP_DRIVER", "UPDATE_OUTCOME"]
 
     asyncio.run(run())
 
@@ -339,7 +334,7 @@ def test_a_late_signal_for_a_decided_batch_changes_nothing():
             async with engine.connect() as conn:
                 assert await _scalar(conn, "SELECT count(*) FROM dmer_decision") == 2
                 # and queues nothing more for Mercury
-                assert await _scalar(conn, "SELECT count(*) FROM mercury_outbox") == 7
+                assert await _scalar(conn, "SELECT count(*) FROM mercury_outbox") == 6
 
     asyncio.run(run())
 

@@ -17,7 +17,7 @@ in **one transaction** per message:
    - retriable, budget used up -> ``UNKNOWN`` / ``UNKNOWN_REDRIVE_EXHAUSTED``,
      then as below;
    - ``PERMANENT_BUSINESS`` -> ``MANUAL_REVIEW`` and the fallback IN outcome
-     ("AI could not process", question I-1) queued to ``mercury_outbox``,
+     ("Unable to AI process due to error", question I-1) queued to ``mercury_outbox``,
      unless the document already has a decision or a queued Mercury write;
    - ``UNKNOWN`` -> ``MANUAL_REVIEW``, no decision.
 

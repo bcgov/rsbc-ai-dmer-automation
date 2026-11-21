@@ -78,7 +78,7 @@ the outcome is `IN` for the batch. Store the field-level diff in `decision_reaso
 Per question I-6 (answered, pending final Intake confirmation): **process the newest DMER; mark the
 older one as duplicate/rejected.** This is the working rule for how many decision rows/outbox
 operations get produced when two DMERs differ — one `IN` (or the rule-engine-derived outcome) for
-the newest, one `MARK_DUPLICATE` for the older. Confirm with Intake before build-freeze (see
+the newest, the older one's outcome flagged as a duplicate (`aiIsDuplicate` in Mercury). Confirm with Intake before build-freeze (see
 [Open Questions](#open-questions--decisions-required) — the architecture document itself flags this
 answer as needing final confirmation).
 
