@@ -32,7 +32,7 @@ dev = [
 # 0.11.9: 0.11.10 requires Pillow>=12.2, and di-processor pins Pillow<12; the
 # converted text is identical with both.
 triage = [
-    "pdfplumber==0.11.9",
+    "pdfplumber==0.11.10",
 ]
 
 [build-system]
