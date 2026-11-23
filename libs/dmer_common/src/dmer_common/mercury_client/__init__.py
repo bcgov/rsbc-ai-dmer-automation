@@ -64,6 +64,7 @@ from .case_link import (
     ADD_CASE_PATH,
     DRIVER_LOOKUP_PATH,
     add_case_request,
+    is_placeholder_case,
     open_case_id,
 )
 from .driver_link import ADD_DRIVER_PATH, add_driver_request
@@ -595,8 +596,22 @@ class MercuryClient:
     def _ensure_case(
         self, guid: str, payload: dict[str, Any], idempotency_key: str
     ) -> dict[str, Any]:
-        """``CREATE_CASE``: give the DMER a case only when it has none and its
-        driver has no open case (live lookup); otherwise nothing is sent."""
+        """``CREATE_CASE``: give the DMER a case when it needs one.
+
+        After the AI linked the driver (``driver_linked``, from ``add_driver``):
+        create one unless ``add_driver`` reported a real active case (the
+        placeholder driver's case doesn't count). Otherwise:
+        only when the DMER has no case and its driver no open case (live
+        lookup). When nothing is needed, nothing is sent."""
+        if payload.get("driver_linked"):
+            open_case = payload.get("driver_open_case")
+            if open_case and not is_placeholder_case(open_case):
+                return {
+                    "action": "skipped",
+                    "reason": "driver_has_open_case",
+                    "case_id": open_case.get("caseId") or open_case.get("case_id"),
+                }
+            return self._add_case(guid, payload, idempotency_key)
         if payload.get("mercury_case_id"):
             return {
                 "action": "skipped",
@@ -620,6 +635,18 @@ class MercuryClient:
                 "reason": "driver_has_open_case",
                 "case_id": case_id,
             }
+        return self._add_case(guid, payload, idempotency_key)
+
+    def _add_case(
+        self, guid: str, payload: dict[str, Any], idempotency_key: str
+    ) -> dict[str, Any]:
+        licence = str(payload.get("licence_number") or "").strip()
+        if not licence:
+            raise MercuryWriteError(
+                "CREATE_CASE needs the driver's licence number",
+                status=None,
+                retryable=False,
+            )
         response = self._write(
             "POST",
             ADD_CASE_PATH.format(guid=guid),

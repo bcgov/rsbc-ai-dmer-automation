@@ -24,6 +24,9 @@ See docs/development/stages/09-reliability-components.md (architecture v2.1
    good: the outcome goes as usual, the error added to its notes
    (``case_error``), and the document stays ``POSTING`` with the ``FAILED``
    row for a person. While either is being retried, the outcome waits.
+   Once ``MAP_DRIVER`` is sent, ``add_driver``'s answer about the driver's
+   active case (``driverOpenCase``) is saved on the document's ``CREATE_CASE``
+   row (``driver_linked``, ``driver_open_case``), which decides the case.
 4. **Roll up**: a document whose rows are all ``SENT`` goes ``POSTING`` ->
    ``COMPLETED``. A document whose driver link failed but whose outcome was
    sent (as an error, to Intake) goes ``POSTING`` -> ``MANUAL_REVIEW``: Intake
@@ -235,7 +238,15 @@ async def _with_failure(
 ) -> ClaimedRow:
     """*row* (an outcome) marked with an earlier write's error under *key*,
     saved on the row so a retry sends it the same way."""
-    payload = {**row.payload, key: str(error)[:300]}
+    return await _with_payload(engine, row, {key: str(error)[:300]})
+
+
+async def _with_payload(
+    engine: AsyncEngine, row: ClaimedRow, extra: dict[str, Any]
+) -> ClaimedRow:
+    """*row* with *extra* merged into its payload, saved on the row so a
+    retry sends it the same way."""
+    payload = {**row.payload, **extra}
     async with engine.begin() as conn:
         await conn.execute(
             update(mercury_outbox)
@@ -414,6 +425,24 @@ async def publish_due(
             await _record_sent(engine, row, response, clock())
             summary.sent += 1
             _log.info("outbox row sent", extra=log)
+            if row.operation == OutboxOperation.MAP_DRIVER.value:
+                # The driver is now linked: the DMER's case is decided from
+                # what add_driver said about the driver's active case.
+                open_case = (
+                    response.get("driverOpenCase")
+                    if isinstance(response, dict)
+                    else None
+                )
+                queue = [
+                    await _with_payload(
+                        engine,
+                        r,
+                        {"driver_linked": True, "driver_open_case": open_case},
+                    )
+                    if r.operation == OutboxOperation.CREATE_CASE.value
+                    else r
+                    for r in queue
+                ]
         completed, manual_review, posted = await _roll_up(engine, document_id, clock())
         summary.documents_completed += completed
         summary.documents_manual_review += manual_review

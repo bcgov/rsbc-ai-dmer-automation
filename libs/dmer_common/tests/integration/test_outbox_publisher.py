@@ -37,10 +37,11 @@ SETTINGS = PublisherSettings(batch_size=10, max_attempts=3)
 class FakeMercury:
     """Records (operation, key); fails per operation from *failures*."""
 
-    def __init__(self, failures=None):
+    def __init__(self, failures=None, responses=None):
         self.calls = []
         self.payloads = []
         self.failures = dict(failures or {})
+        self.responses = dict(responses or {})
 
     def send_outbox(self, operation, payload, key):
         self.calls.append((operation, key))
@@ -48,7 +49,7 @@ class FakeMercury:
         failure = self.failures.get(operation)
         if failure is not None:
             raise failure
-        return {"ok": True, "operation": operation}
+        return self.responses.get(operation, {"ok": True, "operation": operation})
 
 
 class Clock:
@@ -316,6 +317,43 @@ def test_a_failed_case_still_sends_the_outcome_as_usual_with_the_error():
             assert set(documents.values()) == {"POSTING"}
             assert evaluations == ["DECIDED"]
             assert summary.documents_manual_review == 0
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize(
+    "open_case",
+    [None, {"caseId": "C0", "caseTitle": "00000000- DFC- DMER- 1"}],
+)
+def test_add_drivers_answer_decides_the_case(open_case):
+    # The case write after a driver link carries add_driver's answer about the
+    # driver's active case (saved on the row, so a retry sends it the same way).
+    async def run():
+        async with database() as engine:
+            await _decided_batch(engine, proposed_driver=True)
+            linked = {"resultMessage": "linked", "driverOpenCase": open_case}
+            mercury = FakeMercury(responses={"MAP_DRIVER": linked})
+            await publish_due(engine, mercury, settings=SETTINGS, clock=Clock())
+            sent = [p for op, p in mercury.payloads if op == "CREATE_CASE"]
+            assert len(sent) == 2
+            assert all(
+                p["driver_linked"] is True and p["driver_open_case"] == open_case
+                for p in sent
+            )
+            async with engine.connect() as conn:
+                saved = (
+                    (
+                        await conn.execute(
+                            text(
+                                "SELECT payload FROM mercury_outbox "
+                                "WHERE operation = 'CREATE_CASE'"
+                            )
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+            assert all(p["driver_linked"] is True for p in saved)
 
     asyncio.run(run())
 

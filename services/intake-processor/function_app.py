@@ -53,6 +53,7 @@ from dmer_common.db import (
     DriverRepository,
     PollCheckpointRepository,
 )
+from dmer_common.licence import is_placeholder_licence, normalize_licence
 from dmer_common.mercury_client import MercuryClient
 from dmer_common.telemetry import document_id_context, get_logger
 from sqlalchemy import text
@@ -247,9 +248,24 @@ async def _upsert_document_and_driver(
 
     driver_key = None
     driver_obj = record.get("driver")
-    if driver_obj and driver_obj.get("licence_number"):
+    licence = (
+        normalize_licence(driver_obj.get("licence_number")) if driver_obj else None
+    )
+    if driver_obj and driver_obj.get("licence_number") and licence is None:
+        # Mercury's placeholder driver (licence 00000000: the DMER isn't mapped
+        # to a driver in Mercury) or an unusable licence: store the DMER with
+        # no driver, so Driver Lookup finds the driver from the licence read on
+        # the page and links it (add_driver). Never fail the poll over it.
+        _log.info(
+            "mercury driver not used: placeholder or invalid licence",
+            extra={
+                "document_guid": record.get("document_guid"),
+                "placeholder": is_placeholder_licence(driver_obj["licence_number"]),
+            },
+        )
+    if licence:
         driver_key = await driver_repo.upsert(
-            driver_obj["licence_number"],
+            licence,
             mercury_driver_id=driver_obj.get("driver_id"),
             first_name=driver_obj.get("first_name"),
             last_name=driver_obj.get("last_name"),

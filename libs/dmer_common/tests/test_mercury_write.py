@@ -335,10 +335,70 @@ def test_create_case_adds_a_case_when_the_driver_has_no_open_one(case):
         "driver": {"driver_id": "01234567"},
         "document_type": "DMER",
         "comments": (
-            "Case created by the AI: the DMER had no case and the driver had "
-            "no open case."
+            "Case created by the AI: the DMER needed a case and the driver had "
+            "no active one."
         ),
     }
+
+
+REAL_CASE = {
+    "caseId": "C5",
+    "caseTitle": "01234567- DRIVER- DMER- 1",
+    "caseType": "Suspected Medical Condition",
+    "dmerStatus": "Active",
+}
+PLACEHOLDER_CASE = {**REAL_CASE, "caseId": "C0", "caseTitle": "00000000- DFC- DMER- 3"}
+
+
+def test_after_add_driver_a_real_active_case_means_no_new_case():
+    http = FakeHttp()
+    result = _client(http).send_outbox(
+        "CREATE_CASE",
+        {**CASE_PAYLOAD, "driver_linked": True, "driver_open_case": REAL_CASE},
+        "k",
+    )
+    assert result == {
+        "action": "skipped",
+        "reason": "driver_has_open_case",
+        "case_id": "C5",
+    }
+    assert http.calls == []  # add_driver already answered: no lookup
+
+
+@pytest.mark.parametrize(
+    "open_case",
+    [None, {}, PLACEHOLDER_CASE],
+    ids=["no-active-case", "empty", "placeholder-case"],
+)
+def test_after_add_driver_no_case_or_a_placeholder_case_means_a_new_case(open_case):
+    # add_driver for a real licence isn't expected to return the placeholder's
+    # case (to confirm with Mercury); if it does, the DMER still needs a case.
+    http = FakeHttp((200, CREATED))
+    result = _client(http).send_outbox(
+        "CREATE_CASE",
+        {
+            **CASE_PAYLOAD,
+            # a placeholder DMER arrives on the placeholder driver's case
+            "mercury_case_id": "C0",
+            "driver_linked": True,
+            "driver_open_case": open_case,
+        },
+        "k",
+    )
+    assert result == {"action": "created", "response": CREATED}
+    ((method, url, _, body),) = http.calls  # straight to add_case
+    assert (method, url) == ("POST", ADD_CASE_URL)
+    assert body["driver"] == {"driver_id": "01234567"}
+
+
+def test_a_placeholder_case_in_the_lookup_is_not_an_open_case():
+    lookup = {
+        "driver_id": "D7",
+        "case": {"case_id": "C0", "case_title": "00000000- DFC- DMER- 1"},
+    }
+    http = FakeHttp((200, lookup), (200, CREATED))
+    result = _client(http).send_outbox("CREATE_CASE", CASE_PAYLOAD, "k")
+    assert result["action"] == "created"
 
 
 @pytest.mark.parametrize("status", [404, 409])

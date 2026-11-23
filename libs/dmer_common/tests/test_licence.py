@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from dmer_common.licence import normalize_licence
+from dmer_common.licence import is_placeholder_licence, normalize_licence
 
 
 @pytest.mark.parametrize(
@@ -39,7 +39,28 @@ def test_seven_and_padded_eight_are_the_same_driver():
         "0123456l",  # letter l is not coerced to 1
         "DL01234567",
         "0123#4567",  # unexpected symbol
+        "00000000",  # Mercury's placeholder for an unmapped DMER
+        "0000-0000",
+        "0000000",  # 7 digits, canonical 00000000 -- the placeholder
+        "0000000000",  # too long
     ],
 )
 def test_invalid_licences_are_rejected(raw):
     assert normalize_licence(raw) is None
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("00000000", True),
+        (" 0000-0000 ", True),
+        ("0000000000", False),  # only 00000000 is the placeholder
+        ("0000000", False),
+        ("01234567", False),
+        ("10000000", False),
+        ("", False),
+        (None, False),
+    ],
+)
+def test_placeholder_licence_is_all_zeros(raw, expected):
+    assert is_placeholder_licence(raw) is expected

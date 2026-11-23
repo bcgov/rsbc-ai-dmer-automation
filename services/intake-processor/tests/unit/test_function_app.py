@@ -17,6 +17,7 @@ import json
 from datetime import datetime
 
 import function_app as fa
+import pytest
 from dmer_common.mercury_client import MercuryPage
 
 
@@ -107,7 +108,7 @@ def test_upsert_document_and_driver_upserts_driver_when_licence_present():
         "document_guid": "A2",
         "document_url": "https://x/A2.pdf",
         "driver": {
-            "licence_number": "123456",
+            "licence_number": "1234567",
             "driver_id": "mercury-driver-9",
             "first_name": "Jane",
             "last_name": "Doe",
@@ -123,17 +124,45 @@ def test_upsert_document_and_driver_upserts_driver_when_licence_present():
 
     _document_id, driver_key = asyncio.run(run())
 
-    assert driver_key == "driver-key-for-123456"
+    assert driver_key == "driver-key-for-01234567"
     assert driver_repo.calls == [
         {
-            "licence_number": "123456",
+            "licence_number": "01234567",  # canonical 8 digits
             "mercury_driver_id": "mercury-driver-9",
             "first_name": "Jane",
             "last_name": "Doe",
             "last_synced_at": driver_repo.calls[0]["last_synced_at"],
         }
     ]
-    assert doc_repo.calls[0]["driver_key"] == "driver-key-for-123456"
+    assert doc_repo.calls[0]["driver_key"] == "driver-key-for-01234567"
+
+
+@pytest.mark.parametrize("licence", ["00000000", "0000000000", "123456"])
+def test_placeholder_or_invalid_mercury_licence_is_stored_without_a_driver(licence):
+    # 00000000 is Mercury's placeholder driver for a DMER it couldn't map; an
+    # invalid licence is bad data. Either way: no driver, and no failed poll.
+    record = {
+        "document_guid": "A9",
+        "document_url": "https://x/A9.pdf",
+        "driver": {
+            "licence_number": licence,
+            "driver_id": "placeholder-driver",
+            "first_name": "",
+            "last_name": "DFC",
+        },
+    }
+    doc_repo = _FakeDocRepo()
+    driver_repo = _FakeDriverRepo()
+
+    async def run():
+        return await fa._upsert_document_and_driver(
+            record, doc_repo=doc_repo, driver_repo=driver_repo
+        )
+
+    _document_id, driver_key = asyncio.run(run())
+    assert driver_key is None
+    assert driver_repo.calls == []
+    assert doc_repo.calls[0]["driver_key"] is None
 
 
 def test_upsert_document_and_driver_skips_driver_upsert_without_licence_number():
@@ -584,8 +613,9 @@ def test_dmer_ingest_downloads_from_mercury_by_document_guid(monkeypatch):
     monkeypatch.setattr(
         fa,
         "_upload_raw_dmer_blob",
-        lambda content, guid, container: uploads.append((content, guid))
-        or f"https://raw/{guid}.pdf",
+        lambda content, guid, container: (
+            uploads.append((content, guid)) or f"https://raw/{guid}.pdf"
+        ),
     )
     monkeypatch.setattr(
         fa, "_publish_message", lambda queue, *a, **k: published.append(queue)
