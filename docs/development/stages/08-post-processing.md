@@ -178,11 +178,18 @@ DMER (‹error›). ‹the AI's comment›". The DMER's `CREATE_CASE` is blocked
 `CREATE_CASE` (I-13) is decided when it is sent (`MercuryClient._ensure_case`,
 `dmer_common.mercury_client.case_link`):
 
+0. **The AI linked the driver** (`MAP_DRIVER` was sent — e.g. a DMER on Mercury's placeholder
+   driver `00000000`, decided 2026-11-23): the publisher saves `add_driver`'s `driverOpenCase` on
+   the `CREATE_CASE` row (`driver_linked`, `driver_open_case`). A real active case → nothing
+   sent; no active case, or the placeholder driver's case (title starting with
+   `00000000` — not expected from `add_driver` for a real licence, to confirm with Mercury) →
+   `add_case`. The DMER's own (placeholder) case and the live lookup are not consulted.
 1. The DMER arrived **with a case** (`dmer_document.mercury_case_id`, from the batch's
    `dmerDocumentCaseRecord`, carried on the row) → nothing is sent (`skipped: dmer_has_case`).
-2. Otherwise a live `POST drivers/lookup` by licence: the **driver has an open case** (a `case`
-   whose status isn't closed/cancelled/inactive/complete) → nothing is sent
-   (`skipped: driver_has_open_case`); Intake handles it.
+2. Otherwise a live `POST drivers/lookup` by licence: the **driver has an open case** → nothing is
+   sent (`skipped: driver_has_open_case`); Intake handles it. The batch API and the lookup return
+   only active cases (2026-11-20, to confirm with Mercury), so any `case` present counts as open;
+   one whose status reads closed/cancelled/inactive/complete, should Mercury ever send it, doesn't.
 3. Otherwise `POST {MERCURY_WRITE_API_BASE_URL}/dmers/{documentRecordId}/add_case`:
 
 ```json

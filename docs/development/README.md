@@ -1,5 +1,9 @@
 # DMER Intake Automation — Development Documentation
 
+**New to the project?** Read [end-to-end-walkthrough.md](end-to-end-walkthrough.md) first: one
+DMER from Mercury and back, every stage, database write, Mercury API call and scenario, checked
+against the code.
+
 **Start here.** This is the developer-facing implementation reference for the DMER Intake
 Automation pipeline, built from the **revised architecture**
 (`docs/architecture/DMER_Intake_Automation_Revised_Architecture.docx` and its three figures) and
