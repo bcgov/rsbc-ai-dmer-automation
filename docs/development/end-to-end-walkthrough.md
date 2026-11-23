@@ -318,8 +318,12 @@ even with HTTP 200 (the reply message is kept on the row's `last_error`).
    holds it, this tick does nothing.
 2. **Read a page** — R1 `GET Dmers?pageSize=50`. Items are translated to snake_case records
    (`documentRecordId` → `document_guid`, `submittalStatus` → `document_status`, …).
-3. **Keep DMERs only** (`documentType = DMER`, has a `documentRecordId`). Other document types
-   (HRDIR reports, …) are not stored.
+3. **Split the page:** DMERs (`documentType = DMER`) go on through steps 4–6. Every other
+   document type (HRDIR reports, …) is **sent back to Mercury as an error** — see
+   [S16](#s16-non-dmer-records-on-the-page): one transaction stores a `dmer_document` row straight
+   to `MANUAL_REVIEW` (no driver), a `processing_error` (`NOT_A_DMER`) and a fallback outcome in
+   `mercury_outbox`, due 5 minutes later (`NON_DMER_OUTCOME_DELAY_SECONDS`) so it reaches Mercury
+   after the claim in step 5.
 4. For each DMER:
    - **`driver` upsert** (only if Mercury supplied a driver with a **usable** licence — Mercury's
      placeholder `00000000` or an invalid licence means "no driver", see
@@ -574,8 +578,8 @@ without someone trying to post it.
 
 | Query | Finds | Does |
 |---|---|---|
-| Stalled documents | in RECEIVED…NORMALIZED with `updated_at` older than the stage SLA (30 min) | re-publish to the queue that status waits on (`attempt_count+1`, `processing_error` TRANSIENT_STALLED); after 3 → **MANUAL_REVIEW** (UNKNOWN_STALLED) |
-| Stale batches | open WAITING evaluations whose documents are all through rules but nothing moved within the SLA | WAITING → **STALE**, re-signal `driver-decision` (the orchestrator takes STALE → READY) |
+| Stalled documents | in RECEIVED…NORMALIZED with `updated_at` older than the stage SLA (30 min) | re-publish to the queue that status waits on (`attempt_count+1`, `processing_error` TRANSIENT_STALLED); after 3 → **MANUAL_REVIEW** (UNKNOWN_STALLED) **+ an Error outcome for Mercury** |
+| Stale batches | open WAITING evaluations whose documents are all through rules but nothing moved within the SLA | WAITING → **STALE**, re-signal `driver-decision` (the orchestrator takes STALE → READY); after 3 re-signals the batch is **given up**: its waiting documents → MANUAL_REVIEW with an Error outcome each, the evaluation closed (DECIDED, `open = false`) |
 | Outbox backlog | PENDING rows overdue or retried ≥ 5 times | ERROR log for the alert (no writes) |
 
 ### 10.3 Daily reconciliation — once a day
@@ -594,7 +598,7 @@ error):
 |---|---|---|
 | **PERMANENT_BUSINESS** | `PDF_UNREADABLE`, document gone from Mercury | document → MANUAL_REVIEW **and a fallback outcome is queued**: `UPDATE_OUTCOME` IN, `decided_by=FALLBACK`, "Unable to AI process due to error. The DMER PDF could not be read." (key `<document_id>:FALLBACK:UPDATE_OUTCOME`) |
 | TRANSIENT / PROCESSING | DB, storage, publish, dependency 5xx/429, lock lost | **redrive**: reopen the document to the queue's entry status and re-send with backoff (5, 10, 20 min), up to 3 times |
-| UNKNOWN (or redrives exhausted) | logic errors, unclassified | document → MANUAL_REVIEW for a person (no outcome) |
+| UNKNOWN (or redrives exhausted) | logic errors, unclassified | document → MANUAL_REVIEW **+ an Error outcome for Mercury** ("The AI pipeline could not process the DMER (‹stage›).") |
 
 Every drained message writes a `processing_error` row (idempotent per dead-letter message id).
 
@@ -696,7 +700,7 @@ code. DLQ Drain:
 - `PDF_UNREADABLE` → PERMANENT_BUSINESS → fallback outcome queued → W1 **Error** ("The DMER PDF
   could not be read.").
 - DB / storage / publish / dependency outage → redrive (reopen to DOWNLOADED, re-send with
-  backoff, up to 3 times) → afterwards UNKNOWN → MANUAL_REVIEW.
+  backoff, up to 3 times) → afterwards UNKNOWN → MANUAL_REVIEW + Error outcome to Intake.
 - Model output invalid / logic errors → see the category table in §10.4.
 
 ### S12. A document-orchestration activity fails
@@ -704,12 +708,15 @@ code. DLQ Drain:
 Poison error (bad input/state) → `PERMANENT_BUSINESS`; retries exhausted → `UNKNOWN`.
 `RouteToManualReview` (one transaction): document → MANUAL_REVIEW; if it has a driver, it's
 counted into the batch (so the batch doesn't wait for it); `processing_error`; then a
-`driver-decision` signal. **No fallback outcome is queued** — see [§13](#13-known-gaps-and-open-questions).
+`driver-decision` signal. **An Error outcome is queued in the same transaction**: "Unable to AI
+process due to error. The AI pipeline could not complete the ‹normalization / rule engine / …›
+step for this DMER." (decided 2026-11-23).
 
 ### S13. Work stops moving
 
-The Sweeper re-publishes stalled documents (up to 3 times, then MANUAL_REVIEW) and re-signals
-stale WAITING batches. The Ingest gap — DOWNLOADED written but the `dmer-raw` publish lost — is
+The Sweeper re-publishes stalled documents (up to 3 times, then MANUAL_REVIEW **with an Error
+outcome to Intake**) and re-signals stale WAITING batches (up to 3 times, then the batch's DMERs go
+to MANUAL_REVIEW, each with an Error outcome, and the batch is closed). The Ingest gap — DOWNLOADED written but the `dmer-raw` publish lost — is
 covered this way (re-published after the 30-min SLA).
 
 ### S14. Mercury write failures
@@ -751,7 +758,20 @@ resolves the case).
 ### S16. Non-DMER records on the page
 
 HRDIR reports and other document types are **claimed** (R2, so they never come back and leave
-the DPS queues) but not stored or processed. In Mercury they stay `InProgress`.
+the DPS queues) but **not processed**. Each one is sent back to Mercury as an error, so Intake sees
+it (decided 2026-11-23):
+
+1. **Page Poller, before the claim** (`dmer_common.db.non_dmer.record_non_dmer`, one transaction):
+   `dmer_document` INSERT (`ON CONFLICT (document_guid) DO NOTHING`) with
+   `pipeline_status='MANUAL_REVIEW'`, `current_stage='INGEST'`, no driver; `processing_error`
+   (`INGEST`, `PERMANENT_BUSINESS`, `NOT_A_DMER`); `mercury_outbox` `UPDATE_OUTCOME`
+   (`outcome_code IN`, `decided_by FALLBACK`, key `<document_id>:FALLBACK:UPDATE_OUTCOME`),
+   **due 5 minutes later** so it lands after the claim (which sets InProgress).
+2. **Publisher** → W1 `SetDmerAIProccessedStatus`: **Error**, Team - Intake, Regular, Adjudicate,
+   notes "Unable to AI process due to error. The document is not a DMER (document type: ‹type›)."
+
+A re-polled page queues nothing twice; a `document_guid` already in the pipeline as a DMER is
+left alone. The daily metrics' fallback and manual-review counts include these records.
 
 ### S17. Replays and duplicates of messages
 
@@ -791,7 +811,10 @@ The code is right; these stage docs are behind it:
   (never DECIDED); duplicates keep the **newest by `received_date`** and are rejected **only when
   all CP**; cut-off content comparison (I-4) and "newest wins" for differing DMERs (I-6) are not
   implemented; the attached-report and no-rule-outcome rules exist but aren't documented.
-- **Fallback writers:** not only the DLQ Drain — Driver Lookup (S9) and the gateway's
+- **Fallback writers:** every path that gives up on a record now queues one
+  (`mercury_outbox.queue_fallback_outcome`, one shared key per document): the DLQ Drain (any
+  category, not only PERMANENT_BUSINESS), `RouteToManualReview`, the Sweeper's give-ups, non-DMER
+  records — as well as Driver Lookup (S9) and the gateway's
   manual-review route (S10) also queue fallback outcomes; only the gateway writes a FALLBACK
   `dmer_decision`; the DLQ fallback key is `<document_id>:FALLBACK:UPDATE_OUTCOME`.
 - **Extraction** (02): OCR is `prebuilt-read` over the whole cropped page (not region-targeted
@@ -807,12 +830,12 @@ The code is right; these stage docs are behind it:
 
 | Gap | Effect | Status |
 |---|---|---|
-| `RouteToManualReview` (S12) queues **no** fallback outcome | The DMER is claimed (InProgress in Mercury) but Intake never gets an outcome — only the daily report's `MANUAL_REVIEW_NO_OUTCOME` would show it, and that report can't see claimed records | Open |
+| A DMER the pipeline gave up on (S12, Sweeper give-ups, non-permanent DLQ manual review) got **no** outcome | Claimed (InProgress in Mercury) but Intake was never told | **Fixed 2026-11-23** — every record the pipeline won't process gets an Error outcome (`queue_fallback_outcome`); this changes ADR-0002's "no automatic outcome for temporary failures" — architect review |
 | Daily reconciliation reads the claim-based `GET Dmers` | It can't see claimed records — needs a "get DMER by id" or non-claiming read from Mercury | Open with Mercury |
 | `page_count` is never written | The attached-report rule (> 2 pages → IN) never fires | Open |
 | An invalid licence on a Mercury-supplied driver at Ingest raised before the claim | That page was re-read and failed every tick | **Fixed 2026-11-23** — treated as no driver (S18) |
 | No lock renewal on `dmer-raw` | An extraction over 5 min can lose its lock (compare-and-set keeps it correct) | Open |
-| Non-DMER records stay InProgress in Mercury | — | Asked Mercury/Intake |
+| Non-DMER records stayed InProgress in Mercury | Nobody was told to handle them | **Fixed 2026-11-23** — sent back as Error (S16) |
 | `add_case` 409s ("different driver" vs "already has a case") can't be told apart | "already has a case" shows as a failed write and a misleading note | Asked Mercury |
 | Idempotency of Mercury writes (M-6) | The publisher retries after timeouts | Asked Mercury |
 | Failure-path design (failed driver link → MANUAL_REVIEW; failed case → POSTING) | — | Architect review |
@@ -832,6 +855,7 @@ The code is right; these stage docs are behind it:
 | `MERCURY_WAITING_DOCUMENT_STATUSES` | orchestrators | Uploaded | Statuses that mean "still waiting" |
 | `MERCURY_TOKEN_TTL_SECONDS` | all | 1800 | Token lifetime when Mercury gives none |
 | `DMER_POLL_SCHEDULE` | intake | `0 */5 * * * *` | Poller timer |
+| `NON_DMER_OUTCOME_DELAY_SECONDS` | intake | 300 | How long after the poll a non-DMER's error outcome may be sent (after the claim) |
 | `DMER_INGEST_QUEUE`, `DMER_RAW_QUEUE`, `DMER_EXTRACTED_QUEUE`, `DRIVER_DECISION_QUEUE` | various | queue names | |
 | `SERVICE_BUS_NAMESPACE_FQDN`, `ServiceBusConnection__fullyQualifiedNamespace` | all | — | Sends / triggers (Managed Identity) |
 | `POSTGRES_HOST`, `POSTGRES_USER`, `POSTGRES_DATABASE`, `POSTGRES_PASSWORD` | all | — | Password only locally; Entra token in Azure |

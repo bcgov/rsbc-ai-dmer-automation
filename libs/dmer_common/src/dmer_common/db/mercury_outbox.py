@@ -256,6 +256,33 @@ def fallback_rows(
     ]
 
 
+async def queue_fallback_outcome(
+    conn: AsyncConnection,
+    *,
+    document_id: str,
+    document_guid: str,
+    reason: str,
+    now: datetime,
+) -> bool:
+    """Queue the error outcome for a DMER the pipeline won't process, inside
+    the caller's transaction: ``UPDATE_OUTCOME`` IN, ``decided_by`` FALLBACK,
+    comment "Unable to AI process due to error. <reason>" -- sent to Mercury
+    as ``aiProcessedStatus`` Error, routed to Team - Intake.
+
+    Every record the pipeline gives up on gets one (decided 2026-11-23), so
+    none is left InProgress in Mercury with nobody told. The key,
+    ``<document_id>:FALLBACK:UPDATE_OUTCOME``, is shared by every fallback
+    writer: a DMER gets at most one. True if it was queued now.
+    """
+    rows = fallback_rows(
+        source_id=f"{document_id}:FALLBACK",
+        document_id=document_id,
+        document_guid=document_guid,
+        comment=fallback_comment(reason),
+    )
+    return bool(await queue_outbox_rows(conn, rows, now=now))
+
+
 async def queue_outbox_rows(
     conn: AsyncConnection, rows: Iterable[OutboxRow], *, now: datetime
 ) -> int:

@@ -215,14 +215,25 @@ def test_redrives_are_bounded_then_the_document_goes_to_a_person():
                     )
             result = await _drain(engine, _raw(doc, "DB_READ_FAILED", message_id="m-3"))
             status, _, errors, outbox, decisions = await _state(engine, doc)
-            assert result.action is DrainAction.MANUAL_REVIEW
+            # not processed: Mercury is told (Error), but nothing is decided
+            assert result.action is DrainAction.FALLBACK_QUEUED
             assert status == "MANUAL_REVIEW"
             assert errors[-1][:3] == (
                 "UNKNOWN",
                 "UNKNOWN_REDRIVE_EXHAUSTED",
-                "MANUAL_REVIEW",
+                "FALLBACK_QUEUED",
             )
-            assert outbox == [] and decisions == 0
+            ((operation, payload, key),) = outbox
+            assert (operation, key) == (
+                "UPDATE_OUTCOME",
+                f"{doc}:FALLBACK:UPDATE_OUTCOME",
+            )
+            assert payload["decided_by"] == "FALLBACK"
+            assert payload["comment"] == (
+                "Unable to AI process due to error. The AI pipeline could not "
+                "process the DMER (extraction)."
+            )
+            assert decisions == 0
 
     asyncio.run(run())
 
@@ -243,10 +254,15 @@ def test_logical_failure_goes_to_manual_review_without_a_decision():
             )
             result = await _drain(engine, dead_letter)
             status, _, errors, outbox, decisions = await _state(engine, doc)
-            assert result.action is DrainAction.MANUAL_REVIEW
+            assert result.action is DrainAction.FALLBACK_QUEUED
             assert status == "MANUAL_REVIEW"
             assert errors[0][:2] == ("UNKNOWN", "UNKNOWN_LOGICAL_ERROR")
-            assert outbox == [] and decisions == 0
+            ((operation, payload, _key),) = outbox
+            assert operation == "UPDATE_OUTCOME"
+            assert payload["comment"].endswith(
+                "could not process the DMER (normalization)."
+            )
+            assert decisions == 0
 
     asyncio.run(run())
 

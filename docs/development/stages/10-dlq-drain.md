@@ -1,5 +1,12 @@
 # DLQ Drain
 
+> **Changed 2026-11-23:** every dead letter that ends in `MANUAL_REVIEW` now gets the fallback
+> outcome (Error to Team - Intake), whatever its failure category — not only
+> `PERMANENT_BUSINESS`. A record the pipeline won't process must never sit InProgress in Mercury
+> with nobody told. Transient/processing failures are still redriven first; only when the redrive
+> budget is exhausted (or the failure is unknown/logical) is the outcome queued. This supersedes
+> the PERMANENT_BUSINESS-only gate below and in ADR-0002 (pending architect review).
+
 Source: architecture doc §4.6.3, §6. Data model: `../data-model.md`. Messages:
 `../message-contracts.md`. See also [Reliability Components](09-reliability-components.md).
 

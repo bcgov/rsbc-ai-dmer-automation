@@ -55,14 +55,17 @@ from ..telemetry import get_logger
 from .dmer_document import dmer_document
 from .dmer_stage_run import dmer_stage_run
 from .driver_decision import dmer_decision
-from .mercury_outbox import (
-    fallback_comment,
-    fallback_rows,
-    mercury_outbox,
-    queue_outbox_rows,
-)
+from .mercury_outbox import mercury_outbox, queue_fallback_outcome
 from .processing_error import _LEGACY_CLASS, FailureCategory, processing_error
 from .status import REDRIVE_REOPENABLE, PipelineStatus
+
+# How a stage reads in the note Intake gets.
+_STAGE_NAMES = {
+    "INGEST": "ingest",
+    "EXTRACT": "extraction",
+    "NORMALIZE": "normalization",
+    "DECISION": "decision",
+}
 
 _log = get_logger(__name__)
 
@@ -362,10 +365,10 @@ async def _drain(
                     .values(pipeline_status=_MANUAL_REVIEW, updated_at=now)
                 )
             action = DrainAction.MANUAL_REVIEW
-            if (
-                classification.category is FailureCategory.PERMANENT_BUSINESS
-                and not decided
-            ):
+            if not decided:
+                # The pipeline won't process it: Mercury is told (Error, Team -
+                # Intake) whatever the failure category (decided 2026-11-23;
+                # previously only PERMANENT_BUSINESS, per ADR-0002).
                 guid = (
                     await conn.execute(
                         select(dmer_document.c.document_guid).where(
@@ -373,15 +376,14 @@ async def _drain(
                         )
                     )
                 ).scalar_one()
-                await queue_outbox_rows(
+                await queue_fallback_outcome(
                     conn,
-                    fallback_rows(
-                        source_id=f"{dead_letter.document_id}:FALLBACK",
-                        document_id=dead_letter.document_id,
-                        document_guid=str(guid),
-                        comment=fallback_comment(
-                            FALLBACK_REASONS.get(classification.reason_code, "")
-                        ),
+                    document_id=dead_letter.document_id,
+                    document_guid=str(guid),
+                    reason=FALLBACK_REASONS.get(
+                        classification.reason_code,
+                        "The AI pipeline could not process the DMER "
+                        f"({_STAGE_NAMES.get(dead_letter.stage, dead_letter.stage.lower())}).",
                     ),
                     now=now,
                 )
