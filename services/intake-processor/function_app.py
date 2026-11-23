@@ -40,7 +40,7 @@ import asyncio
 import functools
 import json
 import os
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import azure.functions as func
@@ -53,6 +53,7 @@ from dmer_common.db import (
     DriverRepository,
     PollCheckpointRepository,
 )
+from dmer_common.db.non_dmer import record_non_dmer
 from dmer_common.licence import is_placeholder_licence, normalize_licence
 from dmer_common.mercury_client import MercuryClient
 from dmer_common.telemetry import document_id_context, get_logger
@@ -302,13 +303,15 @@ async def _upsert_document_and_driver(
 
 def _is_dmer(record: dict) -> bool:
     """GET dmers also returns other document types (HRDIR reports, backfiles
-    -- with no documentUrl); only DMERs enter the pipeline."""
+    -- with no documentUrl); only DMERs enter the pipeline. The others are
+    sent back to Mercury as an error (``dmer_common.db.non_dmer``)."""
     return str(record.get("document_type") or "").strip().upper() == "DMER"
 
 
 async def _run_poll(engine: AsyncEngine, mercury: MercuryClient | None = None) -> None:
-    """One page: store and queue its DMERs, then mark every record on it
-    (DMER or not) AI Processed so GET dmers returns the next ones.
+    """One page: store and queue its DMERs, queue an error outcome for each
+    non-DMER ("not a DMER", sent to Intake), then mark every record on it AI
+    Processed so GET dmers returns the next ones.
 
     Marking comes last, once the DMERs are in dmer_document and on
     dmer-ingest. If it fails the poll fails, and the next tick gets the same
@@ -353,6 +356,23 @@ async def _run_poll(engine: AsyncEngine, mercury: MercuryClient | None = None) -
                 extra={"document_guid": record["document_guid"]},
             )
 
+    # Non-DMERs: stored as MANUAL_REVIEW with an error outcome queued for
+    # Mercury ("not a DMER"), due a few minutes from now so it lands after
+    # the claim below. Idempotent: a re-polled page queues nothing twice.
+    send_after = timedelta(
+        seconds=int(os.environ.get("NON_DMER_OUTCOME_DELAY_SECONDS", "300"))
+    )
+    non_dmers = [r for r in page.records if not _is_dmer(r) and r.get("document_guid")]
+    for record in non_dmers:
+        result = await record_non_dmer(
+            engine, record, now=datetime.now(UTC), send_after=send_after
+        )
+        if result is not None:
+            _log.info(
+                "non-DMER record: error outcome queued for Mercury",
+                extra={"document_id": result.document_id, "queued": result.queued},
+            )
+
     guids = [str(r["document_guid"]) for r in page.records if r.get("document_guid")]
     await _run_sync(mercury.set_ai_processed, guids)
 
@@ -366,6 +386,7 @@ async def _run_poll(engine: AsyncEngine, mercury: MercuryClient | None = None) -
         extra={
             "record_count": len(page.records),
             "dmer_count": len(dmers),
+            "non_dmer_count": len(non_dmers),
             "marked_ai_processed": len(guids),
             "has_next": page.has_more,
         },

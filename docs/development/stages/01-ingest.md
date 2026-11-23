@@ -57,9 +57,11 @@ isolation from the others.
    **InProgress** (confirmed 2026-11-20 — the pipeline never sets InProgress itself), moves them to
    the AI Processed Queue, out of the DPS queues, and `GET dmers` stops returning them — this is
    what brings the next page. The outcome call (`SetDmerAIProccessedStatus`, see
-   [Post-Processing](08-post-processing.md)) later sets Proccessed or Error. A record that never
-   gets an outcome (a non-DMER, or a DMER that stalls without one) stays InProgress in Mercury —
-   open question whether non-DMERs should get an outcome call too.
+   [Post-Processing](08-post-processing.md)) later sets Proccessed or Error. **Non-DMER records**
+   get one too: before this claim, each is stored as `MANUAL_REVIEW` with an error outcome queued
+   ("not a DMER", Team - Intake), due 5 minutes later so it lands after the claim
+   (`dmer_common.db.non_dmer`, `NON_DMER_OUTCOME_DELAY_SECONDS`, decided 2026-11-23). A DMER that
+   stalls without an outcome would stay InProgress in Mercury.
    It comes **last**, once the DMERs are stored and queued: if it fails, the poll fails and the next
    tick gets the same records again, which steps 3–6 handle idempotently. Marking first could hide
    a DMER from the DPS queues that the pipeline never stored.

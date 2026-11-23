@@ -14,7 +14,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
+from types import SimpleNamespace
 
 import function_app as fa
 import pytest
@@ -292,6 +293,14 @@ def _poll(monkeypatch, records, *, mark_fails=False):
         lambda queue, message_id, body: events.append(("publish", message_id)),
     )
     monkeypatch.setenv("MERCURY_PAGE_SIZE", "50")
+
+    async def record_non_dmer(engine, record, *, now, send_after):
+        events.append(("non_dmer", record["document_guid"], send_after))
+        return SimpleNamespace(
+            document_id=f"doc-{record['document_guid']}", queued=True
+        )
+
+    monkeypatch.setattr(fa, "record_non_dmer", record_non_dmer)
     mercury = _FakeMercury(records, events, mark_fails=mark_fails)
     error = None
     try:
@@ -316,6 +325,15 @@ def test_poll_stores_and_queues_only_the_dmers(monkeypatch):
     assert [e[1] for e in events if e[0] == "publish"] == ["G1", "G3"]
 
 
+def test_non_dmers_get_an_error_outcome_due_after_the_claim(monkeypatch):
+    events, doc_repo, error = _poll(monkeypatch, [_DMER, _HRDIR, _DMER_2])
+    assert error is None
+    (non_dmer,) = [e for e in events if e[0] == "non_dmer"]
+    assert non_dmer[1] == "G2"
+    assert non_dmer[2] == timedelta(seconds=300)  # NON_DMER_OUTCOME_DELAY_SECONDS
+    assert "G2" not in [c["document_guid"] for c in doc_repo.calls]  # not ingested
+
+
 def test_poll_marks_every_record_ai_processed_after_queuing_the_dmers(monkeypatch):
     # Non-DMERs are marked too, so GET dmers stops returning them.
     events, _, error = _poll(monkeypatch, [_DMER, _HRDIR, _DMER_2])
@@ -324,6 +342,7 @@ def test_poll_marks_every_record_ai_processed_after_queuing_the_dmers(monkeypatc
         "get_page",
         "publish",
         "publish",
+        "non_dmer",  # the HRDIR: error outcome queued before the claim
         "set_ai_processed",
         "checkpoint",
     ]
