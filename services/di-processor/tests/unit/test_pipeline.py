@@ -182,6 +182,7 @@ def _pipeline(
     monkeypatch.setattr(
         pl.render, "render_cropped_page", lambda b: Image.new("RGB", (10, 10))
     )
+    monkeypatch.setattr(pl.render, "page_count", lambda b: 2)
     monkeypatch.setattr(pl.render, "PAGE_NUMBER", 1, raising=False)
     monkeypatch.setattr(pl.splitter, "create_tiles", lambda img: [])
     monkeypatch.setattr(
@@ -441,6 +442,21 @@ async def test_comparison_fields_and_hash_persisted(monkeypatch):
     assert record.comparison_hash == comparison.comparison_hash(
         record.comparison_fields
     )
+
+
+async def test_page_count_persisted(monkeypatch):
+    # GIVEN a PDF with a medical report attached (five pages)
+    import di_processor.pipeline as pl
+
+    extractions = FakeExtractionRepo()
+    pipeline = _pipeline(monkeypatch, extractions=extractions)
+    monkeypatch.setattr(pl.render, "page_count", lambda b: 5)
+
+    # WHEN the pipeline runs
+    await pipeline.run(_raw_message())
+
+    # THEN the page count lands on the dmer_extraction row for the gateway
+    assert extractions.records[0].page_count == 5
 
 
 # --- audit trail (dmer_stage_run) -------------------------------------------

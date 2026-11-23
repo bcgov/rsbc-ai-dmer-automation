@@ -8,6 +8,7 @@ from di_processor.extraction.render import (
     CROP_TOP_PERCENT,
     crop_protected_b,
     image_to_png_bytes,
+    page_count,
     render_cropped_page,
     render_page,
 )
@@ -70,3 +71,14 @@ def test_image_to_png_bytes_roundtrips():
     data = image_to_png_bytes(img)
     assert data[:8] == b"\x89PNG\r\n\x1a\n"
     assert Image.open(__import__("io").BytesIO(data)).size == (20, 20)
+
+
+@pytest.mark.parametrize("pages", [1, 2, 5])
+def test_page_count(pages):
+    # GIVEN a PDF with N pages -> THEN page_count reports N
+    assert page_count(_make_pdf(pages=pages)) == pages
+
+
+def test_page_count_rejects_non_pdf_bytes():
+    with pytest.raises(Exception):  # noqa: B017 - PyMuPDF raises its own error types
+        page_count(b"not a pdf")

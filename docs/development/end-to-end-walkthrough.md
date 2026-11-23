@@ -384,7 +384,7 @@ EXTRACTED → only re-publish to `dmer-extracted`; otherwise run the pipeline.
 | 6 | **D. Merge** (`merge.py`): start from the custom model's fields; for each handwritten field — visual acuity with custom confidence ≥ 0.95 keeps the custom value; else a `high` handwritten value wins; else (handwritten `low`) the custom value is kept if its confidence > 0.75, otherwise the handwritten value | `combined.json` |
 | 7 | **Licence read:** custom-model field `dl_number`, normalized (7–8 digits → 8, else none) | — |
 | 8 | **Comparison fingerprint:** two dates + ~110 checkboxes + other fields, lower-cased; `comparison_hash = sha256(...)` — used later to spot duplicates | — |
-| 9 | **`dmer_extraction` upsert** (`ON CONFLICT (document_id) DO UPDATE`): `licence_number_read, has_header, has_signature, is_cutoff, comparison_fields, comparison_hash` (`page_count`, `exam_date`, … are null) | `dmer_extraction` |
+| 9 | **`dmer_extraction` upsert** (`ON CONFLICT (document_id) DO UPDATE`): `licence_number_read, has_header, has_signature, is_cutoff, page_count, comparison_fields, comparison_hash` (`exam_date`, … are null). `page_count` is the PDF's total pages — only page 1 is extracted | `dmer_extraction` |
 | 10 | Status EXTRACTING → **EXTRACTED**, `current_stage = NORMALIZE` | `dmer_document` |
 | 11 | **Publish `dmer-extracted`** (`blobUrl` = `combined.json`, deterministic `messageId`) | — |
 | 12 | Stage run → SUCCEEDED (`output_blob_url` = `combined.json`) | stage run |
@@ -506,7 +506,7 @@ Applied in this order:
 
 | Rule | Outcome |
 |---|---|
-| Attached medical report (`page_count > 2`) | `IN` — *currently never fires: `page_count` is always null* |
+| Attached medical report (`page_count > 2` — a DMER is the form plus the instruction page) | `IN`, "Medical report attached (more than two pages): not processed automatically."; left out of the duplicate comparison |
 | No rule-engine outcome recorded | `IN` |
 | **Every copy cut off** (or unknown) | every copy `IN`, "consider requesting a clearer copy" |
 | Some clear, some cut off | decide on the clear copies; cut-off copies follow their result (`superseded_by_cutoff_rule`) |
@@ -818,7 +818,7 @@ The code is right; these stage docs are behind it:
   manual-review route (S10) also queue fallback outcomes; only the gateway writes a FALLBACK
   `dmer_decision`; the DLQ fallback key is `<document_id>:FALLBACK:UPDATE_OUTCOME`.
 - **Extraction** (02): OCR is `prebuilt-read` over the whole cropped page (not region-targeted
-  `prebuilt-ocr`); `page_count`, `exam_date`, `physician_name`, `confidence_avg` are not written;
+  `prebuilt-ocr`); `exam_date`, `physician_name`, `confidence_avg` are not written;
   there is no Service Bus lock renewal.
 - **Ingest** (01): `dps_date` is never written; the checkpoint is an upsert of the poll time.
 - **Message bodies** are camelCase on the wire (docs show snake_case).
@@ -832,7 +832,7 @@ The code is right; these stage docs are behind it:
 |---|---|---|
 | A DMER the pipeline gave up on (S12, Sweeper give-ups, non-permanent DLQ manual review) got **no** outcome | Claimed (InProgress in Mercury) but Intake was never told | **Fixed 2026-11-23** — every record the pipeline won't process gets an Error outcome (`queue_fallback_outcome`); this changes ADR-0002's "no automatic outcome for temporary failures" — architect review |
 | Daily reconciliation reads the claim-based `GET Dmers` | It can't see claimed records — needs a "get DMER by id" or non-claiming read from Mercury | Open with Mercury |
-| `page_count` is never written | The attached-report rule (> 2 pages → IN) never fires | Open |
+| `page_count` was never written | The attached-report rule (> 2 pages → IN) never fired | **Fixed 2026-11-23** (page count recorded). Still a heuristic: a 2-page fax of form + report (no instruction page) isn't caught, and form + instructions + cover sheet is flagged — recognising the instruction page would fix both |
 | An invalid licence on a Mercury-supplied driver at Ingest raised before the claim | That page was re-read and failed every tick | **Fixed 2026-11-23** — treated as no driver (S18) |
 | No lock renewal on `dmer-raw` | An extraction over 5 min can lose its lock (compare-and-set keeps it correct) | Open |
 | Non-DMER records stayed InProgress in Mercury | Nobody was told to handle them | **Fixed 2026-11-23** — sent back as Error (S16) |

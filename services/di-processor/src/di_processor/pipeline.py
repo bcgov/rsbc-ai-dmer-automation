@@ -255,6 +255,7 @@ class Pipeline:
 
             # Stage B: render + tile + prebuilt-read OCR.
             with failure_step(FailureCode.PDF_UNREADABLE):
+                pages = render.page_count(pdf_bytes)
                 image = render.render_cropped_page(pdf_bytes)
             tiles = splitter.create_tiles(image)
             with failure_step(FailureCode.OCR_FAILED):
@@ -313,6 +314,7 @@ class Pipeline:
                         has_header=combined.cutoff.has_header,
                         has_signature=combined.cutoff.has_signature,
                         is_cutoff=combined.cutoff.is_cutoff,
+                        page_count=pages,
                         comparison_fields=compare,
                         comparison_hash=comparison.comparison_hash(compare),
                     )
