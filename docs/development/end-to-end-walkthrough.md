@@ -509,7 +509,8 @@ Applied in this order:
 | Attached medical report (`page_count > 2` — a DMER is the form plus the instruction page) | `IN`, "Medical report attached (more than two pages): not processed automatically."; left out of the duplicate comparison |
 | No rule-engine outcome recorded | `IN` |
 | **Every copy cut off** (or unknown) | every copy `IN`, "consider requesting a clearer copy" |
-| Some clear, some cut off | decide on the clear copies; cut-off copies follow their result (`superseded_by_cutoff_rule`) |
+| Some clear, some cut off — **cut-off copy differs from the clear copy** (I-4) | every copy `IN` ("A cut-off copy of this DMER differs from the clear copy"), with `differing_fields`; nothing rejected. Compared: what's readable on the cut-off copy — the two dates and `physician.*` when read, and every **ticked** box (an unticked box or empty field may be in the missing part, so it isn't compared). Nothing readable → also `IN` ("could not be compared") |
+| Some clear, some cut off — **cut-off copy matches** | decide on the clear copies; cut-off copies follow their result (`superseded_by_cutoff_rule`) |
 | **Clear copies differ** (more than one `comparison_hash` group) | every copy `IN` ("Waiting DMERs for this driver differ"), with `differing_fields`; nothing rejected |
 | **One DMER** | its rule-engine outcome |
 | **Duplicates, all CP** (clean pass, I-19) | newest (by `received_date`) keeps `CP`; older copies `CP` + **is_duplicate** (rejected) |
@@ -660,8 +661,12 @@ More than one `comparison_hash` group among the clear copies → every copy `IN`
 ### S7. A cut-off scan
 
 `is_cutoff` true (header or signature block missing). All copies cut off → every copy `IN`,
-"consider requesting a clearer copy". A clear copy exists → it decides; cut-off copies follow with
-`superseded_by_cutoff_rule = true` (and are marked duplicates on a clean pass).
+"consider requesting a clearer copy" (I-5). A clear copy exists → **the cut-off copy is compared
+with it first** (I-4): the exam and issued dates and the physician's details when read on the
+cut-off copy, and every box ticked on it. Anything differs, or nothing on the cut-off copy can be
+compared → every copy `IN` ("copies differ", fields listed). Otherwise the clear copy decides;
+cut-off copies follow with `superseded_by_cutoff_rule = true` (and are marked duplicates on a
+clean pass).
 
 ### S8. A re-fax arrives after the first copy was decided (I-10)
 
@@ -809,8 +814,9 @@ The code is right; these stage docs are behind it:
   not a Durable orchestrator; the lock is `pg_try_advisory_lock('driver-decision:<driver_key>')` (06).
 - **Decision Gateway** (07): it **does** write `dmer_decision`, documents go AWAITING → **POSTING**
   (never DECIDED); duplicates keep the **newest by `received_date`** and are rejected **only when
-  all CP**; cut-off content comparison (I-4) and "newest wins" for differing DMERs (I-6) are not
-  implemented; the attached-report and no-rule-outcome rules exist but aren't documented.
+  all CP**; "newest wins" for differing DMERs (I-6) is not implemented (pending Intake);
+  the cut-off comparison (I-4) is implemented since 2026-11-23; the attached-report and
+  no-rule-outcome rules exist but aren't documented.
 - **Fallback writers:** every path that gives up on a record now queues one
   (`mercury_outbox.queue_fallback_outcome`, one shared key per document): the DLQ Drain (any
   category, not only PERMANENT_BUSINESS), `RouteToManualReview`, the Sweeper's give-ups, non-DMER

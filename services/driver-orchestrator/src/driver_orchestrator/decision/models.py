@@ -20,6 +20,7 @@ class Path(StrEnum):
     ATTACHED_REPORT = "attached_report"  # more than two pages
     ALL_CUT_OFF = "all_cut_off"
     CUT_OFF_SUPERSEDED = "cut_off_superseded"  # a clear copy exists
+    CUT_OFF_DIFFERS = "cut_off_differs"  # a cut-off copy doesn't match the clear one
     DUPLICATE_RETAINED = "duplicate_retained"
     DUPLICATE_REJECTED = "duplicate_rejected"  # clean pass: older copy rejected
     DUPLICATE_FORWARDED = "duplicate_forwarded"  # not a clean pass: all forwarded

@@ -10,8 +10,13 @@ Rules follow the Intake business sign-off (Sep 29, 2026; architecture v2.1
 1. **Attached reports.** A DMER with more than two pages is IN ("medical report
    attached") and takes no part in the comparison below.
 2. **Cut-off.** If every remaining copy is cut off, each is IN, with a note so
-   the reviewer can ask for a clearer copy. Otherwise a cut-off copy is treated
-   as a duplicate of the retained clear copy; completeness always beats recency.
+   the reviewer can ask for a clearer copy (I-5). Otherwise the clear copy is
+   used -- completeness always beats recency -- **provided the cut-off copy
+   matches it** (I-4): what can be read on the cut-off copy (the two dates,
+   the physician's details, every ticked checkbox) is compared with the clear
+   copy. If any of it differs, or nothing on the cut-off copy can be
+   compared, every copy is IN ("copies differ"). If it matches, the cut-off
+   copy is treated as a duplicate of the retained clear copy.
 3. **Duplicates.** Clear copies with the same ``comparison_hash`` are
    duplicates. If every copy is a clean pass (CP), the newest is kept and the
    older ones are rejected. Otherwise nothing is rejected: all copies are
@@ -50,6 +55,17 @@ NOTE_ALL_CUT_OFF = (
     "requesting a clearer copy."
 )
 NOTE_NO_RULE_OUTCOME = "No rule engine outcome recorded: sent for manual review."
+NOTE_CUT_OFF_DIFFERS = (
+    "A cut-off copy of this DMER differs from the clear copy: sent for manual review."
+)
+NOTE_CUT_OFF_UNCOMPARABLE = (
+    "A cut-off copy of this DMER could not be compared with the clear copy "
+    "(nothing readable to compare): sent for manual review."
+)
+# What a cut-off copy is compared on (I-4): the fields that identify the
+# examination. Values are comparison_fields' normalized ones.
+CUT_OFF_DATE_FIELDS = ("medical_examination_date", "medical_issued_date")
+CUT_OFF_PHYSICIAN_PREFIX = "physician."
 NOTE_DIFFERING = "Waiting DMERs for this driver differ: sent for manual review."
 NOTE_DRIVER_PROPOSED = (
     "Driver matched from the licence on the DMER; mapping to the driver's "
@@ -113,6 +129,10 @@ def _decide_clear(
 
     group = groups[0]  # newest first
     retained, older = group[0], group[1:]
+    mismatched = [(d, _cut_off_differences(d, retained)) for d in cut_off]
+    mismatched = [(d, diff) for d, diff in mismatched if diff is not None]
+    if mismatched:
+        return _cut_off_differs(group, cut_off, mismatched)
     if not older and not cut_off:
         return [_decision(retained, retained.rule.outcome_code, Path.SINGLE_DOCUMENT)]
 
@@ -172,6 +192,62 @@ def _decide_clear(
         for d in cut_off
     ]
     return out
+
+
+def _readable_on_cut_off(fields: dict[str, Any]) -> dict[str, Any]:
+    """The comparison fields a cut-off copy can be checked on: the two dates
+    and the physician's details when read, and every ticked checkbox. An
+    unticked box or an empty field may simply be in the missing part of the
+    page, so it isn't compared."""
+    out: dict[str, Any] = {}
+    for key, value in fields.items():
+        if isinstance(value, bool):
+            if value:
+                out[key] = True
+            continue
+        identifying = key in CUT_OFF_DATE_FIELDS or key.startswith(
+            CUT_OFF_PHYSICIAN_PREFIX
+        )
+        if identifying and value not in (None, ""):
+            out[key] = value
+    return out
+
+
+def _cut_off_differences(
+    cut_off: DocumentFacts, clear: DocumentFacts
+) -> dict[str, dict[str, Any]] | None:
+    """None when the cut-off copy matches the clear copy on everything
+    readable on it (I-4). Otherwise ``{field: {document_id: value}}`` for the
+    fields that differ -- empty when nothing on the cut-off copy could be
+    compared, so a match can't be shown."""
+    readable = _readable_on_cut_off(cut_off.comparison_fields or {})
+    clear_fields = clear.comparison_fields or {}
+    diff = {
+        key: {cut_off.document_id: value, clear.document_id: clear_fields.get(key)}
+        for key, value in readable.items()
+        if clear_fields.get(key) != value
+    }
+    if diff or not readable:
+        return diff
+    return None
+
+
+def _cut_off_differs(
+    group: list[DocumentFacts],
+    cut_off: list[DocumentFacts],
+    mismatched: list[tuple[DocumentFacts, dict[str, dict[str, Any]]]],
+) -> list[DocumentDecision]:
+    """A cut-off copy doesn't match the clear copy (I-4): every copy is IN,
+    nothing rejected, with the fields that differ."""
+    diff: dict[str, dict[str, Any]] = {}
+    for _, fields in mismatched:
+        for key, values in fields.items():
+            diff.setdefault(key, {}).update(values)
+    note = NOTE_CUT_OFF_DIFFERS if diff else NOTE_CUT_OFF_UNCOMPARABLE
+    return [
+        _decision(d, MANUAL_REVIEW, Path.CUT_OFF_DIFFERS, note, differing_fields=diff)
+        for d in (*group, *cut_off)
+    ]
 
 
 def _differing(

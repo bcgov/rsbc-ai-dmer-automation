@@ -169,9 +169,13 @@ near-clinical content; see §9.2).
 
 - **I-6** — confirmed direction (process newest, mark older duplicate/rejected) but the
   architecture document itself notes this needs final Intake confirmation before build-freeze.
-- **I-4** cut-off-vs-clear content disagreement handling (route to manual review) is this
-  document's interpretation of the answer given; confirm the exact business framing with Intake
-  before implementing Step 2's disagreement branch.
+- **I-4** cut-off-vs-clear content disagreement handling — **implemented 2026-11-23**
+  (`decision/gateway.py`, `_cut_off_differences`): the cut-off copy is compared with the clear copy
+  on what is readable on it — `medical_examination_date`, `medical_issued_date`, `physician.*`
+  when read, and every ticked checkbox (unticked boxes and empty fields may be in the missing part,
+  so they aren't compared). Any difference, or nothing readable to compare → every copy `IN`
+  (path `cut_off_differs`, fields listed); a match → the clear copy decides as before. Confirm
+  the field set with Intake.
 - Whether Step 4's "two non-duplicate, non-cut-off DMERs differ" logic generalizes correctly to
   **three or more** qualifying documents (which pair(s) get compared, and what happens if some
   pairs agree and others don't) is not addressed in the architecture document — clarify before
