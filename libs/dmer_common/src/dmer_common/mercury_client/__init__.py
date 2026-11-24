@@ -133,13 +133,17 @@ class MercuryPage:
     """One page of ``GET dmers``: every item Mercury returned (DMER or not),
     as snake_case records (:func:`_record`).
 
-    ``has_more`` is Mercury's ``nextLink`` being present. The link itself is
-    not followed: it is the same request again, which only returns the next
-    records once these are marked AI Processed.
+    ``has_more``: the page came back **full** (as many items as asked for),
+    so more may be waiting. Mercury returns no ``nextLink`` (confirmed
+    2026-11-24); the next page is simply the same request once these are
+    marked AI Processed. ``count`` is Mercury's ``count`` as sent -- its
+    meaning (page size? records waiting?) is unconfirmed, so it is only
+    logged, never relied on.
     """
 
     records: list[dict[str, Any]]
     has_more: bool
+    count: int | None = None
 
 
 # Mercury's endpoint name, spelling included.
@@ -389,11 +393,11 @@ class MercuryClient:
 
         @mercury_retry()
         def _run() -> MercuryPage:
-            return self._fetch(url)
+            return self._fetch(url, page_size)
 
         return self._breaker.call(_run)
 
-    def _fetch(self, url: str) -> MercuryPage:
+    def _fetch(self, url: str, page_size: int) -> MercuryPage:
         headers = {
             "Accept": "application/json",
         }
@@ -406,19 +410,21 @@ class MercuryClient:
             raise MercuryApiError(f"Mercury batch API returned HTTP {status}")
         payload = json.loads(body.decode("utf-8"))
         zone = ZoneInfo(self._settings.received_date_timezone)
-        records = [
-            _record(item, zone)
-            for item in payload.get("items") or []
-            if isinstance(item, dict)
-        ]
+        items = payload.get("items") or []
+        records = [_record(item, zone) for item in items if isinstance(item, dict)]
+        raw_count = payload.get("count")
+        count = raw_count if isinstance(raw_count, int) else None
+        has_more = len(items) >= page_size
         _log.info(
             "mercury batch API page fetched",
             extra={
                 "record_count": len(records),
-                "has_next": bool(payload.get("nextLink")),
+                "page_size": page_size,
+                "mercury_count": count,
+                "has_more": has_more,
             },
         )
-        return MercuryPage(records=records, has_more=bool(payload.get("nextLink")))
+        return MercuryPage(records=records, has_more=has_more, count=count)
 
     def download_dmer(self, document_guid: str) -> bytes:
         """The DMER's PDF (``GET {base}/{documentRecordId}/files``), as bytes.

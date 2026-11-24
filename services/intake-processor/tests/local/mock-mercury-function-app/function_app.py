@@ -314,11 +314,10 @@ def mercury_dmers(req: func.HttpRequest) -> func.HttpResponse:
     # Mercury's documentUrl is a path inside Mercury, not a link; the file
     # comes from GET dmers/{documentRecordId}/files (mercury_dmer_file).
     items = [_dmers_item(b, f"dfp_driver/mock/{_file_name(b.name)}") for b in page]
-    # Mercury's nextLink is the same request again (relative); null when
-    # nothing waits beyond this page.
-    next_link = f"/Dmers?pageSize={page_size}" if len(waiting) > page_size else None
+    # Like Mercury: no nextLink; "count" echoes the page size (as in Mercury's
+    # sample -- its meaning is unconfirmed).
     return func.HttpResponse(
-        json.dumps({"items": items, "page_size": page_size, "nextLink": next_link}),
+        json.dumps({"items": items, "count": page_size}),
         mimetype="application/json",
         status_code=200,
     )
@@ -409,8 +408,8 @@ def mercury_driver(req: func.HttpRequest) -> func.HttpResponse:
 # dmer_common.mercury_client.MercuryClient.send_outbox sends:
 #
 #   POST /api/mercury/dmers/SetDmerAIProccessedStatus         UPDATE_OUTCOME
-#       Mercury's API: {"dmerId", "aiProcessedStatus", ...}; 400 without
-#       dmerId or an integer aiProcessedStatus.
+#       Mercury's API: {"documentRecordId", "aiProcessedStatus", ...}; 400
+#       without documentRecordId or an integer aiProcessedStatus.
 #   POST /api/mercury/dmers/{guid}/add_driver                  MAP_DRIVER
 #       Mercury's API: {"driverLicenceNumber", "firstName", "surname",
 #       "dmerId", ...}; answers {"resultMessage", "driverOpenCase"} (the mock
@@ -517,11 +516,11 @@ def mercury_set_ai_status(req: func.HttpRequest) -> func.HttpResponse:
         body = req.get_json()
     except ValueError:
         return _json({"error": "body must be JSON"}, 400)
-    if not isinstance(body, dict) or not body.get("dmerId"):
-        return _json({"error": "dmerId is required"}, 400)
+    if not isinstance(body, dict) or not body.get("documentRecordId"):
+        return _json({"error": "documentRecordId is required"}, 400)
     if not isinstance(body.get("aiProcessedStatus"), int):
         return _json({"error": "aiProcessedStatus (integer) is required"}, 400)
-    return _record_write(req, str(body["dmerId"]), "ai-status")
+    return _record_write(req, str(body["documentRecordId"]), "ai-status")
 
 
 _ADD_DRIVER_REQUIRED = ("driverLicenceNumber", "firstName", "surname", "dmerId")

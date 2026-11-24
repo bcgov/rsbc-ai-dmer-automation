@@ -309,9 +309,32 @@ def _is_dmer(record: dict) -> bool:
 
 
 async def _run_poll(engine: AsyncEngine, mercury: MercuryClient | None = None) -> None:
+    """Up to ``MERCURY_MAX_PAGES_PER_POLL`` pages (default 1), one after the
+    other: each is stored, queued and claimed (:func:`_poll_page`) before the
+    next is read -- GET dmers is claim-based, so the same request then returns
+    the next records. Another page is read only while the last one came back
+    full (Mercury sends no ``nextLink``). The cap bounds how much one run
+    pushes into extraction.
+    """
+    mercury = mercury or MercuryClient()
+    page_size = int(os.environ.get("MERCURY_PAGE_SIZE", "50"))
+    max_pages = max(1, int(os.environ.get("MERCURY_MAX_PAGES_PER_POLL", "1")))
+    for page_number in range(1, max_pages + 1):
+        page = await _run_sync(functools.partial(mercury.get_page, page_size=page_size))
+        claimed = await _poll_page(engine, mercury, page, page_number=page_number)
+        # Stop on a short page; and if nothing could be claimed, the next read
+        # would return the same records.
+        if not page.has_more or not claimed:
+            break
+
+
+async def _poll_page(
+    engine: AsyncEngine, mercury: MercuryClient, page, *, page_number: int
+) -> int:
     """One page: store and queue its DMERs, queue an error outcome for each
     non-DMER ("not a DMER", sent to Intake), then mark every record on it AI
-    Processed so GET dmers returns the next ones.
+    Processed so GET dmers returns the next ones. Returns how many records
+    were claimed.
 
     Marking comes last, once the DMERs are in dmer_document and on
     dmer-ingest. If it fails the poll fails, and the next tick gets the same
@@ -322,10 +345,6 @@ async def _run_poll(engine: AsyncEngine, mercury: MercuryClient | None = None) -
     checkpoint_repo = PollCheckpointRepository(engine)
     doc_repo = DmerDocumentRepository(engine)
     driver_repo = DriverRepository(engine)
-
-    mercury = mercury or MercuryClient()
-    page_size = int(os.environ.get("MERCURY_PAGE_SIZE", "50"))
-    page = await _run_sync(functools.partial(mercury.get_page, page_size=page_size))
 
     dmers = [r for r in page.records if _is_dmer(r) and r.get("document_guid")]
     for record in dmers:
@@ -374,7 +393,8 @@ async def _run_poll(engine: AsyncEngine, mercury: MercuryClient | None = None) -
             )
 
     guids = [str(r["document_guid"]) for r in page.records if r.get("document_guid")]
-    await _run_sync(mercury.set_ai_processed, guids)
+    if guids:
+        await _run_sync(mercury.set_ai_processed, guids)
 
     now = datetime.now(UTC)
     # No cursor: GET dmers is claim-based, so the next page is the same call.
@@ -388,9 +408,12 @@ async def _run_poll(engine: AsyncEngine, mercury: MercuryClient | None = None) -
             "dmer_count": len(dmers),
             "non_dmer_count": len(non_dmers),
             "marked_ai_processed": len(guids),
-            "has_next": page.has_more,
+            "page_number": page_number,
+            "has_more": page.has_more,
+            "mercury_count": page.count,
         },
     )
+    return len(guids)
 
 
 @app.timer_trigger(

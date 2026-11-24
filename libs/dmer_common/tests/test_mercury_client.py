@@ -82,12 +82,9 @@ HRDIR_ITEM = {
     "driver": None,
     "dmerDocumentCaseRecord": None,
 }
-PAGE = {
-    "items": [DMER_ITEM, HRDIR_ITEM],
-    "page_size": 2,
-    "nextLink": "/Dmers?pageSize=2",
-}
-LAST_PAGE = {"items": [], "page_size": 2, "nextLink": None}
+# Mercury's GET dmers: items and count, no nextLink (confirmed 2026-11-24).
+PAGE = {"items": [DMER_ITEM, HRDIR_ITEM], "count": 50}
+LAST_PAGE = {"items": [], "count": 50}
 
 
 class _FakeHttp:
@@ -125,7 +122,21 @@ def test_get_page_calls_get_dmers_with_the_page_size():
         DMER_ITEM["documentRecordId"],
         HRDIR_ITEM["documentRecordId"],
     ]
-    assert page.has_more is True
+    assert page.count == 50  # logged only; its meaning is unconfirmed
+
+
+@pytest.mark.parametrize(("page_size", "more"), [(2, True), (3, False), (50, False)])
+def test_more_may_be_waiting_only_when_the_page_came_back_full(page_size, more):
+    # No nextLink: a full page (2 items asked for 2) may have more behind it.
+    page = MercuryClient(settings=SETTINGS, http_get=_FakeHttp()).get_page(
+        page_size=page_size
+    )
+    assert page.has_more is more
+
+
+def test_a_count_that_is_not_a_number_is_ignored():
+    http = _FakeHttp({"items": [], "count": "fifty"})
+    assert MercuryClient(settings=SETTINGS, http_get=http).get_page().count is None
 
 
 def test_get_page_translates_mercury_items_to_pipeline_records():
@@ -243,7 +254,7 @@ def test_api_key_is_never_logged():
     assert SECRET_KEY not in logged
     record = json.loads(logged.strip().splitlines()[-1])
     assert record["record_count"] == 2
-    assert record["has_next"] is True
+    assert record["has_more"] is False  # 2 items, page size 50
 
 
 def test_settings_default_from_config(monkeypatch):

@@ -26,9 +26,13 @@ isolation from the others.
 
 ## Page Poller — processing steps
 
-1. Call Mercury's `GET {MERCURY_API_BASE_URL}?pageSize={MERCURY_PAGE_SIZE}` (`GET dmers`) for **a
-   single page only**. It is **claim-based**: it returns the next records not yet marked AI
-   Processed, so there is no cursor — `nextLink` is the same request again and is not followed.
+1. Call Mercury's `GET {MERCURY_API_BASE_URL}?pageSize={MERCURY_PAGE_SIZE}` (`GET dmers`). It is
+   **claim-based**: it returns the next records not yet marked AI Processed, so there is no
+   cursor. Mercury returns **no `nextLink`** (confirmed 2026-11-24); a page that comes back **full**
+   (as many items as asked for) means more may be waiting. `count` is logged only — its meaning
+   (page size? records waiting?) is unconfirmed. By default **one page per run**;
+   `MERCURY_MAX_PAGES_PER_POLL` (default 1) lets one run read further full pages, each stored,
+   queued and claimed before the next is read (see step 8).
    Do not loop over pages inside the invocation — a long-running poller is harder to retry, harder
    to reason about on timeout, and holds the advisory lock while it works.
    `MercuryClient` translates Mercury's camelCase `items` into the snake_case records below
@@ -65,7 +69,11 @@ isolation from the others.
    It comes **last**, once the DMERs are stored and queued: if it fails, the poll fails and the next
    tick gets the same records again, which steps 3–6 handle idempotently. Marking first could hide
    a DMER from the DPS queues that the pipeline never stored.
-8. **One page per timer tick, no self-continuation.** The architecture document describes the
+8. **One page per timer tick by default, no self-continuation.** (Opt-in since 2026-11-24:
+   `MERCURY_MAX_PAGES_PER_POLL` > 1 reads further pages in the same run while each comes back
+   full — for draining the backlog faster. The cap bounds the run's length and how much it pushes
+   into extraction; each page is claimed before the next is read, so a failure mid-run loses
+   nothing.) The architecture document describes the
    poller publishing a message to itself to fetch the next page immediately when `nextLink` is
    present, but no such queue exists in `../message-contracts.md`'s four documented queues, and
    adding a fifth control queue for it was judged not worth the extra infrastructure for now.

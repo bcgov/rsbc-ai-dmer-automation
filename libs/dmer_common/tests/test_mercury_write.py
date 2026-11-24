@@ -92,7 +92,7 @@ def test_update_outcome_posts_the_ai_status_with_the_idempotency_key():
     assert headers["Idempotency-Key"] == "dec-1:UPDATE_OUTCOME"
     assert headers["Authorization"] == "Bearer test-token"
     assert body == {
-        "dmerId": GUID,
+        "documentRecordId": GUID,
         "aiProcessedStatus": PROCESSED,
         "aiDpsPriority": URGENT,
         "aiQueue": ADJUDICATORS,
@@ -131,7 +131,7 @@ def test_a_fallback_is_a_processing_error_sent_to_intake_as_in():
         },
     )
     assert body == {
-        "dmerId": GUID,
+        "documentRecordId": GUID,
         "aiProcessedStatus": ERROR,
         "aiDpsPriority": REGULAR,
         "aiQueue": INTAKE,
@@ -151,7 +151,7 @@ def test_a_duplicate_sends_only_the_duplicate_flag_and_note():
         },
     )
     assert body == {
-        "dmerId": GUID,
+        "documentRecordId": GUID,
         "aiProcessedStatus": PROCESSED,
         "aiIsDuplicate": True,
         "notes": "Duplicate of DMER other-guid.",
@@ -171,7 +171,7 @@ def test_an_outcome_whose_driver_link_failed_goes_to_intake_as_an_error(duplicat
         },
     )
     assert body == {
-        "dmerId": GUID,
+        "documentRecordId": GUID,
         "aiProcessedStatus": ERROR,
         "aiDpsPriority": REGULAR,
         "aiQueue": INTAKE,
@@ -190,7 +190,7 @@ def test_a_mark_duplicate_row_queued_before_is_sent_as_a_duplicate():
         {"document_guid": GUID, "status": "Rejected", "comment": "c"},
     )
     assert body == {
-        "dmerId": GUID,
+        "documentRecordId": GUID,
         "aiProcessedStatus": PROCESSED,
         "aiIsDuplicate": True,
         "notes": "Duplicate",
@@ -428,7 +428,7 @@ def test_an_outcome_whose_case_failed_goes_as_usual_with_the_error_noted():
         },
     )
     assert body == {
-        "dmerId": GUID,
+        "documentRecordId": GUID,
         "aiProcessedStatus": PROCESSED,
         "aiDpsPriority": REGULAR,
         "aiQueue": CASE_MANAGERS,

@@ -140,19 +140,13 @@ class Handler(BaseHTTPRequestHandler):
             page_size = int(query.get("pageSize", ["50"])[0])
             waiting = [r for r in _RECORDS if r["documentRecordId"] not in _marked]
             items = waiting[:page_size]
-            more = len(waiting) > page_size
             print(
                 f"[mock-mercury] GET /Dmers (auth={'yes' if auth else 'NO'}, "
                 f"pageSize={page_size}) -> {len(items)} record(s), "
-                f"{len(_marked)} marked so far, nextLink={'yes' if more else 'no'}"
+                f"{len(_marked)} marked so far"
             )
-            self._send_json(
-                {
-                    "items": items,
-                    "page_size": page_size,
-                    "nextLink": f"/Dmers?pageSize={page_size}" if more else None,
-                }
-            )
+            # Like Mercury: no nextLink; count echoes the page size.
+            self._send_json({"items": items, "count": page_size})
             return
 
         parts = parsed.path.strip("/").split("/")

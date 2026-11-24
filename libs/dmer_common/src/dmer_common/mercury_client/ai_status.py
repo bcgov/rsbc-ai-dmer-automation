@@ -2,7 +2,7 @@
 
 ``POST {MERCURY_WRITE_API_BASE_URL}/dmers/SetDmerAIProccessedStatus`` with::
 
-    {"dmerId": "<document_guid>", "aiProcessedStatus": int,
+    {"documentRecordId": "<document_guid>", "aiProcessedStatus": int,
      "aiDpsPriority": int, "aiQueue": int, "aiDmerStatus": int,
      "aiIsDuplicate": bool, "notes": "<comment>"}
 
@@ -148,7 +148,7 @@ def ai_status_request(
         if case_note:
             note = f"{note} {case_note}"
         return {
-            "dmerId": document_guid,
+            "documentRecordId": document_guid,
             "aiProcessedStatus": int(AiProcessedStatus.PROCESSED),
             "aiIsDuplicate": True,
             "notes": note,
@@ -163,7 +163,7 @@ def ai_status_request(
     if case_note and not driver_link_error:
         notes = f"{notes} {case_note}".strip() if notes else case_note
     return {
-        "dmerId": document_guid,
+        "documentRecordId": document_guid,
         "aiProcessedStatus": int(status),
         "aiDpsPriority": int(routing.priority),
         "aiQueue": int(routing.queue),

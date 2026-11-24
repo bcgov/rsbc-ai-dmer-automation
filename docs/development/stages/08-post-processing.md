@@ -111,7 +111,7 @@ line an incident review greps for when asked "did we even try to post this."
 
 ```json
 {
-  "dmerId": "<document_guid>",
+  "documentRecordId": "<document_guid>",
   "aiProcessedStatus": 100000002,
   "aiDpsPriority": 100000000,
   "aiQueue": 100000000,

@@ -351,6 +351,60 @@ def test_poll_marks_every_record_ai_processed_after_queuing_the_dmers(monkeypatc
     assert ("checkpoint", "BACKLOG", None) in events  # claim-based: no cursor
 
 
+class _PagedMercury(_FakeMercury):
+    """GET dmers returns *pages* in turn (claim-based: the next call returns
+    the next records)."""
+
+    def __init__(self, pages, events):
+        super().__init__([], events)
+        self.pages = list(pages)
+
+    def get_page(self, *, page_size):
+        self.events.append(("get_page", page_size))
+        records, full = self.pages.pop(0) if self.pages else ([], False)
+        return MercuryPage(records=records, has_more=full)
+
+
+def _paged_poll(monkeypatch, pages, max_pages):
+    events: list = []
+    monkeypatch.setattr(fa, "DmerDocumentRepository", lambda engine: _FakeDocRepo())
+    monkeypatch.setattr(fa, "DriverRepository", lambda engine: _FakeDriverRepo())
+    monkeypatch.setattr(
+        fa, "PollCheckpointRepository", lambda engine: _FakeCheckpointRepo(events)
+    )
+    monkeypatch.setattr(fa, "_publish_message", lambda *a: None)
+    monkeypatch.setenv("MERCURY_PAGE_SIZE", "1")
+    if max_pages is None:
+        monkeypatch.delenv("MERCURY_MAX_PAGES_PER_POLL", raising=False)
+    else:
+        monkeypatch.setenv("MERCURY_MAX_PAGES_PER_POLL", str(max_pages))
+    asyncio.run(fa._run_poll(object(), _PagedMercury(pages, events)))
+    return [e[1] for e in events if e[0] == "set_ai_processed"]
+
+
+def _dmer(guid):
+    return {"document_guid": guid, "document_type": "DMER", "document_url": "u"}
+
+
+def test_full_pages_are_read_one_after_another_up_to_the_cap(monkeypatch):
+    pages = [([_dmer("A")], True), ([_dmer("B")], True), ([_dmer("C")], True)]
+    assert _paged_poll(monkeypatch, pages, max_pages=2) == [["A"], ["B"]]
+
+
+def test_a_short_page_ends_the_run(monkeypatch):
+    pages = [([_dmer("A")], True), ([_dmer("B")], False), ([_dmer("C")], True)]
+    assert _paged_poll(monkeypatch, pages, max_pages=5) == [["A"], ["B"]]
+
+
+def test_one_page_per_run_by_default(monkeypatch):
+    pages = [([_dmer("A")], True), ([_dmer("B")], True)]
+    assert _paged_poll(monkeypatch, pages, max_pages=None) == [["A"]]
+
+
+def test_an_empty_page_claims_nothing_and_ends_the_run(monkeypatch):
+    assert _paged_poll(monkeypatch, [([], True)], max_pages=5) == []
+
+
 def test_a_failed_mark_fails_the_poll_so_the_next_tick_gets_the_page_again(
     monkeypatch,
 ):
@@ -362,7 +416,8 @@ def test_a_failed_mark_fails_the_poll_so_the_next_tick_gets_the_page_again(
 def test_an_empty_page_stores_nothing_and_marks_nothing(monkeypatch):
     events, doc_repo, _ = _poll(monkeypatch, [])
     assert doc_repo.calls == []
-    assert ("set_ai_processed", []) in events  # the client skips an empty call
+    # nothing to claim: no Mercury call at all
+    assert not [e for e in events if e[0] == "set_ai_processed"]
 
 
 class _FakeBlobServiceClient:

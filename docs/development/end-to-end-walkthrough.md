@@ -151,7 +151,7 @@ number or clinical text:
 
 | Name | Where it comes from | Use it for |
 |---|---|---|
-| `document_guid` | Mercury's `documentRecordId` | Every Mercury call about that DMER (`dmerId`, URL paths). **Not** a business key inside the pipeline |
+| `document_guid` | Mercury's `documentRecordId` | Every Mercury call about that DMER (`documentRecordId` / `dmerId` fields, URL paths). **Not** a business key inside the pipeline |
 | `document_id` | `dmer_document.id`, generated at Ingest | Every DB join, log line, blob path, message. The tracing key |
 | `driver_key` | `driver.driver_key` | The batch key; the `driver-decision` SessionId. Stands in for the licence on queues and logs |
 | `licence_number` | Mercury's driver, or read off the page and normalized to 8 digits | Mercury driver lookup, `add_driver`, `add_case`. **PII — database only, never logged or queued** |
@@ -238,7 +238,7 @@ Mercury is outside our tenant, reached over ExpressRoute. All calls go through
 
 | # | Call | Used by | Request | Response (what we use) |
 |---|---|---|---|---|
-| R1 | `GET {MERCURY_API_BASE_URL}?pageSize=50` | Page Poller, Daily reconciliation | — | `{items:[…], count, nextLink}`. **Claim-based**: returns the next records not yet claimed; `nextLink` is never followed |
+| R1 | `GET {MERCURY_API_BASE_URL}?pageSize=50` | Page Poller, Daily reconciliation | — | `{items:[…], count}`. **Claim-based**: returns the next records not yet claimed. No `nextLink`: a **full** page means more may be waiting (`has_more`); `count` is logged only (meaning unconfirmed) |
 | R2 | `POST {MERCURY_API_BASE_URL}/BatchSetDmerAIProccessedStatus` | Page Poller | `{"dmerIds":[<documentRecordId>…]}` | Claims the records: `aiProcessedStatus = InProgress`, moved to the **AI Processed Queue**, `GET Dmers` stops returning them |
 | R3 | `GET {MERCURY_API_BASE_URL}/{documentRecordId}/files` | Ingest Function | — | The PDF bytes (checked to start with `%PDF-`) |
 | R4 | `POST {MERCURY_DRIVER_LICENCE_API_BASE_URL}/lookup` | Driver Lookup, Decision Gateway, case check | `{"driverLicenceNumber":"<8 digits>"}` | One driver (snake_case): `driver_id`, names, `licence_number`, `documents[]` (`file_name`, `document_type`, `document_status`, `uploaded_date`, `document_id`), driver-level `case`. 404 / empty = no driver |
@@ -260,7 +260,7 @@ Base: `MERCURY_WRITE_API_BASE_URL` (the Mercury host). Every write sends the out
 **W1 — Outcome: `POST dmers/SetDmerAIProccessedStatus`** (`ai_status.py`)
 
 ```json
-{ "dmerId": "<documentRecordId>", "aiProcessedStatus": 100000002,
+{ "documentRecordId": "<documentRecordId>", "aiProcessedStatus": 100000002,
   "aiDpsPriority": 100000000, "aiQueue": 100000000, "aiDmerStatus": 100000003,
   "aiIsDuplicate": true, "notes": "<comment>" }
 ```
@@ -856,6 +856,7 @@ The code is right; these stage docs are behind it:
 | `MERCURY_DRIVER_LICENCE_API_BASE_URL` | workflow-, driver-orchestrator | `https://<host>/drivers` | R4 |
 | `MERCURY_WRITE_API_BASE_URL` | reliability | `https://<host>` | W1–W3 and the case check |
 | `MERCURY_PAGE_SIZE` | intake, reliability | 50 | Page size |
+| `MERCURY_MAX_PAGES_PER_POLL` | intake | 1 | Pages one poll may read while each comes back full (raise to drain the backlog faster) |
 | `MERCURY_RECEIVED_DATE_TIMEZONE` | intake | America/Vancouver | Zone for `receivedDate` without offset |
 | `MERCURY_COUNTED_DOCUMENT_TYPES` | orchestrators | DMER | Types counted as a driver's DMERs |
 | `MERCURY_WAITING_DOCUMENT_STATUSES` | orchestrators | Uploaded | Statuses that mean "still waiting" |
