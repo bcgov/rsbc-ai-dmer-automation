@@ -60,10 +60,10 @@
       "value": "dmer"
     },
     "mercuryAuthTokenUrl": {
-      "value": "https://func-mock-mercury-api-dev.azurewebsites.net/api/mercury/Authentication/token"
+      "value": "https://rsbc-dfp-icbc-adapter-dev.apps.silver.devops.gov.bc.ca/Authentication/token"
     },
     "mercuryDriverLicenceApiBaseUrl": {
-      "value": "https://func-mock-mercury-api-dev.azurewebsites.net/api/mercury/drivers"
+      "value": "https://rsbc-dfp-icbc-adapter-dev.apps.silver.devops.gov.bc.ca/drivers"
     },
     "costCenter": {
       "value": "RSBC"

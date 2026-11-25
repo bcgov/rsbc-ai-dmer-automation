@@ -93,10 +93,10 @@
       "value": "0 0 13 * * *"
     },
     "mercuryAuthTokenUrl": {
-      "value": "https://func-mock-mercury-api-dev.azurewebsites.net/api/mercury/Authentication/token"
+      "value": "https://rsbc-dfp-icbc-adapter-dev.apps.silver.devops.gov.bc.ca/Authentication/token"
     },
     "mercuryApiBaseUrl": {
-      "value": "https://func-mock-mercury-api-dev.azurewebsites.net/api/mercury/dmers"
+      "value": "https://rsbc-dfp-icbc-adapter-dev.apps.silver.devops.gov.bc.ca/Dmers"
     },
     "mercuryQueue": {
       "value": "BOTH"
@@ -108,7 +108,7 @@
       "value": "rg-rsbc-dmer-dev"
     },
     "mercuryWriteApiBaseUrl": {
-      "value": "https://func-mock-mercury-api-dev.azurewebsites.net/api/mercury"
+      "value": "https://rsbc-dfp-icbc-adapter-dev.apps.silver.devops.gov.bc.ca"
     },
     "costCenter": {
       "value": "RSBC"

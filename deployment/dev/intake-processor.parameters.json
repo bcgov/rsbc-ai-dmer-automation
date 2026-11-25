@@ -28,10 +28,10 @@
     "postgresPort": { "value": "5432" },
     "postgresDatabase": { "value": "dmer" },
     "mercuryAuthTokenUrl": {
-      "value": "https://func-mock-mercury-api-dev.azurewebsites.net/api/mercury/Authentication/token"
+      "value": "https://rsbc-dfp-icbc-adapter-dev.apps.silver.devops.gov.bc.ca/Authentication/token"
     },
     "mercuryApiBaseUrl": {
-      "value": "https://func-mock-mercury-api-dev.azurewebsites.net/api/mercury/dmers"
+      "value": "https://rsbc-dfp-icbc-adapter-dev.apps.silver.devops.gov.bc.ca/Dmers"
     },
     "mercuryPageSize": { "value": "50" },
     "serviceBusNamespaceFqdn": {
