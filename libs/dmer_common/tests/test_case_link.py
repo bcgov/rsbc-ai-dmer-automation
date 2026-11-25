@@ -29,3 +29,12 @@ def test_open_case_id_ignores_placeholder_and_closed_cases():
     assert open_case_id({"case": {"case_id": "C1", "case_status": "Closed"}}) is None
     assert open_case_id({"case": {"case_id": "C2", "case_status": "Active"}}) == "C2"
     assert open_case_id({"case": {"case_id": "C3"}}) == "C3"  # no status: open
+
+
+def test_the_lookups_active_case_is_read():
+    # Mercury's drivers/lookup names the driver's open case "activeCase".
+    active = {"caseId": "C4", "caseTitle": "01234567- SMITH- DMER- 2"}
+    assert open_case_id({"driver_id": "D1", "activeCase": active}) == "C4"
+    closed = {**active, "caseStatus": "Closed"}
+    assert open_case_id({"driver_id": "D1", "activeCase": closed}) is None
+    assert open_case_id({"driver_id": "D1", "activeCase": None}) is None

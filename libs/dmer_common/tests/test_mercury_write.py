@@ -56,7 +56,8 @@ def _client(http, breaker=None):
     )
 
 
-AI_STATUS_URL = "https://mercury.test/api/dmers/SetDmerAIProccessedStatus"
+# Mercury DEV's Swagger: the DMER in the path, not in the body.
+AI_STATUS_URL = f"https://mercury.test/api/Dmers/{GUID}/setDmerAIProccessedStatus"
 PAYLOAD = {
     "document_guid": GUID,
     "outcome_code": "IN",
@@ -92,7 +93,6 @@ def test_update_outcome_posts_the_ai_status_with_the_idempotency_key():
     assert headers["Idempotency-Key"] == "dec-1:UPDATE_OUTCOME"
     assert headers["Authorization"] == "Bearer test-token"
     assert body == {
-        "documentRecordId": GUID,
         "aiProcessedStatus": PROCESSED,
         "aiDpsPriority": URGENT,
         "aiQueue": ADJUDICATORS,
@@ -131,7 +131,6 @@ def test_a_fallback_is_a_processing_error_sent_to_intake_as_in():
         },
     )
     assert body == {
-        "documentRecordId": GUID,
         "aiProcessedStatus": ERROR,
         "aiDpsPriority": REGULAR,
         "aiQueue": INTAKE,
@@ -151,7 +150,6 @@ def test_a_duplicate_sends_only_the_duplicate_flag_and_note():
         },
     )
     assert body == {
-        "documentRecordId": GUID,
         "aiProcessedStatus": PROCESSED,
         "aiIsDuplicate": True,
         "notes": "Duplicate of DMER other-guid.",
@@ -171,7 +169,6 @@ def test_an_outcome_whose_driver_link_failed_goes_to_intake_as_an_error(duplicat
         },
     )
     assert body == {
-        "documentRecordId": GUID,
         "aiProcessedStatus": ERROR,
         "aiDpsPriority": REGULAR,
         "aiQueue": INTAKE,
@@ -190,7 +187,6 @@ def test_a_mark_duplicate_row_queued_before_is_sent_as_a_duplicate():
         {"document_guid": GUID, "status": "Rejected", "comment": "c"},
     )
     assert body == {
-        "documentRecordId": GUID,
         "aiProcessedStatus": PROCESSED,
         "aiIsDuplicate": True,
         "notes": "Duplicate",
@@ -299,8 +295,10 @@ def test_create_case_is_skipped_when_the_dmer_already_has_a_case():
 @pytest.mark.parametrize(
     "lookup",
     [
+        # Mercury's lookup: the driver's open case is "activeCase".
+        {"driver_id": "D7", "activeCase": {"caseId": "C5", "caseStatus": "Active"}},
+        {"driver_id": "D7", "activeCase": {"caseId": "C5"}},  # no status: open
         {"driver_id": "D7", "case": {"case_id": "C5", "case_status": "Active"}},
-        {"driver_id": "D7", "case": {"case_id": "C5"}},  # no status: open
         [{"driver_id": "D7", "case": {"case_id": "C5"}}],
     ],
 )
@@ -320,20 +318,20 @@ def test_create_case_is_skipped_when_the_driver_has_an_open_case(lookup):
 
 @pytest.mark.parametrize(
     "case",
-    [None, {"case_id": "C5", "case_status": "Closed"}],
+    [None, {"caseId": "C5", "caseStatus": "Closed"}],
 )
 def test_create_case_adds_a_case_when_the_driver_has_no_open_one(case):
-    http = FakeHttp((200, {"driver_id": "D7", "case": case}), (200, CREATED))
+    http = FakeHttp((200, {"driver_id": "D7", "activeCase": case}), (200, CREATED))
     result = _client(http).send_outbox("CREATE_CASE", CASE_PAYLOAD, "dec-1:CREATE_CASE")
     assert result == {"action": "created", "response": CREATED}
     _, (method, url, headers, body) = http.calls
     assert (method, url) == ("POST", ADD_CASE_URL)
     assert headers["Idempotency-Key"] == "dec-1:CREATE_CASE"
     assert body == {
-        "case_type": "DMER",
+        "caseType": "DMER",
         "owner": "TBD",
-        "driver": {"driver_id": "01234567"},
-        "document_type": "DMER",
+        "driver": {"driverId": "01234567"},
+        "documentType": "DMER",
         "comments": (
             "Case created by the AI: the DMER needed a case and the driver had "
             "no active one."
@@ -388,13 +386,13 @@ def test_after_add_driver_no_case_or_a_placeholder_case_means_a_new_case(open_ca
     assert result == {"action": "created", "response": CREATED}
     ((method, url, _, body),) = http.calls  # straight to add_case
     assert (method, url) == ("POST", ADD_CASE_URL)
-    assert body["driver"] == {"driver_id": "01234567"}
+    assert body["driver"] == {"driverId": "01234567"}
 
 
 def test_a_placeholder_case_in_the_lookup_is_not_an_open_case():
     lookup = {
         "driver_id": "D7",
-        "case": {"case_id": "C0", "case_title": "00000000- DFC- DMER- 1"},
+        "activeCase": {"caseId": "C0", "caseTitle": "00000000- DFC- DMER- 1"},
     }
     http = FakeHttp((200, lookup), (200, CREATED))
     result = _client(http).send_outbox("CREATE_CASE", CASE_PAYLOAD, "k")
@@ -428,7 +426,6 @@ def test_an_outcome_whose_case_failed_goes_as_usual_with_the_error_noted():
         },
     )
     assert body == {
-        "documentRecordId": GUID,
         "aiProcessedStatus": PROCESSED,
         "aiDpsPriority": REGULAR,
         "aiQueue": CASE_MANAGERS,

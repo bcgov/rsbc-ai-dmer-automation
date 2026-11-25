@@ -10,9 +10,9 @@
 #   GET  /api/mercury/Authentication/token?secret=
 #       A bearer token ({"token", "expiresIn"}). 401 for a wrong secret when
 #       MOCK_MERCURY_SECRET is set; the other endpoints don't check tokens.
-#   GET  /api/mercury/dmers?pageSize=
+#   GET  /api/mercury/dmers?count=
 #       Mercury's GET dmers, in its shape (camelCase "items"): the first
-#       pageSize documents not yet marked AI Processed -- DMERs and, like
+#       count documents not yet marked AI Processed -- DMERs and, like
 #       Mercury, other document types (no documentUrl). Claim-based: the
 #       same call returns the next ones once these are marked.
 #       documentUrl is a relative path, as in Mercury -- not a link.
@@ -24,10 +24,11 @@
 #       blob there to make that document come back.
 #   POST /api/mercury/drivers/lookup  {"driverLicenceNumber": "..."}
 #       The driver-licence lookup Driver Lookup reads, in Mercury's shape
-#       (snake_case): the driver, their "documents" (file_name, document_type,
-#       document_status, uploaded_date, document_id, and dps_date once
-#       triaged), and their case. 404 when no driver has that licence. 7- and
-#       8-digit forms of a licence match.
+#       (Mercury DEV's Swagger, 2026-11-24): the driver in snake_case, their
+#       "documents" in camelCase (fileName, documentType, submittalStatus,
+#       uploadedDate, documentRecordId), and their open case as "activeCase"
+#       (camelCase). 404 when no driver has that licence. 7- and 8-digit forms
+#       of a licence match.
 #
 # Dynamic: every request lists the PDFs in this app's own storage account
 # (container MOCK_DMER_CONTAINER, default "mock-dmers"). To add or remove test
@@ -45,7 +46,7 @@
 #   documentUrl, as Mercury's non-DMER items do.
 # - "rejected" in the file name: document_status "Rejected", with a dps_date.
 # - "nocase" in the driver's folder (or top-level blob) name: no case -- no
-#   dmerDocumentCaseRecord in GET dmers, "case": null in the driver lookup --
+#   dmerDocumentCaseRecord in GET dmers, "activeCase": null in the lookup --
 #   so the pipeline's CREATE_CASE calls add_case for it.
 #
 # Stable identity across polls: document_guid is a uuid5 of the blob name and
@@ -66,7 +67,7 @@ from __future__ import annotations
 import json
 import os
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
 import azure.functions as func
@@ -146,17 +147,13 @@ def _received(blob) -> str:
 def _document(blob) -> dict:
     """One of the driver's documents, as POST drivers/lookup returns it."""
     rejected = "rejected" in _file_name(blob.name).lower()
-    document = {
-        "file_name": _stem(blob.name),
-        "document_type": _document_type(blob.name),
-        "document_status": "Rejected" if rejected else "Uploaded",
-        "uploaded_date": _received(blob),
-        "document_id": _guid(blob.name),
+    return {
+        "fileName": _stem(blob.name),
+        "documentType": _document_type(blob.name),
+        "submittalStatus": "Rejected" if rejected else "Uploaded",
+        "uploadedDate": _received(blob),
+        "documentRecordId": _guid(blob.name),
     }
-    if rejected:
-        triaged = blob.last_modified.astimezone(UTC) + timedelta(days=1)
-        document["dps_date"] = triaged.strftime(_ISO)
-    return document
 
 
 def _is_single_blob(group: str) -> bool:
@@ -177,6 +174,19 @@ def _case(group: str) -> dict:
         "case_priority": "Regular",
         "case_owner": "Team - Intake",
         "case_status": "Open Pending Submission",
+    }
+
+
+def _camel_case_record(case: dict) -> dict:
+    """A case in Mercury's camelCase (GET dmers' dmerDocumentCaseRecord, the
+    lookup's activeCase)."""
+    return {
+        "caseId": case["case_id"],
+        "caseTitle": case["case_title"],
+        "caseType": case["case_type"],
+        "casePriority": case["case_priority"],
+        "caseOwner": case["case_owner"],
+        "caseStatus": case["case_status"],
     }
 
 
@@ -242,20 +252,7 @@ def _dmers_item(blob, document_url: str) -> dict:
         "documentTypeBusinessArea": "Driver Fitness" if is_dmer else "",
         "dmerStatus": "Uploaded",
         "driver": driver,
-        **(
-            {
-                "dmerDocumentCaseRecord": {
-                    "caseId": case["case_id"],
-                    "caseTitle": case["case_title"],
-                    "caseType": case["case_type"],
-                    "casePriority": case["case_priority"],
-                    "caseOwner": case["case_owner"],
-                    "caseStatus": case["case_status"],
-                }
-            }
-            if case
-            else {}
-        ),
+        **({"dmerDocumentCaseRecord": _camel_case_record(case)} if case else {}),
     }
 
 
@@ -304,8 +301,9 @@ def mercury_token(req: func.HttpRequest) -> func.HttpResponse:
 
 @app.route(route="mercury/dmers", methods=["GET"], auth_level=func.AuthLevel.ANONYMOUS)
 def mercury_dmers(req: func.HttpRequest) -> func.HttpResponse:
+    # Mercury's page size is "count" (Mercury ignores pageSize).
     page_size = max(
-        1, min(_int_param(req, "pageSize", _DEFAULT_PAGE_SIZE), _MAX_PAGE_SIZE)
+        1, min(_int_param(req, "count", _DEFAULT_PAGE_SIZE), _MAX_PAGE_SIZE)
     )
     service = _service()
     marked = _ai_processed()
@@ -314,8 +312,7 @@ def mercury_dmers(req: func.HttpRequest) -> func.HttpResponse:
     # Mercury's documentUrl is a path inside Mercury, not a link; the file
     # comes from GET dmers/{documentRecordId}/files (mercury_dmer_file).
     items = [_dmers_item(b, f"dfp_driver/mock/{_file_name(b.name)}") for b in page]
-    # Like Mercury: no nextLink; "count" echoes the page size (as in Mercury's
-    # sample -- its meaning is unconfirmed).
+    # Like Mercury: no nextLink; "count" echoes the page size asked for.
     return func.HttpResponse(
         json.dumps({"items": items, "count": page_size}),
         mimetype="application/json",
@@ -391,7 +388,9 @@ def mercury_driver(req: func.HttpRequest) -> func.HttpResponse:
             body = {
                 **_driver_identity(group),
                 "documents": documents,
-                "case": _case(group) if _has_case(group) else None,
+                "activeCase": (
+                    _camel_case_record(_case(group)) if _has_case(group) else None
+                ),
             }
             return func.HttpResponse(
                 json.dumps(body), mimetype="application/json", status_code=200
@@ -407,9 +406,10 @@ def mercury_driver(req: func.HttpRequest) -> func.HttpResponse:
 # Write-back (the Outbox Publisher); these mirror what
 # dmer_common.mercury_client.MercuryClient.send_outbox sends:
 #
-#   POST /api/mercury/dmers/SetDmerAIProccessedStatus         UPDATE_OUTCOME
-#       Mercury's API: {"documentRecordId", "aiProcessedStatus", ...}; 400
-#       without documentRecordId or an integer aiProcessedStatus.
+#   POST /api/mercury/dmers/{guid}/setDmerAIProccessedStatus  UPDATE_OUTCOME
+#       Mercury's API (DMER in the path): {"aiProcessedStatus", "aiDpsPriority",
+#       "aiQueue", "aiDmerStatus", "aiIsDuplicate", "notes"}; 400 without an
+#       integer aiProcessedStatus.
 #   POST /api/mercury/dmers/{guid}/add_driver                  MAP_DRIVER
 #       Mercury's API: {"driverLicenceNumber", "firstName", "surname",
 #       "dmerId", ...}; answers {"resultMessage", "driverOpenCase"} (the mock
@@ -418,11 +418,13 @@ def mercury_driver(req: func.HttpRequest) -> func.HttpResponse:
 #       missing.
 #
 #   POST /api/mercury/dmers/{guid}/add_case                    CREATE_CASE
-#       Mercury's API: {"case_type", "owner", "driver": {"driver_id":
-#       <licence>}, "document_type", "comments"}; answers {"caseId",
+#       Mercury's API: {"caseType", "owner", "driver": {"driverId":
+#       <licence>}, "documentType", "comments"} (caseType, documentType and
+#       driver required: 400 otherwise); answers 201 {"caseId",
 #       "documentRecordId", "status": "Created"}. 404 when no mock driver has
 #       that licence; 409 when the DMER belongs to a different driver, or
-#       already has a case (its driver's folder has no "nocase").
+#       already has a case (its driver's folder has no "nocase"). Errors as
+#       Mercury's ProblemDetails ({"title", "status", "detail"}).
 #
 # Every write is recorded as a JSON blob in MOCK_WRITE_CONTAINER (default
 # "mock-writes") on this app's storage account, named after the source PDF so
@@ -457,6 +459,15 @@ def _write_container():
 def _json(body: dict, status: int = 200) -> func.HttpResponse:
     return func.HttpResponse(
         json.dumps(body), mimetype="application/json", status_code=status
+    )
+
+
+def _problem(status: int, detail: str) -> func.HttpResponse:
+    """An error as Mercury's ProblemDetails."""
+    titles = {400: "Bad Request", 404: "Not Found", 409: "Conflict"}
+    return _json(
+        {"title": titles.get(status, "Error"), "status": status, "detail": detail},
+        status,
     )
 
 
@@ -505,22 +516,20 @@ def _record_write(
 
 
 @app.route(
-    route="mercury/dmers/SetDmerAIProccessedStatus",
+    route="mercury/dmers/{guid}/setDmerAIProccessedStatus",
     methods=["POST"],
     auth_level=func.AuthLevel.ANONYMOUS,
 )
 def mercury_set_ai_status(req: func.HttpRequest) -> func.HttpResponse:
-    """Mercury's POST dmers/SetDmerAIProccessedStatus: the AI's outcome on one
-    DMER, recorded under <source>/ai-status/."""
+    """Mercury's POST Dmers/{dmerId}/setDmerAIProccessedStatus: the AI's
+    outcome on one DMER, recorded under <source>/ai-status/."""
     try:
         body = req.get_json()
     except ValueError:
-        return _json({"error": "body must be JSON"}, 400)
-    if not isinstance(body, dict) or not body.get("documentRecordId"):
-        return _json({"error": "documentRecordId is required"}, 400)
-    if not isinstance(body.get("aiProcessedStatus"), int):
-        return _json({"error": "aiProcessedStatus (integer) is required"}, 400)
-    return _record_write(req, str(body["documentRecordId"]), "ai-status")
+        return _problem(400, "body must be JSON")
+    if not isinstance(body, dict) or not isinstance(body.get("aiProcessedStatus"), int):
+        return _problem(400, "aiProcessedStatus (integer) is required")
+    return _record_write(req, req.route_params.get("guid", ""), "ai-status")
 
 
 _ADD_DRIVER_REQUIRED = ("driverLicenceNumber", "firstName", "surname", "dmerId")
@@ -585,18 +594,23 @@ def mercury_add_case(req: func.HttpRequest) -> func.HttpResponse:
     try:
         body = req.get_json()
     except ValueError:
-        return _json({"error": "body must be JSON"}, 400)
-    driver = (body or {}).get("driver") if isinstance(body, dict) else None
-    licence = str((driver or {}).get("driver_id") or "")
+        return _problem(400, "body must be JSON")
+    if not isinstance(body, dict):
+        return _problem(400, "body must be a JSON object")
+    missing = [k for k in ("caseType", "documentType", "driver") if not body.get(k)]
+    if missing:
+        return _problem(400, "missing required field(s): " + ", ".join(missing))
+    driver = body.get("driver")
+    licence = str((driver if isinstance(driver, dict) else {}).get("driverId") or "")
     groups = _documents_by_group(_pdfs(_service()))
     group = next((g for g in groups if _same_licence(_licence(g), licence)), None)
     if not licence or group is None:
-        return _json({"error": "driver not found"}, 404)
+        return _problem(404, "driver not found")
     source = _source_blob(guid)
     if source is None or _driver_group(source) != group:
-        return _json({"error": "the DMER relates to a different driver"}, 409)
+        return _problem(409, "the DMER relates to a different driver")
     if _has_case(group):
-        return _json({"error": "the DMER already has a case"}, 409)
+        return _problem(409, "the DMER already has a case")
     return _record_write(
         req,
         guid,

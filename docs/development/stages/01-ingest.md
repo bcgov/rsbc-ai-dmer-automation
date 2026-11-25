@@ -26,11 +26,12 @@ isolation from the others.
 
 ## Page Poller — processing steps
 
-1. Call Mercury's `GET {MERCURY_API_BASE_URL}?pageSize={MERCURY_PAGE_SIZE}` (`GET dmers`). It is
-   **claim-based**: it returns the next records not yet marked AI Processed, so there is no
-   cursor. Mercury returns **no `nextLink`** (confirmed 2026-11-24); a page that comes back **full**
-   (as many items as asked for) means more may be waiting. `count` is logged only — its meaning
-   (page size? records waiting?) is unconfirmed. By default **one page per run**;
+1. Call Mercury's `GET {MERCURY_API_BASE_URL}?count={MERCURY_PAGE_SIZE}` (`GET dmers`; the page
+   size is Mercury's `count` query parameter — `pageSize` is ignored, Mercury DEV's Swagger,
+   2026-11-24). It is **claim-based**: it returns the next records not yet marked AI Processed,
+   so there is no cursor. Mercury returns **no `nextLink`** (confirmed 2026-11-24); a page that
+   comes back **full** (as many items as asked for) means more may be waiting. The response's
+   `count` echoes the page size asked for; it is only logged. By default **one page per run**;
    `MERCURY_MAX_PAGES_PER_POLL` (default 1) lets one run read further full pages, each stored,
    queued and claimed before the next is read (see step 8).
    Do not loop over pages inside the invocation — a long-running poller is harder to retry, harder

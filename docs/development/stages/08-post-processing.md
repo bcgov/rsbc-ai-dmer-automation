@@ -104,14 +104,15 @@ itself is protected by the same driver-serialization guarantee as the rest of
 Log one line per outbox row created (`document_id`, `operation`, `idempotency_key`) — this is the
 line an incident review greps for when asked "did we even try to post this."
 
-## Mercury write-back — `SetDmerAIProccessedStatus` (confirmed 2026-11-20)
+## Mercury write-back — `setDmerAIProccessedStatus` (confirmed 2026-11-20; path per Mercury DEV's Swagger, 2026-11-24)
 
-`UPDATE_OUTCOME` is sent as `POST {MERCURY_WRITE_API_BASE_URL}/dmers/SetDmerAIProccessedStatus`
-(`dmer_common.mercury_client.ai_status`):
+`UPDATE_OUTCOME` is sent as
+`POST {MERCURY_WRITE_API_BASE_URL}/Dmers/{document_guid}/setDmerAIProccessedStatus` — the DMER
+in the path, not the body (`dmer_common.mercury_client.ai_status`); `aiProcessedStatus` is the
+only required field:
 
 ```json
 {
-  "documentRecordId": "<document_guid>",
   "aiProcessedStatus": 100000002,
   "aiDpsPriority": 100000000,
   "aiQueue": 100000000,
@@ -194,18 +195,20 @@ DMER (‹error›). ‹the AI's comment›". The DMER's `CREATE_CASE` is blocked
 
 ```json
 {
-  "case_type": "DMER",
+  "caseType": "DMER",
   "owner": "TBD",
-  "driver": { "driver_id": "<licence number>" },
-  "document_type": "DMER",
-  "comments": "Case created by the AI: the DMER had no case and the driver had no open case."
+  "driver": { "driverId": "<licence number>" },
+  "documentType": "DMER",
+  "comments": "Case created by the AI: the DMER needed a case and the driver had no active one."
 }
 ```
 
-Mercury answers `{"caseId", "documentRecordId", "status": "Created"}` and attaches the comment
-to the driver and the case; 404 when the driver doesn't exist, 409 when the DMER belongs to a
-different driver or already has a case. `case_type`/`owner`/`document_type` are Mercury's sample
-values (owner "TBD" to confirm).
+camelCase, with `caseType`, `documentType` and `driver` required (Mercury DEV's Swagger,
+2026-11-24). Mercury answers 201 `{"caseId", "documentRecordId", "status": "Created"}` and
+attaches the comment to the driver and the case; 404 when the driver doesn't exist, 409 when the
+DMER belongs to a different driver or already has a case (errors as `ProblemDetails`).
+`caseType`/`owner`/`documentType` are Mercury's sample values (owner "TBD" to confirm). The
+driver's open case is read from the lookup's `activeCase`.
 
 **If `add_case` fails for good**, the outcome still goes **as usual** (its own status, priority
 and queue), with "The case could not be created for this DMER (‹error›)." added to its notes;

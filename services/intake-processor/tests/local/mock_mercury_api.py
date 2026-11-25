@@ -19,7 +19,7 @@ DMER's documentUrl is a relative path, not a link; the file comes from
 GET /Dmers/{documentRecordId}/files, which serves a tiny dummy PDF so
 `_download_source_pdf` has something real to fetch.
 
-Claim-based, like Mercury: GET /Dmers?pageSize=N returns the first N records
+Claim-based, like Mercury: GET /Dmers?count=N returns the first N records
 not yet marked; POST /Dmers/BatchSetDmerAIProccessedStatus {"dmerIds": [...]}
 marks them, and the next GET returns the ones after. Marks are kept in
 memory -- restart this script to start over (or POST /reset).
@@ -137,12 +137,12 @@ class Handler(BaseHTTPRequestHandler):
 
         if parsed.path.lower() == "/dmers":
             auth = self.headers.get("Authorization", "")
-            page_size = int(query.get("pageSize", ["50"])[0])
+            page_size = int(query.get("count", ["50"])[0])  # Mercury's page size
             waiting = [r for r in _RECORDS if r["documentRecordId"] not in _marked]
             items = waiting[:page_size]
             print(
                 f"[mock-mercury] GET /Dmers (auth={'yes' if auth else 'NO'}, "
-                f"pageSize={page_size}) -> {len(items)} record(s), "
+                f"count={page_size}) -> {len(items)} record(s), "
                 f"{len(_marked)} marked so far"
             )
             # Like Mercury: no nextLink; count echoes the page size.

@@ -238,10 +238,10 @@ Mercury is outside our tenant, reached over ExpressRoute. All calls go through
 
 | # | Call | Used by | Request | Response (what we use) |
 |---|---|---|---|---|
-| R1 | `GET {MERCURY_API_BASE_URL}?pageSize=50` | Page Poller, Daily reconciliation | — | `{items:[…], count}`. **Claim-based**: returns the next records not yet claimed. No `nextLink`: a **full** page means more may be waiting (`has_more`); `count` is logged only (meaning unconfirmed) |
+| R1 | `GET {MERCURY_API_BASE_URL}?count=50` | Page Poller, Daily reconciliation | — | `{items:[…], count}`. **Claim-based**: returns the next records not yet claimed. The page size is the `count` query parameter (`pageSize` is ignored); the response's `count` echoes it. No `nextLink`: a **full** page means more may be waiting (`has_more`) |
 | R2 | `POST {MERCURY_API_BASE_URL}/BatchSetDmerAIProccessedStatus` | Page Poller | `{"dmerIds":[<documentRecordId>…]}` | Claims the records: `aiProcessedStatus = InProgress`, moved to the **AI Processed Queue**, `GET Dmers` stops returning them |
 | R3 | `GET {MERCURY_API_BASE_URL}/{documentRecordId}/files` | Ingest Function | — | The PDF bytes (checked to start with `%PDF-`) |
-| R4 | `POST {MERCURY_DRIVER_LICENCE_API_BASE_URL}/lookup` | Driver Lookup, Decision Gateway, case check | `{"driverLicenceNumber":"<8 digits>"}` | One driver (snake_case): `driver_id`, names, `licence_number`, `documents[]` (`file_name`, `document_type`, `document_status`, `uploaded_date`, `document_id`), driver-level `case`. 404 / empty = no driver |
+| R4 | `POST {MERCURY_DRIVER_LICENCE_API_BASE_URL}/lookup` | Driver Lookup, Decision Gateway, case check | `{"driverLicenceNumber":"<8 digits>"}` | One driver: `driver_id`, `first_name`, `middle_name`, `last_name`, `licence_number` (snake_case); `documents[]` in camelCase (`fileName`, `documentType`, `submittalStatus`, `uploadedDate`, `documentRecordId`); the driver's open case as `activeCase` (`caseId`, `caseTitle`, `caseType`, `casePriority`, `caseOwner`, `caseStatus`). 404 / empty = no driver |
 
 `GET Dmers` item fields used: `documentRecordId`, `documentName`, `documentType`,
 `submittalStatus`, `documentPriority`, `receivedDate`, `queue`, `documentTypeBusinessArea`,
@@ -256,13 +256,16 @@ Reads are retried in-call (4 attempts, exponential 1–20 s) behind a circuit br
 
 Base: `MERCURY_WRITE_API_BASE_URL` (the Mercury host). Every write sends the outbox row's
 `Idempotency-Key` header. No in-call retry — the publisher retries per row with backoff.
+Request and response shapes are those of Mercury DEV's Swagger
+(`<host>/swagger/v1/swagger.json`, checked 2026-11-24).
 
-**W1 — Outcome: `POST dmers/SetDmerAIProccessedStatus`** (`ai_status.py`)
+**W1 — Outcome: `POST Dmers/{documentRecordId}/setDmerAIProccessedStatus`** (`ai_status.py`)
+
+The DMER is in the path; the body (`aiProcessedStatus` required):
 
 ```json
-{ "documentRecordId": "<documentRecordId>", "aiProcessedStatus": 100000002,
-  "aiDpsPriority": 100000000, "aiQueue": 100000000, "aiDmerStatus": 100000003,
-  "aiIsDuplicate": true, "notes": "<comment>" }
+{ "aiProcessedStatus": 100000002, "aiDpsPriority": 100000000, "aiQueue": 100000000,
+  "aiDmerStatus": 100000003, "aiIsDuplicate": true, "notes": "<comment>" }
 ```
 
 | Case | aiProcessedStatus | aiDpsPriority | aiQueue | aiDmerStatus | notes |
@@ -297,12 +300,13 @@ Response `{"resultMessage", "driverOpenCase": {"caseId", "caseTitle", "caseType"
 **W3 — Give the DMER a case: `POST dmers/{documentRecordId}/add_case`** (`case_link.py`)
 
 ```json
-{ "case_type": "DMER", "owner": "TBD", "driver": { "driver_id": "<licence number>" },
-  "document_type": "DMER",
-  "comments": "Case created by the AI: the DMER had no case and the driver had no open case." }
+{ "caseType": "DMER", "owner": "TBD", "driver": { "driverId": "<licence number>" },
+  "documentType": "DMER",
+  "comments": "Case created by the AI: the DMER needed a case and the driver had no active one." }
 ```
-Response `{"caseId", "documentRecordId", "status": "Created"}`; 404 driver not found; 409
-different driver or DMER already has a case.
+camelCase; `caseType`, `documentType` and `driver` required. Response 201 `{"caseId",
+"documentRecordId", "status": "Created"}`; 404 driver not found; 409 different driver or DMER
+already has a case (errors as `ProblemDetails`: `title`, `status`, `detail`).
 
 **Errors on any write.** Retryable: network errors, timeouts, 408, 429, 5xx, open breaker.
 Rejected (no retry): any other non-2xx, **and** a body `{"errorStatus": 1, "replyMessage": …}`
@@ -316,7 +320,7 @@ even with HTTP 200 (the reply message is kept on the row's `last_error`).
 
 1. **Singleton:** `pg_try_advisory_lock(727100001)` on a dedicated connection; if another instance
    holds it, this tick does nothing.
-2. **Read a page** — R1 `GET Dmers?pageSize=50`. Items are translated to snake_case records
+2. **Read a page** — R1 `GET Dmers?count=50`. Items are translated to snake_case records
    (`documentRecordId` → `document_guid`, `submittalStatus` → `document_status`, …).
 3. **Split the page:** DMERs (`documentType = DMER`) go on through steps 4–6. Every other
    document type (HRDIR reports, …) is **sent back to Mercury as an error** — see

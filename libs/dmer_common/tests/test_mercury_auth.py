@@ -91,6 +91,20 @@ def test_a_response_without_a_token_raises(body):
         _auth(TokenServer((200, body))).token()
 
 
+@pytest.mark.parametrize("body", [b'"Invalid secret."', b"Invalid secret."])
+def test_a_rejected_secret_answered_with_200_raises(body, caplog):
+    # Mercury DEV answers a wrong secret with HTTP 200 and this message; it
+    # must not be used as a bearer token (every API would then answer 401).
+    with (
+        caplog.at_level(logging.ERROR, logger=auth_module._log.name),
+        pytest.raises(MercuryAuthError, match="not a token") as raised,
+    ):
+        _auth(TokenServer((200, body))).token()
+    assert raised.value.status is None
+    assert "mercury token request rejected" in caplog.text
+    assert "Invalid secret" not in caplog.text  # the body is never logged
+
+
 def test_a_failed_token_request_raises_with_the_status():
     with pytest.raises(MercuryAuthError) as raised:
         _auth(TokenServer((401, b"bad secret"))).token()

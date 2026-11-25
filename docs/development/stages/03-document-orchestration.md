@@ -118,11 +118,13 @@ answered:
 
 - **Mercury `POST drivers/lookup`** is `POST {MERCURY_DRIVER_LICENCE_API_BASE_URL}/lookup` with
   `{"driverLicenceNumber": "<licence>"}` (the licence travels in the body, never the URL) and the
-  bearer token. The **response shape is Mercury's** (shared 2026-11-19): one driver in snake_case
-  — `driver_id`, `first_name`, `middle_name`, `last_name`, `licence_number`, `documents[]`
-  (`file_name`, `document_type`, `document_status`, `uploaded_date`, `document_id`; `dps_date`
-  was commented out in Mercury's sample and is not used) and the driver's `case` (`case_id`, `case_title`, `case_type`, `case_priority`,
-  `case_owner`). Mercury's `document_id` is its document record id, i.e. our `document_guid`. The
+  bearer token. The **response shape is Mercury's** (Mercury DEV's Swagger, checked 2026-11-24):
+  one driver — `driver_id`, `first_name`, `middle_name`, `last_name`, `licence_number` in
+  snake_case; `documents[]` in camelCase (`fileName`, `documentType`, `submittalStatus`,
+  `uploadedDate`, `documentRecordId`); and the driver's open case as `activeCase` (`caseId`,
+  `caseTitle`, `caseType`, `casePriority`, `caseOwner`, `caseStatus`). A document's
+  `documentRecordId` is our `document_guid`. (Mercury's earlier sample, 2026-11-19, showed
+  snake_case documents and a `case` object; both are still read.) The
   client translates it to the pipeline's shape (`documents[]` → `active_documents[]`,
   `document_id` → `document_guid`, `file_name` → `document_name`); a list of drivers, the
   camelCase of `GET dmers`' `driver` object, and 404 / an empty answer (no driver) are handled too.

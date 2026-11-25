@@ -1,10 +1,12 @@
-"""Mercury's ``SetDmerAIProccessedStatus``: the AI's result on one DMER.
+"""Mercury's ``setDmerAIProccessedStatus``: the AI's result on one DMER.
 
-``POST {MERCURY_WRITE_API_BASE_URL}/dmers/SetDmerAIProccessedStatus`` with::
+``POST {MERCURY_WRITE_API_BASE_URL}/Dmers/{documentRecordId}/setDmerAIProccessedStatus``
+(the DMER in the path -- Mercury DEV's Swagger, 2026-11-24) with::
 
-    {"documentRecordId": "<document_guid>", "aiProcessedStatus": int,
-     "aiDpsPriority": int, "aiQueue": int, "aiDmerStatus": int,
-     "aiIsDuplicate": bool, "notes": "<comment>"}
+    {"aiProcessedStatus": int, "aiDpsPriority": int, "aiQueue": int,
+     "aiDmerStatus": int, "aiIsDuplicate": bool, "notes": "<comment>"}
+
+``aiProcessedStatus`` is the only required field.
 
 The integers are Mercury (Dynamics) option-set values. What each case sends
 (confirmed with Mercury, 2026-11-20):
@@ -31,8 +33,10 @@ from dataclasses import dataclass
 from enum import IntEnum
 from typing import Any, Final
 
-# The path, relative to MERCURY_WRITE_API_BASE_URL. Mercury's spelling.
-AI_STATUS_PATH: Final = "dmers/SetDmerAIProccessedStatus"
+# Relative to MERCURY_WRITE_API_BASE_URL; {guid} is the DMER's
+# documentRecordId (our document_guid), URL-quoted by the caller. Mercury's
+# spelling and casing.
+AI_STATUS_PATH: Final = "Dmers/{guid}/setDmerAIProccessedStatus"
 
 
 class AiProcessedStatus(IntEnum):
@@ -107,7 +111,6 @@ class UnknownOutcomeError(ValueError):
 
 
 def ai_status_request(
-    document_guid: str,
     *,
     outcome_code: str | None,
     notes: str | None,
@@ -117,7 +120,8 @@ def ai_status_request(
     driver_link_error: str | None = None,
     case_error: str | None = None,
 ) -> dict[str, Any]:
-    """The ``SetDmerAIProccessedStatus`` body for one DMER.
+    """The ``setDmerAIProccessedStatus`` body for one DMER (the DMER itself
+    is in the path, :data:`AI_STATUS_PATH`).
 
     *processing_error*: the pipeline could not decide (a fallback); the DMER
     goes to Intake as IN with status Error. *is_duplicate*: only the
@@ -148,7 +152,6 @@ def ai_status_request(
         if case_note:
             note = f"{note} {case_note}"
         return {
-            "documentRecordId": document_guid,
             "aiProcessedStatus": int(AiProcessedStatus.PROCESSED),
             "aiIsDuplicate": True,
             "notes": note,
@@ -163,7 +166,6 @@ def ai_status_request(
     if case_note and not driver_link_error:
         notes = f"{notes} {case_note}".strip() if notes else case_note
     return {
-        "documentRecordId": document_guid,
         "aiProcessedStatus": int(status),
         "aiDpsPriority": int(routing.priority),
         "aiQueue": int(routing.queue),

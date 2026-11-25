@@ -2,14 +2,16 @@
 
 ``POST {MERCURY_WRITE_API_BASE_URL}/dmers/{documentRecordId}/add_case``::
 
-    {"case_type": "DMER", "owner": "TBD",
-     "driver": {"driver_id": "<licence number>"},
-     "document_type": "DMER", "comments": "..."}
+    {"caseType": "DMER", "owner": "TBD",
+     "driver": {"driverId": "<licence number>"},
+     "documentType": "DMER", "comments": "..."}
 
-answers ``{"caseId", "documentRecordId", "status": "Created"}``. Mercury
-attaches a comment (``comments``) to the driver and the case. 404 when the
-driver doesn't exist; 409 when the DMER belongs to a different driver or
-already has a case.
+(camelCase; ``caseType``, ``documentType`` and ``driver`` required --
+Mercury DEV's Swagger, 2026-11-24) answers 201 ``{"caseId",
+"documentRecordId", "status": "Created"}``. Mercury attaches a comment
+(``comments``) to the driver and the case. 404 when the driver doesn't
+exist; 409 when the DMER belongs to a different driver or already has a
+case (errors as ``ProblemDetails``).
 
 When it's called:
 
@@ -24,7 +26,10 @@ When it's called:
   whose driver has **no open case** -- checked live with Mercury's driver
   lookup just before. Otherwise nothing is sent and Intake handles the case.
 
-``driver_id`` is the driver's licence number (PII: never logged).
+``driverId`` is the driver's licence number (PII: never logged).
+
+The driver's open case comes from the driver lookup's ``activeCase``
+(``caseId``, ``caseTitle``, ``caseStatus``, ...).
 """
 
 from __future__ import annotations
@@ -66,16 +71,22 @@ def is_placeholder_case(case: Mapping[str, Any] | None) -> bool:
 def add_case_request(licence_number: str) -> dict[str, Any]:
     """The ``add_case`` body for the driver with *licence_number*."""
     return {
-        "case_type": CASE_TYPE,
+        "caseType": CASE_TYPE,
         "owner": CASE_OWNER,
-        "driver": {"driver_id": licence_number},
-        "document_type": DOCUMENT_TYPE,
+        "driver": {"driverId": licence_number},
+        "documentType": DOCUMENT_TYPE,
         "comments": ADD_CASE_COMMENT,
     }
 
 
 def _case_of(driver: Mapping[str, Any]) -> Mapping[str, Any] | None:
-    case = driver.get("case") or driver.get("dmerDocumentCaseRecord")
+    # Mercury's lookup answers with ``activeCase``; the others are older
+    # shapes (the pipeline's ``case``, GET dmers' ``dmerDocumentCaseRecord``).
+    case = (
+        driver.get("activeCase")
+        or driver.get("case")
+        or driver.get("dmerDocumentCaseRecord")
+    )
     return case if isinstance(case, Mapping) else None
 
 

@@ -117,7 +117,7 @@ def test_get_page_calls_get_dmers_with_the_page_size():
     http = _FakeHttp()
     client = MercuryClient(settings=SETTINGS, http_get=http)
     page = client.get_page(page_size=50)
-    assert http.calls[0]["url"] == "https://mercury.example.com/Dmers?pageSize=50"
+    assert http.calls[0]["url"] == "https://mercury.example.com/Dmers?count=50"
     assert [r["document_guid"] for r in page.records] == [
         DMER_ITEM["documentRecordId"],
         HRDIR_ITEM["documentRecordId"],
@@ -267,7 +267,7 @@ def test_settings_default_from_config(monkeypatch):
     page = MercuryClient(http_get=http).get_page()
     assert len(page.records) == 2
     assert urlparse(http.calls[0]["url"]).hostname == "m.example.com"
-    assert http.calls[0]["url"] == "https://m.example.com/Dmers?pageSize=50"
+    assert http.calls[0]["url"] == "https://m.example.com/Dmers?count=50"
     assert page.records[0]["received_date"].endswith("-07:00")  # Pacific default
 
 

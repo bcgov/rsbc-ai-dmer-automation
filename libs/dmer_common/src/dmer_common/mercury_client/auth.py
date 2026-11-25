@@ -11,6 +11,11 @@ fetched under a lock, so concurrent calls don't each ask for their own.
 
 The secret is part of the token URL, so neither the URL nor the response
 (the token) is ever logged.
+
+A wrong secret still gets HTTP 200, with the body ``"Invalid secret."``
+(Mercury DEV, 2026-11-24). A token never contains whitespace, so such an
+answer is rejected here (:class:`MercuryAuthError`) instead of being sent
+as a bearer token that every API then refuses with 401.
 """
 
 from __future__ import annotations
@@ -82,6 +87,11 @@ def _parse(body: bytes) -> tuple[str, dict[str, Any]]:
     token = payload.strip()
     if token.lower().startswith("bearer "):
         token = token[7:].strip()
+    if any(ch.isspace() for ch in token):
+        # A message such as "Invalid secret." -- not a token.
+        raise MercuryAuthError(
+            "Mercury token response is not a token (secret rejected?)", status=None
+        )
     return token, fields
 
 
@@ -144,7 +154,15 @@ class MercuryAuth:
                 f"Mercury token request returned HTTP {status}", status=status
             )
         now = self._clock()
-        token, fields = _parse(body)
+        try:
+            token, fields = _parse(body)
+        except MercuryAuthError:
+            # The body is not logged: it could be the token.
+            _log.error(
+                "mercury token request rejected: no token in the response",
+                extra={"status": status, "body_length": len(body)},
+            )
+            raise
         expires_at = _expiry(token, fields, now, self._settings.default_ttl_seconds)
         lifetime = max(expires_at - now, 0.0)
         # Refresh a minute early -- or halfway through, for a short-lived token.

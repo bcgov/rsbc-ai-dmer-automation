@@ -136,9 +136,8 @@ class MercuryPage:
     ``has_more``: the page came back **full** (as many items as asked for),
     so more may be waiting. Mercury returns no ``nextLink`` (confirmed
     2026-11-24); the next page is simply the same request once these are
-    marked AI Processed. ``count`` is Mercury's ``count`` as sent -- its
-    meaning (page size? records waiting?) is unconfirmed, so it is only
-    logged, never relied on.
+    marked AI Processed. ``count`` is Mercury's ``count`` as sent: the page
+    size asked for, echoed back (Mercury DEV, 2026-11-24) -- only logged.
     """
 
     records: list[dict[str, Any]]
@@ -194,11 +193,12 @@ def _lookup_document(doc: dict[str, Any]) -> dict[str, Any]:
 def _lookup_driver(driver: dict[str, Any]) -> dict[str, Any]:
     """One driver from ``drivers/lookup`` in the pipeline's shape.
 
-    Mercury answers in snake_case: the driver's fields, ``documents`` and the
-    driver's ``case``. The camelCase of ``GET dmers``' ``driver`` object is
-    read as well, in case the lookup is ever aligned with it."""
+    Mercury answers with the driver's fields in snake_case, ``documents`` in
+    camelCase and the driver's open case as ``activeCase`` (Mercury DEV's
+    Swagger, 2026-11-24). The camelCase of ``GET dmers``' ``driver`` object
+    and the older ``case`` are read as well."""
     documents = _first(driver, "documents", "activeDocuments", "active_documents")
-    case = _first(driver, "case", "dmerDocumentCaseRecord")
+    case = _first(driver, "activeCase", "case", "dmerDocumentCaseRecord")
     return {
         "driver_id": _first(driver, "driverId", "driver_id"),
         "first_name": _first(driver, "firstName", "first_name"),
@@ -388,8 +388,11 @@ class MercuryClient:
         Processed -- the same ones again until they are
         (:meth:`set_ai_processed`). Retried with backoff on transient failure
         (01-ingest.md's "Failure handling").
+
+        The page size is Mercury's ``count`` query parameter (Mercury DEV's
+        Swagger, 2026-11-24; ``pageSize`` is ignored).
         """
-        url = f"{self._settings.base_url}?pageSize={page_size}"
+        url = f"{self._settings.base_url}?count={page_size}"
 
         @mercury_retry()
         def _run() -> MercuryPage:
@@ -537,7 +540,7 @@ class MercuryClient:
 
         Endpoints, relative to ``MERCURY_WRITE_API_BASE_URL``:
 
-        - ``UPDATE_OUTCOME`` -- ``POST dmers/SetDmerAIProccessedStatus``
+        - ``UPDATE_OUTCOME`` -- ``POST Dmers/{guid}/setDmerAIProccessedStatus``
           (Mercury's API, :mod:`.ai_status`): the outcome's priority, queue
           and status with the comment as notes; a fallback (``decided_by``
           FALLBACK) as a processing error; a duplicate as the duplicate flag
@@ -563,7 +566,6 @@ class MercuryClient:
         if operation in ("UPDATE_OUTCOME", "MARK_DUPLICATE"):
             try:
                 request = ai_status_request(
-                    str(payload["document_guid"]),
                     outcome_code=payload.get("outcome_code"),
                     notes=payload.get("comment"),
                     processing_error=payload.get("decided_by") == "FALLBACK",
@@ -579,7 +581,9 @@ class MercuryClient:
                 )
             except UnknownOutcomeError as exc:
                 raise MercuryWriteError(str(exc), status=None, retryable=False) from exc
-            return self._write("POST", AI_STATUS_PATH, request, idempotency_key)
+            return self._write(
+                "POST", AI_STATUS_PATH.format(guid=guid), request, idempotency_key
+            )
         if operation == "MAP_DRIVER" and not _has_driver_details(payload):
             raise MercuryWriteError(
                 "MAP_DRIVER needs the driver's licence, first name and surname",
