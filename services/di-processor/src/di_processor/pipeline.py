@@ -9,6 +9,8 @@ complete; handler raises -> dead-letter.
 Stages (page 1 only), all persisted under the single ``extracted-dmer`` container:
   A. custom-model top-level extraction  -> extracted-dmer/<doc>/top_level.json
      (+ cut-off flags from the same call's layout -> dmer_extraction)
+     Neither the form header nor the examiner block found -> NOT_A_DMER_FORM:
+     stop before B (no OCR, no LLM); the DLQ Drain sends the Error outcome.
   B. render + tile + prebuilt-read OCR  -> extracted-dmer/<doc>/ocr.json
   C. LLM reconstruction of handwriting  -> extracted-dmer/<doc>/handwritten.json
   D. merge (custom base + handwritten)  -> extracted-dmer/<doc>/combined.json
@@ -94,6 +96,7 @@ from dmer_common.telemetry import get_logger
 
 from .extraction import (
     comparison,
+    cutoff,
     di_ocr,
     licence,
     llm_reconstruct,
@@ -128,6 +131,9 @@ class PipelineConfig:
     custom_model_id: str
     prompt_version: str | None = None
     ocr_concurrency: int = di_ocr.DEFAULT_OCR_CONCURRENCY
+    # Stop a page with neither the form header nor the examiner block
+    # (NOT_A_DMER_FORM) before OCR and the LLM.
+    not_a_dmer_check: bool = True
 
 
 class Pipeline:
@@ -251,6 +257,15 @@ class Pipeline:
                     extracted_dmer(),
                     top_level_path(doc_id),
                     top.model_dump(mode="json"),
+                )
+            # Not a DMER form: page 1 shows neither the form header nor the
+            # examiner block. Stop here -- no OCR, no LLM -- and let the DLQ
+            # Drain send Mercury the Error outcome (PERMANENT_BUSINESS). The
+            # top_level.json above keeps the evidence (the anchors found).
+            if self._cfg.not_a_dmer_check and cutoff.not_a_dmer_form(top.cutoff):
+                raise PipelineFailure(
+                    FailureCode.NOT_A_DMER_FORM,
+                    "has_header=false; has_signature=false",
                 )
 
             # Stage B: render + tile + prebuilt-read OCR.

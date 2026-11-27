@@ -9,7 +9,8 @@ category decides what happens next:
   lost lock, delivery attempts used up with no logical error behind them. The
   drain re-sends the message (bounded by ``DLQ_REDRIVE_MAX_ATTEMPTS``);
 - ``PERMANENT_BUSINESS`` -- the document can never succeed (an unreadable
-  PDF). The document goes to ``MANUAL_REVIEW`` with the fallback IN outcome
+  PDF, or a page that isn't a DMER form). The document goes to
+  ``MANUAL_REVIEW`` with the fallback IN outcome
   (question I-1);
 - ``UNKNOWN`` -- a logical error (an illegal status transition, a 4xx from a
   dependency, an unexpected exception) or a reason we can't map: the document
@@ -32,6 +33,7 @@ from .db.processing_error import FailureCategory
 
 # Reason codes (processing_error.reason_code; 10-dlq-drain.md "Reason codes").
 PERMANENT_UNREADABLE_DOCUMENT: Final = "PERMANENT_UNREADABLE_DOCUMENT"
+PERMANENT_NOT_A_DMER_FORM: Final = "PERMANENT_NOT_A_DMER_FORM"
 PERMANENT_DOCUMENT_GONE: Final = "PERMANENT_DOCUMENT_GONE"
 TRANSIENT_LOCK_EXPIRED: Final = "TRANSIENT_LOCK_EXPIRED"
 TRANSIENT_DB_FAILURE: Final = "TRANSIENT_DB_FAILURE"
@@ -49,6 +51,10 @@ UNKNOWN_REDRIVE_EXHAUSTED: Final = "UNKNOWN_REDRIVE_EXHAUSTED"
 # Mercury, so it says what happened without any document content.
 FALLBACK_REASONS: Final = {
     PERMANENT_UNREADABLE_DOCUMENT: "The DMER PDF could not be read.",
+    PERMANENT_NOT_A_DMER_FORM: (
+        "The document does not appear to be a DMER form, or is too incomplete "
+        "to identify (neither the form header nor the examiner section was found)."
+    ),
     PERMANENT_DOCUMENT_GONE: "The DMER no longer exists in Mercury.",
 }
 
@@ -59,6 +65,10 @@ _APPLICATION_REASONS: Final = {
     "PDF_UNREADABLE": (
         FailureCategory.PERMANENT_BUSINESS,
         PERMANENT_UNREADABLE_DOCUMENT,
+    ),
+    "NOT_A_DMER_FORM": (
+        FailureCategory.PERMANENT_BUSINESS,
+        PERMANENT_NOT_A_DMER_FORM,
     ),
     "DB_READ_FAILED": (FailureCategory.TRANSIENT, TRANSIENT_DB_FAILURE),
     "DB_WRITE_FAILED": (FailureCategory.TRANSIENT, TRANSIENT_DB_FAILURE),
@@ -73,6 +83,7 @@ _APPLICATION_REASONS: Final = {
 # Explicit reasons that are already reason codes pass through.
 _REASON_CODE_CATEGORIES: Final = {
     PERMANENT_UNREADABLE_DOCUMENT: FailureCategory.PERMANENT_BUSINESS,
+    PERMANENT_NOT_A_DMER_FORM: FailureCategory.PERMANENT_BUSINESS,
     PERMANENT_DOCUMENT_GONE: FailureCategory.PERMANENT_BUSINESS,
 }
 

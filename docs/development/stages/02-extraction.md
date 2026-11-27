@@ -87,6 +87,38 @@ duplicate comparison even when its outcome is superseded (see
 > page layout → all three flags `null` (undeterminable). Flags are written to `dmer_extraction` and
 > to `combined.json` (`cutoff` section, with the matched evidence).
 
+### Not a DMER form (`NOT_A_DMER_FORM`)
+
+The page poller only checks Mercury's `documentType`, so a file Mercury labels DMER but that is
+not an MV2011C (a letter, a lab report, a fax cover sheet, a blank page) used to be extracted as if
+it were one: most fields came back empty, normalization found no conditions, and a single rule
+(typically "visual acuity and visual field info not provided") sent it to Intake as IN.
+
+Right after Stage A (and after `top_level.json` is written, which keeps the evidence), extraction
+stops a document whose page 1 shows **neither** the form header **nor** the examiner / signature
+block (`has_header = false` **and** `has_signature = false`; `cutoff.not_a_dmer_form`):
+
+- the run fails with `NOT_A_DMER_FORM` (detail `has_header=false; has_signature=false`) **before
+  OCR and the LLM**: no `ocr.json`, `handwritten.json`, `combined.json` or `dmer_extraction` row;
+- the document goes to `MANUAL_REVIEW` and the message is dead-lettered;
+- the [DLQ Drain](10-dlq-drain.md) classifies it `PERMANENT_BUSINESS` /
+  `PERMANENT_NOT_A_DMER_FORM` (no redrive) and queues the Error outcome for Mercury (Team - Intake):
+  "Unable to AI process due to error. The document does not appear to be a DMER form, or is too
+  incomplete to identify (neither the form header nor the examiner section was found)."
+
+A cut-off copy that kept **one** band is still a DMER: it carries on, and the
+[Decision Gateway](07-decision-gateway.md) handles it as cut off. Unknown flags (no page layout)
+are not judged here; such a PDF fails as `PDF_UNREADABLE` instead. A copy with **both** bands cut
+off is caught by this check, which is why the note says "or is too incomplete to identify".
+
+The check is on by default; `NOT_A_DMER_CHECK_ENABLED=false` on the container app turns it off
+without a code change. To tune it, the Stage A log line also records the model's
+`document_confidence` and `located_field_count` (fields the model actually found; the raw
+`field_count` is every trained field, found or not). Neither is used by the check yet.
+
+**Known limit:** only page 1 is checked, as only page 1 is extracted. A DMER sent behind a fax
+cover sheet is reported as not a DMER rather than extracted from page 2.
+
 ### Driver resolution is not performed in Extraction
 
 **Decided (2026-09-23):** Extraction does **not** do driver identification (resolving/creating the
@@ -154,6 +186,7 @@ document still goes to `MANUAL_REVIEW` and the message is dead-lettered.
 | `STALE_STATUS` | **Not a document failure.** Another worker changed the status first (a compare-and-set write lost the race — see [Idempotency requirements](#idempotency-requirements)). The run stops quietly: no `MANUAL_REVIEW`, no dead-letter; only its stage run is closed with this code |
 | `SOURCE_DOWNLOAD_FAILED` | Downloading the source PDF |
 | `PDF_UNREADABLE` | Rendering page 1 (missing page, corrupt PDF) |
+| `NOT_A_DMER_FORM` | **Deliberate stop after Stage A:** page 1 shows neither the form header nor the examiner block (see [Not a DMER form](#not-a-dmer-form-not_a_dmer_form)). Permanent: the DLQ Drain sends the Error outcome |
 | `DI_CUSTOM_MODEL_FAILED` | Custom-model analyze (Stage A) |
 | `OCR_FAILED` | Tiled OCR — only when **every** tile fails; individual failed tiles are skipped and counted in the log |
 | `LLM_CALL_FAILED` | The Azure OpenAI call (Stage C) |

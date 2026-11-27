@@ -14,7 +14,9 @@ from di_processor.extraction.cutoff import (
     HEADER_ANCHORS,
     SIGNATURE_ANCHORS,
     detect_cutoff,
+    located_field_count,
     located_fields,
+    not_a_dmer_form,
 )
 
 FIXTURE = Path(__file__).parent.parent / "fixtures" / "top_level_raw_cutoff_bottom.json"
@@ -197,3 +199,84 @@ def test_no_layout_is_undeterminable():
             None,
             None,
         )
+
+
+# --- not a DMER form (NOT_A_DMER_FORM) ---------------------------------------
+
+
+def test_page_without_either_band_is_not_a_dmer_form():
+    # GIVEN a page with text but neither the form header nor the examiner block
+    # (a letter, a lab report, a fax cover sheet)
+    page = _page(
+        _line("03/06/2024 WED 16:29 FAX 000 000 0000", 0.0),
+        _line("LABORATORY REPORT", 0.1),
+        _line("Results attached for your review", 0.5),
+    )
+
+    # WHEN checked
+    flags = detect_cutoff(page, {})
+
+    # THEN it is not judged a DMER form
+    assert (flags.has_header, flags.has_signature) == (False, False)
+    assert not_a_dmer_form(flags) is True
+
+
+def test_only_the_body_surviving_is_not_a_dmer_form():
+    # GIVEN both bands cut off (only the body of the form survived): too
+    # incomplete to identify, so it goes the same way
+    assert not_a_dmer_form(detect_cutoff(_page(*BODY_LINES), {})) is True
+
+
+def test_intact_dmer_is_a_dmer_form():
+    page = _page(*HEADER_LINES, *BODY_LINES, *SIGNATURE_LINES)
+    assert not_a_dmer_form(detect_cutoff(page, {})) is False
+
+
+def test_cut_off_copy_with_one_band_is_still_a_dmer_form():
+    # GIVEN a cut-off copy that kept one band (header only, or examiner only)
+    header_only = detect_cutoff(_page(*HEADER_LINES, *BODY_LINES), {})
+    signature_only = detect_cutoff(_page(*BODY_LINES, *SIGNATURE_LINES), {})
+
+    # THEN it stays a (cut-off) DMER, handled by the Decision Gateway
+    assert header_only.is_cutoff is True
+    assert not_a_dmer_form(header_only) is False
+    assert signature_only.is_cutoff is True
+    assert not_a_dmer_form(signature_only) is False
+
+
+def test_real_bottom_cut_off_sample_is_a_dmer_form():
+    raw = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    flags = detect_cutoff(raw["pages"][0], raw["documents"][0]["fields"])
+    assert not_a_dmer_form(flags) is False
+
+
+def test_located_examiner_field_alone_keeps_it_a_dmer_form():
+    # GIVEN no printed anchors at all, but the model located the exam date
+    fields = {
+        "medical_examination_date": {
+            "valueString": "2024-03-06",
+            "boundingRegions": [{"pageNumber": 1, "polygon": [1, 10, 2, 10]}],
+        }
+    }
+    flags = detect_cutoff(_page(*BODY_LINES), fields)
+
+    # THEN the examiner block counts as present: not judged "not a DMER"
+    assert flags.has_signature is True
+    assert not_a_dmer_form(flags) is False
+
+
+def test_unknown_layout_is_not_judged():
+    # GIVEN no page layout (flags None) THEN the check doesn't fire: such a PDF
+    # fails later as unreadable instead
+    assert not_a_dmer_form(detect_cutoff(None, {})) is False
+
+
+def test_located_field_count_counts_only_found_fields():
+    fields = {
+        "dl_number": {"valueString": "X", "confidence": 0.9},
+        "medical_examination_date": {"type": "string", "confidence": 0.98},
+        "doctor_signature": {"type": "signature", "valueSignature": "signed"},
+        "not_a_dict": "x",
+    }
+    assert located_field_count(fields) == 2
+    assert located_field_count({}) == 0

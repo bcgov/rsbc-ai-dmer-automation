@@ -396,7 +396,7 @@ EXTRACTED → only re-publish to `dmer-extracted`; otherwise run the pipeline.
 | 11 | **Publish `dmer-extracted`** (`blobUrl` = `combined.json`, deterministic `messageId`) | — |
 | 12 | Stage run → SUCCEEDED (`output_blob_url` = `combined.json`) | stage run |
 
-**On failure** (each step has a failure code: `PDF_UNREADABLE`, `DI_CUSTOM_MODEL_FAILED`,
+**On failure** (each step has a failure code: `PDF_UNREADABLE`, `NOT_A_DMER_FORM`, `DI_CUSTOM_MODEL_FAILED`,
 `OCR_FAILED`, `LLM_CALL_FAILED`, `LLM_OUTPUT_INVALID`, `DB_*`, `PUBLISH_FAILED`, …): stage run →
 FAILED, document → **MANUAL_REVIEW** (compare-and-set; `current_stage` shows where it stopped),
 message dead-lettered with the failure code as its reason. The DLQ Drain takes it from there
@@ -604,7 +604,7 @@ error):
 
 | Category | Examples | Action |
 |---|---|---|
-| **PERMANENT_BUSINESS** | `PDF_UNREADABLE`, document gone from Mercury | document → MANUAL_REVIEW **and a fallback outcome is queued**: `UPDATE_OUTCOME` IN, `decided_by=FALLBACK`, "Unable to AI process due to error. The DMER PDF could not be read." (key `<document_id>:FALLBACK:UPDATE_OUTCOME`) |
+| **PERMANENT_BUSINESS** | `PDF_UNREADABLE`, `NOT_A_DMER_FORM`, document gone from Mercury | document → MANUAL_REVIEW **and a fallback outcome is queued**: `UPDATE_OUTCOME` IN, `decided_by=FALLBACK`, "Unable to AI process due to error. The DMER PDF could not be read." (key `<document_id>:FALLBACK:UPDATE_OUTCOME`) |
 | TRANSIENT / PROCESSING | DB, storage, publish, dependency 5xx/429, lock lost | **redrive**: reopen the document to the queue's entry status and re-send with backoff (5, 10, 20 min), up to 3 times |
 | UNKNOWN (or redrives exhausted) | logic errors, unclassified | document → MANUAL_REVIEW **+ an Error outcome for Mercury** ("The AI pipeline could not process the DMER (‹stage›).") |
 
@@ -711,6 +711,10 @@ di-processor marks the document **MANUAL_REVIEW** and dead-letters the message w
 code. DLQ Drain:
 - `PDF_UNREADABLE` → PERMANENT_BUSINESS → fallback outcome queued → W1 **Error** ("The DMER PDF
   could not be read.").
+- `NOT_A_DMER_FORM` (page 1 has neither the form header nor the examiner block; stopped right
+  after the custom model, before OCR and the LLM) → PERMANENT_BUSINESS → fallback outcome queued →
+  W1 **Error** ("The document does not appear to be a DMER form, or is too incomplete to
+  identify …").
 - DB / storage / publish / dependency outage → redrive (reopen to DOWNLOADED, re-send with
   backoff, up to 3 times) → afterwards UNKNOWN → MANUAL_REVIEW + Error outcome to Intake.
 - Model output invalid / logic errors → see the category table in §10.4.

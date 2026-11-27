@@ -64,6 +64,10 @@ class Settings:
     ocr_concurrency:
         Tiles analyzed in parallel by the tiled OCR stage (default 8; 1 = one
         at a time).
+    not_a_dmer_check:
+        Stop a document whose page 1 shows neither the form header nor the
+        examiner block (``NOT_A_DMER_FORM``), before OCR and the LLM
+        (``NOT_A_DMER_CHECK_ENABLED``, default on; ``false`` turns it off).
     """
 
     app_configuration_endpoint: str | None
@@ -82,6 +86,16 @@ class Settings:
     postgres_sslmode: str = "require"
     postgres_password: str | None = field(default=None, repr=False)
     ocr_concurrency: int = 8
+    not_a_dmer_check: bool = True
+
+
+def _flag(name: str, default: bool) -> bool:
+    """A boolean setting: ``false``/``0``/``no``/``off`` turn it off, anything
+    else non-empty turns it on, unset keeps *default*."""
+    raw = (config.get(name) or "").strip().lower()
+    if not raw:
+        return default
+    return raw not in ("false", "0", "no", "off")
 
 
 def load_settings() -> Settings:
@@ -109,4 +123,5 @@ def load_settings() -> Settings:
         postgres_sslmode=config.get("POSTGRES_SSLMODE", "require") or "require",
         postgres_password=config.get("POSTGRES_PASSWORD") or None,
         ocr_concurrency=max(1, int(config.get("OCR_CONCURRENCY", "8") or "8")),
+        not_a_dmer_check=_flag("NOT_A_DMER_CHECK_ENABLED", True),
     )

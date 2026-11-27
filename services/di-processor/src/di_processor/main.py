@@ -129,6 +129,7 @@ def build_application(
             custom_model_id=settings.custom_model_id,
             prompt_version=settings.prompt_version,
             ocr_concurrency=settings.ocr_concurrency,
+            not_a_dmer_check=settings.not_a_dmer_check,
         ),
         blob=blob,
         di_custom=di_custom,

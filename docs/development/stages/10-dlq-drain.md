@@ -284,6 +284,7 @@ so decisions and failures are queryable and auditable rather than free-text-only
 | `reason_code` | Category | Meaning |
 |---|---|---|
 | `PERMANENT_UNREADABLE_DOCUMENT` | `PERMANENT_BUSINESS` | PDF is malformed/unreadable and cannot be extracted. |
+| `PERMANENT_NOT_A_DMER_FORM` | `PERMANENT_BUSINESS` | Extraction's `NOT_A_DMER_FORM`: page 1 shows neither the form header nor the examiner block (not a DMER form, or too incomplete to identify). Mercury note: "The document does not appear to be a DMER form, or is too incomplete to identify (neither the form header nor the examiner section was found)." |
 | `PERMANENT_SCHEMA_VIOLATION` | `PERMANENT_BUSINESS` | Content violates the extraction schema in a non-recoverable way. |
 | `PERMANENT_DOCUMENT_GONE` | `PERMANENT_BUSINESS` | `document_guid` no longer exists in Mercury. |
 | `TRANSIENT_LOCK_EXPIRED` | `TRANSIENT` | Lock/session lost mid-processing. |
