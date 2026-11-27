@@ -195,20 +195,23 @@ DMER (‹error›). ‹the AI's comment›". The DMER's `CREATE_CASE` is blocked
 
 ```json
 {
-  "caseType": "DMER",
+  "case_type": "DMER",
   "owner": "TBD",
-  "driver": { "driverId": "<licence number>" },
-  "documentType": "DMER",
+  "driver": { "driver_id": "<licence number>" },
+  "document_type": "DMER",
   "comments": "Case created by the AI: the DMER needed a case and the driver had no active one."
 }
 ```
 
-camelCase, with `caseType`, `documentType` and `driver` required (Mercury DEV's Swagger,
-2026-11-24). Mercury answers 201 `{"caseId", "documentRecordId", "status": "Created"}` and
-attaches the comment to the driver and the case; 404 when the driver doesn't exist, 409 when the
-DMER belongs to a different driver or already has a case (errors as `ProblemDetails`).
-`caseType`/`owner`/`documentType` are Mercury's sample values (owner "TBD" to confirm). The
-driver's open case is read from the lookup's `activeCase`.
+**snake_case**, with `case_type`, `document_type` and `driver.driver_id` required. Mercury DEV
+binds this body in snake_case although its Swagger shows camelCase (`caseType`,
+`driver.driverId`, `documentType`): a camelCase body is answered 422 "The CaseType field is
+required" (confirmed 2026-11-26). Mercury answers 201 `{"caseId", "documentRecordId", "status":
+"Created"}` and attaches the comment to the driver and the case; 404 when the driver doesn't
+exist, 409 when the DMER belongs to a different driver or already has a case, 422 when a
+required field is missing (errors as `ProblemDetails`). `case_type`/`owner`/`document_type` are
+Mercury's sample values (owner "TBD" to confirm). The driver's open case is read from the
+lookup's `activeCase`.
 
 **If `add_case` fails for good**, the outcome still goes **as usual** (its own status, priority
 and queue), with "The case could not be created for this DMER (‹error›)." added to its notes;

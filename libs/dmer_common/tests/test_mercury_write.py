@@ -327,11 +327,12 @@ def test_create_case_adds_a_case_when_the_driver_has_no_open_one(case):
     _, (method, url, headers, body) = http.calls
     assert (method, url) == ("POST", ADD_CASE_URL)
     assert headers["Idempotency-Key"] == "dec-1:CREATE_CASE"
+    # snake_case: what Mercury DEV binds (its Swagger shows camelCase)
     assert body == {
-        "caseType": "DMER",
+        "case_type": "DMER",
         "owner": "TBD",
-        "driver": {"driverId": "01234567"},
-        "documentType": "DMER",
+        "driver": {"driver_id": "01234567"},
+        "document_type": "DMER",
         "comments": (
             "Case created by the AI: the DMER needed a case and the driver had "
             "no active one."
@@ -386,7 +387,7 @@ def test_after_add_driver_no_case_or_a_placeholder_case_means_a_new_case(open_ca
     assert result == {"action": "created", "response": CREATED}
     ((method, url, _, body),) = http.calls  # straight to add_case
     assert (method, url) == ("POST", ADD_CASE_URL)
-    assert body["driver"] == {"driverId": "01234567"}
+    assert body["driver"] == {"driver_id": "01234567"}
 
 
 def test_a_placeholder_case_in_the_lookup_is_not_an_open_case():

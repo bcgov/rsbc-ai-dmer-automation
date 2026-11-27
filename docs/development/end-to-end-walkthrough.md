@@ -300,13 +300,16 @@ Response `{"resultMessage", "driverOpenCase": {"caseId", "caseTitle", "caseType"
 **W3 — Give the DMER a case: `POST dmers/{documentRecordId}/add_case`** (`case_link.py`)
 
 ```json
-{ "caseType": "DMER", "owner": "TBD", "driver": { "driverId": "<licence number>" },
-  "documentType": "DMER",
+{ "case_type": "DMER", "owner": "TBD", "driver": { "driver_id": "<licence number>" },
+  "document_type": "DMER",
   "comments": "Case created by the AI: the DMER needed a case and the driver had no active one." }
 ```
-camelCase; `caseType`, `documentType` and `driver` required. Response 201 `{"caseId",
-"documentRecordId", "status": "Created"}`; 404 driver not found; 409 different driver or DMER
-already has a case (errors as `ProblemDetails`: `title`, `status`, `detail`).
+**snake_case** — Mercury DEV binds `add_case` in snake_case although its Swagger shows camelCase
+(`caseType`, `driver.driverId`, `documentType`); a camelCase body is answered 422 "The CaseType
+field is required" (confirmed 2026-11-26). `case_type`, `document_type` and `driver.driver_id`
+required. Response 201 `{"caseId", "documentRecordId", "status": "Created"}`; 404 driver not
+found; 409 different driver or DMER already has a case; 422 a required field missing (errors as
+`ProblemDetails`: `title`, `status`, `detail`).
 
 **Errors on any write.** Retryable: network errors, timeouts, 408, 429, 5xx, open breaker.
 Rejected (no retry): any other non-2xx, **and** a body `{"errorStatus": 1, "replyMessage": …}`

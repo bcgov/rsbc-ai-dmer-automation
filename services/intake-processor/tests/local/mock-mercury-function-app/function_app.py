@@ -418,9 +418,10 @@ def mercury_driver(req: func.HttpRequest) -> func.HttpResponse:
 #       missing.
 #
 #   POST /api/mercury/dmers/{guid}/add_case                    CREATE_CASE
-#       Mercury's API: {"caseType", "owner", "driver": {"driverId":
-#       <licence>}, "documentType", "comments"} (caseType, documentType and
-#       driver required: 400 otherwise); answers 201 {"caseId",
+#       Mercury's API, in the snake_case Mercury DEV binds (its Swagger shows
+#       camelCase): {"case_type", "owner", "driver": {"driver_id": <licence>},
+#       "document_type", "comments"} (case_type, document_type and driver
+#       required: 422 otherwise, like Mercury DEV); answers 201 {"caseId",
 #       "documentRecordId", "status": "Created"}. 404 when no mock driver has
 #       that licence; 409 when the DMER belongs to a different driver, or
 #       already has a case (its driver's folder has no "nocase"). Errors as
@@ -464,7 +465,12 @@ def _json(body: dict, status: int = 200) -> func.HttpResponse:
 
 def _problem(status: int, detail: str) -> func.HttpResponse:
     """An error as Mercury's ProblemDetails."""
-    titles = {400: "Bad Request", 404: "Not Found", 409: "Conflict"}
+    titles = {
+        400: "Bad Request",
+        404: "Not Found",
+        409: "Conflict",
+        422: "One or more validation errors occurred.",
+    }
     return _json(
         {"title": titles.get(status, "Error"), "status": status, "detail": detail},
         status,
@@ -597,11 +603,14 @@ def mercury_add_case(req: func.HttpRequest) -> func.HttpResponse:
         return _problem(400, "body must be JSON")
     if not isinstance(body, dict):
         return _problem(400, "body must be a JSON object")
-    missing = [k for k in ("caseType", "documentType", "driver") if not body.get(k)]
-    if missing:
-        return _problem(400, "missing required field(s): " + ", ".join(missing))
     driver = body.get("driver")
-    licence = str((driver if isinstance(driver, dict) else {}).get("driverId") or "")
+    licence = str((driver if isinstance(driver, dict) else {}).get("driver_id") or "")
+    missing = [k for k in ("case_type", "document_type") if not body.get(k)]
+    if not licence:
+        missing.append("driver.driver_id")
+    if missing:
+        # Mercury DEV answers a body it can't bind with 422.
+        return _problem(422, "missing required field(s): " + ", ".join(missing))
     groups = _documents_by_group(_pdfs(_service()))
     group = next((g for g in groups if _same_licence(_licence(g), licence)), None)
     if not licence or group is None:
