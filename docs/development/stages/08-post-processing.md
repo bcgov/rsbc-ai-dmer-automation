@@ -50,9 +50,9 @@ There is no state in which a decision exists but no one is trying to deliver it.
 
 One `mercury_outbox` row is produced per intended operation per document — see
 `../message-contracts.md#mercury_outbox-operations-not-a-queue-message--a-db-driven-payload` for
-the four operation types (`UPDATE_OUTCOME`, `MARK_DUPLICATE`, `MAP_DRIVER`, `CREATE_CASE`). A single
-document can need more than one outbox row (e.g. `UPDATE_OUTCOME` + `MARK_DUPLICATE` for a
-duplicate; `UPDATE_OUTCOME` + `MAP_DRIVER` when a proposed mapping exists).
+the operation types (`UPDATE_OUTCOME`, `MAP_DRIVER`, `CREATE_CASE`; `MARK_DUPLICATE` is no longer
+queued — a duplicate is flagged on its `UPDATE_OUTCOME`). A single document can need more than one
+outbox row (e.g. `UPDATE_OUTCOME` + `MAP_DRIVER` when a proposed mapping exists).
 
 ### Case creation rule (question I-13, answered)
 
@@ -104,19 +104,124 @@ itself is protected by the same driver-serialization guarantee as the rest of
 Log one line per outbox row created (`document_id`, `operation`, `idempotency_key`) — this is the
 line an incident review greps for when asked "did we even try to post this."
 
-## Example payload — `mercury_outbox.payload` for `UPDATE_OUTCOME`
+## Mercury write-back — `setDmerAIProccessedStatus` (confirmed 2026-11-20; path per Mercury DEV's Swagger, 2026-11-24)
+
+`UPDATE_OUTCOME` is sent as
+`POST {MERCURY_WRITE_API_BASE_URL}/Dmers/{document_guid}/setDmerAIProccessedStatus` — the DMER
+in the path, not the body (`dmer_common.mercury_client.ai_status`); `aiProcessedStatus` is the
+only required field:
 
 ```json
 {
-  "document_guid": "123e4567-e89b-...",
-  "outcome_code": "IN",
-  "comment": "AI could not process — extraction retries exhausted",
-  "duplicate_of": null
+  "aiProcessedStatus": 100000002,
+  "aiDpsPriority": 100000000,
+  "aiQueue": 100000000,
+  "aiDmerStatus": 100000000,
+  "aiIsDuplicate": true,
+  "notes": "<the comment>"
 }
 ```
 
-(Illustrative — the exact Mercury POST/PUT payload shape is question M-6, not yet confirmed by the
-Mercury team; see [Open Questions](#open-questions--decisions-required).)
+| Case | `aiProcessedStatus` | `aiDpsPriority` | `aiQueue` | `aiDmerStatus` | Other |
+|---|---|---|---|---|---|
+| Outcome `CP` | Proccessed | Regular | Team - Intake | Manual Pass | `notes` = comment |
+| Outcome `IN` | Proccessed | Regular | Team - Intake | Adjudicate | `notes` = comment |
+| Outcome `PR` | Proccessed | Regular | Team - Adjudicators | Adjudicate | `notes` = comment |
+| Outcome `PU` | Proccessed | Urgent/ Immediate | Team - Adjudicators | Adjudicate | `notes` = comment |
+| Outcome `TCM` | Proccessed | Regular | Team - Case Managers | Adjudicate | `notes` = comment |
+| Outcome `CR` | Proccessed | Critical Review | Team - Adjudicators | Adjudicate | `notes` = comment |
+| Duplicate (I-7) | Proccessed | — | — | — | `aiIsDuplicate: true`, `notes` = "Duplicate of DMER <guid>." |
+| Processing error (any fallback, `decided_by = FALLBACK`) | **Error** | Regular | Team - Intake | Adjudicate | `notes` = "Unable to AI process due to error. <details>" |
+
+Option-set values: `aiProcessedStatus` NA 100000000, InProgress 100000001, Proccessed 100000002,
+Error 100000003; `aiDmerStatus` Adjudicate 100000000, Reject 100000001, Clean Pass 100000002,
+Manual Pass 100000003; `aiQueue` Team - Intake 100000000, Team - Adjudicators 100000001,
+Team - Case Managers 100000002, Team - DIP Team Lead 100000003, Team - Remedial Intake 100000004,
+Team - DIP Adjudicators 100000005; `aiDpsPriority` Regular 100000000, Urgent/ Immediate 100000001,
+Expedited 100000002, Critical Review 100000003.
+
+The outbox row itself (`mercury_outbox.payload` for `UPDATE_OUTCOME`) keeps the pipeline's
+fields — `document_guid`, `outcome_code`, `decided_by`, `comment`, and for a duplicate
+`is_duplicate` + `duplicate_of_document_guid` — and the request is built from it at send time.
+
+### Driver mapping — `add_driver` (confirmed 2026-11-20)
+
+`MAP_DRIVER` (I-11: a driver matched from the licence read on the page) is sent as
+`POST {MERCURY_WRITE_API_BASE_URL}/dmers/{documentRecordId}/add_driver`
+(`dmer_common.mercury_client.driver_link`):
+
+```json
+{
+  "driverLicenceNumber": "<licence>",
+  "firstName": "<Mercury's first name>",
+  "surname": "<Mercury's last name>",
+  "comments": "Driver linked by the AI from the licence number read on the DMER.",
+  "dmerId": "<documentRecordId>"
+}
+```
+
+The licence and names are the matched Mercury driver's (`driver` table), carried on the
+`MAP_DRIVER` outbox row (PII: database only, never logs); `dateOfBirth` is not sent. Mercury links
+the driver (or creates one if it doesn't exist — the pipeline only sends drivers Mercury already
+holds) and answers `{"resultMessage", "driverOpenCase": {"caseId", "caseTitle", "caseType",
+"dmerStatus"}}`, kept as the row's `mercury_response`. Mercury's error shape
+`{"errorStatus": 1, "replyMessage", "caseId"}` — on this or any write, even with a 2xx — fails the
+row permanently, with the reply message on `last_error`.
+
+**If `add_driver` fails for good** (rejected, or out of retries), the outcome is still sent, as a
+processing error for manual review: `aiProcessedStatus` Error, IN routing (Regular, Team - Intake,
+Adjudicate), `notes` = "Unable to AI process due to error: the driver could not be linked to the
+DMER (‹error›). Driver details as read from the DMER form: licence ‹licence›, first name ‹first name›, surname ‹surname›. ‹the AI's comment›". The DMER's `CREATE_CASE` is blocked; the failed rows
+stay `FAILED` for a person to resolve. The driver details are what the form shows, read from the
+extraction's `combined.json` (`dl_number`, `first_name`, `last_name`; `dmer_common.form_driver`)
+once, when `add_driver` fails, and saved on the outcome row as `form_driver_note`. Parts the form
+doesn't give are left out; if `combined.json` can't be read, the note goes without them. The
+reliability app reads `extracted-dmer` with a container-scoped Storage Blob Data Reader role
+(`BLOB_ACCOUNT_URL`).
+
+### Case — `add_case` (confirmed 2026-11-20)
+
+`CREATE_CASE` (I-13) is decided when it is sent (`MercuryClient._ensure_case`,
+`dmer_common.mercury_client.case_link`):
+
+0. **The AI linked the driver** (`MAP_DRIVER` was sent — e.g. a DMER on Mercury's placeholder
+   driver `00000000`, decided 2026-11-23): the publisher saves `add_driver`'s `driverOpenCase` on
+   the `CREATE_CASE` row (`driver_linked`, `driver_open_case`). A real active case → nothing
+   sent; no active case, or the placeholder driver's case (title starting with
+   `00000000` — not expected from `add_driver` for a real licence, to confirm with Mercury) →
+   `add_case`. The DMER's own (placeholder) case and the live lookup are not consulted.
+1. The DMER arrived **with a case** (`dmer_document.mercury_case_id`, from the batch's
+   `dmerDocumentCaseRecord`, carried on the row) → nothing is sent (`skipped: dmer_has_case`).
+2. Otherwise a live `POST drivers/lookup` by licence: the **driver has an open case** → nothing is
+   sent (`skipped: driver_has_open_case`); Intake handles it. The batch API and the lookup return
+   only active cases (2026-11-20, to confirm with Mercury), so any `case` present counts as open;
+   one whose status reads closed/cancelled/inactive/complete, should Mercury ever send it, doesn't.
+3. Otherwise `POST {MERCURY_WRITE_API_BASE_URL}/dmers/{documentRecordId}/add_case`:
+
+```json
+{
+  "case_type": "DMER",
+  "owner": "TBD",
+  "driver": { "driver_id": "<licence number>" },
+  "document_type": "DMER",
+  "comments": "Case created by the AI: the DMER needed a case and the driver had no active one."
+}
+```
+
+**snake_case**, with `case_type`, `document_type` and `driver.driver_id` required. Mercury DEV
+binds this body in snake_case although its Swagger shows camelCase (`caseType`,
+`driver.driverId`, `documentType`): a camelCase body is answered 422 "The CaseType field is
+required" (confirmed 2026-11-26). Mercury answers 201 `{"caseId", "documentRecordId", "status":
+"Created"}` and attaches the comment to the driver and the case; 404 when the driver doesn't
+exist, 409 when the DMER belongs to a different driver or already has a case, 422 when a
+required field is missing (errors as `ProblemDetails`). `case_type`/`owner`/`document_type` are
+Mercury's sample values (owner "TBD" to confirm). The driver's open case is read from the
+lookup's `activeCase`.
+
+**If `add_case` fails for good**, the outcome still goes **as usual** (its own status, priority
+and queue), with "The case could not be created for this DMER (‹error›)." added to its notes;
+the `CREATE_CASE` row stays `FAILED` and the document `POSTING`, for a person to resolve (unlike a
+failed driver link, it isn't moved to `MANUAL_REVIEW`).
 
 ## Implementation
 
@@ -127,20 +232,20 @@ gateway already writes `dmer_decision` there, so the outbox rows join the same t
   `fallback_rows`, the comment wording) and `queue_outbox_rows` (insert in the caller's
   transaction, `ON CONFLICT (idempotency_key) DO NOTHING`, one log line per row).
 - `DriverDecisionRepository.record_decided` -- per AI decision: `MAP_DRIVER` when a driver was
-  matched from the licence (I-11), `CREATE_CASE` always (the publisher checks live for an open
-  case: create or attach, I-13), `MARK_DUPLICATE` for a rejected clean-pass copy (I-7),
-  `UPDATE_OUTCOME` always; documents -> `POSTING`.
+  matched from the licence (I-11), `CREATE_CASE` always (the publisher sends `add_case` only when
+  the DMER has no case and the driver no open case, I-13), `UPDATE_OUTCOME` always — flagged `is_duplicate` for a rejected
+  clean-pass copy (I-7); documents -> `POSTING`.
 - `DriverDecisionRepository.route_batch_to_manual_review` (Mercury unverifiable) -- an
-  `UPDATE_OUTCOME` IN per document, "AI could not process" plus the note (I-1).
+  `UPDATE_OUTCOME` IN per document, "Unable to AI process due to error" plus the note (I-1).
 - `DriverLookupRepository.manual_review` (I-12/I-22: no driver file found or mapped) -- an
-  `UPDATE_OUTCOME` IN with "AI could not process", that the driver's file could not be found or
+  `UPDATE_OUTCOME` IN with "Unable to AI process due to error", that the driver's file could not be found or
   mapped, the reason and the licence read. There is no driver evaluation, so no `dmer_decision`
   row; the outbox row is the outcome. Its key, `<document_id>:FALLBACK:UPDATE_OUTCOME`, is the
   one the DLQ Drain's fallback will use, so a document can't get two fallbacks.
 
 Idempotency keys are `<dmer_decision.id>:<operation>`. The publisher applies a document's rows in
-`OPERATION_ORDER` (driver, case, duplicate, outcome). Payload field names are provisional until
-M-6; the comment always states the outcome and the reason (I-13).
+`OPERATION_ORDER` (driver, case, outcome). The comment always states the outcome and the reason
+(I-13).
 
 ## Implementation considerations for Claude Code
 

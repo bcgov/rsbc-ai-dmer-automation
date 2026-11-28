@@ -149,6 +149,27 @@ def located_fields(fields: dict[str, Any], names: tuple[str, ...]) -> list[str]:
     return [name for name in names if _field_located(fields.get(name))]
 
 
+def located_field_count(fields: dict[str, Any]) -> int:
+    """How many custom-model fields were actually found on the page.
+
+    The model emits every trained field whether or not it is on the page, so
+    the raw field count says nothing; this counts only located ones. Logged
+    to tune the not-a-DMER check, not used by it yet."""
+    return sum(1 for raw in (fields or {}).values() if _field_located(raw))
+
+
+def not_a_dmer_form(flags: CutoffFlags) -> bool:
+    """True when page 1 shows **neither** the form header **nor** the examiner
+    / signature block: not an MV2011C (a letter, a lab report, a cover sheet),
+    or a copy too incomplete to identify.
+
+    A real faxed DMER keeps at least one band; losing one is a cut-off copy
+    (``is_cutoff``), not this. Unknown flags (no page layout at all) are not
+    judged here: such a PDF fails later as unreadable.
+    """
+    return flags.has_header is False and flags.has_signature is False
+
+
 def detect_cutoff(page: dict[str, Any] | None, fields: dict[str, Any]) -> CutoffFlags:
     """Compute the three cut-off flags for page 1.
 

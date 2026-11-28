@@ -16,15 +16,20 @@ outbox rows so the decision and the intent to deliver it cannot be separated.
 | | |
 |---|---|
 | Type | Durable activity inside the Driver Orchestrator |
-| Reads | Mercury `GET by driver_licence`; `dmer_document` and `dmer_extraction` for every document of the driver; `rule_evaluation` for each |
+| Reads | Mercury `POST drivers/lookup`; `dmer_document` and `dmer_extraction` for every document of the driver; `rule_evaluation` for each |
 | Writes | `driver_evaluation` only — nothing else until the decision is final |
 | Runs | Once per driver batch, never concurrently for the same driver (see `../06-driver-orchestration.md`) |
 
 ## Step 1 — Completeness
 
-Call Mercury `GET by driver_licence`. Take the documents whose `mercury_document_status` is
-`Uploaded` **and** whose `dps_date` is empty (question I-9: an empty `dps_date` is a reliable
-"not yet triaged" signal). Per question I-8 (answered): a document with status `Rejected` **does
+Call Mercury `POST drivers/lookup`. Take the documents whose `document_status` is
+`Uploaded` (`MERCURY_WAITING_DOCUMENT_STATUSES`). Only the status is checked, **not `dps_date`**
+(decided 2026-11-19; this replaces the earlier "and `dps_date` is empty" rule from I-9).
+**Documents we have already given an outcome are skipped** (matched by the lookup's `document_id`,
+our `document_guid`, against `UPDATE_OUTCOME` rows in `mercury_outbox`): Mercury keeps a DMER
+`Uploaded` until a person reviews it — through our AI Processed mark and our posted outcome — so a
+DMER decided in an earlier batch would otherwise count as waiting for the driver's next one
+(I-10), e.g. a re-fax arriving before Intake has reviewed the first copy. Per question I-8 (answered): a document with status `Rejected` **does
 count** toward "all documents processed" — do not wait on it.
 
 If any qualifying document has not reached `RULES_APPLIED` in our database, set
@@ -73,7 +78,7 @@ the outcome is `IN` for the batch. Store the field-level diff in `decision_reaso
 Per question I-6 (answered, pending final Intake confirmation): **process the newest DMER; mark the
 older one as duplicate/rejected.** This is the working rule for how many decision rows/outbox
 operations get produced when two DMERs differ — one `IN` (or the rule-engine-derived outcome) for
-the newest, one `MARK_DUPLICATE` for the older. Confirm with Intake before build-freeze (see
+the newest, the older one's outcome flagged as a duplicate (`aiIsDuplicate` in Mercury). Confirm with Intake before build-freeze (see
 [Open Questions](#open-questions--decisions-required) — the architecture document itself flags this
 answer as needing final confirmation).
 
@@ -108,7 +113,7 @@ the reason and licence in the comment) itself — see [Post-Processing](08-post-
 
 ## Failure handling
 
-A Mercury `GET by driver_licence` failure at Step 1 is transient — retry with backoff; if the
+A Mercury `POST drivers/lookup` failure at Step 1 is transient — retry with backoff; if the
 retry budget is exhausted, leave `driver_evaluation.status = WAITING` rather than guessing at
 completeness, and let the [Reconciliation Sweeper](09-reliability-components.md) retry the whole
 gateway pass later. Never proceed to Steps 2–6 on stale or partial completeness data.
@@ -140,7 +145,7 @@ near-clinical content; see §9.2).
 
 - This activity has no placeholder code anywhere in the repo — see
   `06-driver-orchestration.md#alignment-gaps-vs-current-code` for the recommended service folder.
-- `libs/dmer_common/src/dmer_common/mercury_client/__init__.py` needs the `GET by driver_licence`
+- `libs/dmer_common/src/dmer_common/mercury_client/__init__.py` needs the `POST drivers/lookup`
   call added (currently an empty docstring stub) — question M-5 confirms this endpoint returns only
   DMERs, which simplifies the completeness filter (no need to exclude non-DMER document types).
 - The comparison-hash lookup (`dmer_extraction.comparison_hash`, indexed per `../data-model.md`)
@@ -164,9 +169,13 @@ near-clinical content; see §9.2).
 
 - **I-6** — confirmed direction (process newest, mark older duplicate/rejected) but the
   architecture document itself notes this needs final Intake confirmation before build-freeze.
-- **I-4** cut-off-vs-clear content disagreement handling (route to manual review) is this
-  document's interpretation of the answer given; confirm the exact business framing with Intake
-  before implementing Step 2's disagreement branch.
+- **I-4** cut-off-vs-clear content disagreement handling — **implemented 2026-11-23**
+  (`decision/gateway.py`, `_cut_off_differences`): the cut-off copy is compared with the clear copy
+  on what is readable on it — `medical_examination_date`, `medical_issued_date`, `physician.*`
+  when read, and every ticked checkbox (unticked boxes and empty fields may be in the missing part,
+  so they aren't compared). Any difference, or nothing readable to compare → every copy `IN`
+  (path `cut_off_differs`, fields listed); a match → the clear copy decides as before. Confirm
+  the field set with Intake.
 - Whether Step 4's "two non-duplicate, non-cut-off DMERs differ" logic generalizes correctly to
   **three or more** qualifying documents (which pair(s) get compared, and what happens if some
   pairs agree and others don't) is not addressed in the architecture document — clarify before

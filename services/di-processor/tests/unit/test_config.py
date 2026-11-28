@@ -36,6 +36,7 @@ def _set_required(monkeypatch):
         "POSTGRES_SSLMODE",
         "POSTGRES_PASSWORD",
         "OCR_CONCURRENCY",
+        "NOT_A_DMER_CHECK_ENABLED",
     ):
         monkeypatch.delenv(key, raising=False)
 
@@ -60,6 +61,8 @@ def test_loads_required_and_applies_defaults(monkeypatch):
     assert settings.postgres_password is None
     # tiled OCR runs 8 tiles at a time unless configured
     assert settings.ocr_concurrency == 8
+    # the not-a-DMER check is on unless turned off
+    assert settings.not_a_dmer_check is True
     # unused and no store exists yet: optional, not a startup failure
     assert settings.app_configuration_endpoint is None
 
@@ -120,3 +123,25 @@ def test_ocr_concurrency_from_env(monkeypatch, raw, expected):
     monkeypatch.setenv("OCR_CONCURRENCY", raw)
 
     assert load_settings().ocr_concurrency == expected
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("false", False),
+        ("FALSE", False),
+        ("0", False),
+        ("no", False),
+        ("off", False),
+        ("true", True),
+        ("1", True),
+        ("", True),
+    ],
+)
+def test_not_a_dmer_check_flag_from_env(monkeypatch, raw, expected):
+    """GIVEN NOT_A_DMER_CHECK_ENABLED WHEN load_settings THEN only an explicit
+    false/0/no/off turns the check off; empty keeps the default (on)."""
+    _set_required(monkeypatch)
+    monkeypatch.setenv("NOT_A_DMER_CHECK_ENABLED", raw)
+
+    assert load_settings().not_a_dmer_check is expected

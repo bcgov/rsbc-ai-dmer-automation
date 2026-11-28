@@ -83,7 +83,7 @@ before `driver-decision` (which requires `driver_key`) is published.
 | | |
 |---|---|
 | Type | Durable activity, first in the orchestration |
-| Reads | `dmer_document.driver_key` (from Ingest, when Mercury supplied a driver), `dmer_extraction.licence_number_read` (canonical 8-digit, from Extraction), Mercury `GET by driver_licence` |
+| Reads | `dmer_document.driver_key` (from Ingest, when Mercury supplied a driver), `dmer_extraction.licence_number_read` (canonical 8-digit, from Extraction), Mercury `POST drivers/lookup` |
 | Writes | `driver`, `driver_evaluation`, `dmer_document.driver_key` |
 | Returns | The resolved `driver_key` (never the licence number, per §9.2) |
 
@@ -93,14 +93,14 @@ Steps:
    present and differs from `driver.licence_number`, record the discrepancy; keep Mercury's driver.
 2. **Mercury supplied none**: use `licence_number_read`.
    - Null (unreadable, invalid, or the top of the page cut off) → route to `MANUAL_REVIEW` (I-12).
-   - Look it up with Mercury `GET by driver_licence`. Exactly one driver → upsert `driver` on
+   - Look it up with Mercury `POST drivers/lookup`. Exactly one driver → upsert `driver` on
      `licence_number` (`INSERT ... ON CONFLICT (licence_number) DO UPDATE`) and attach its
      `driver_key` to `dmer_document`. Flag the document so [Decision Gateway](07-decision-gateway.md)
      step 6 records `proposed_driver_key` / `MAP_DRIVER` (I-11: the AI may map automatically).
    - No match, or more than one → route to `MANUAL_REVIEW`, carrying the licence information and
      reason for the Mercury comment (I-12).
 3. **Create or attach the driver's open `driver_evaluation`** and set `expected_document_count`
-   from the same Mercury `GET by driver_licence` response (`status = WAITING`,
+   from the same Mercury `POST drivers/lookup` response (`status = WAITING`,
    `last_mercury_check_at`). Applies to both branches above.
 
 Licences are compared in the canonical form from `dmer_common.licence.normalize_licence`, the same
@@ -116,15 +116,25 @@ same value.
 `dmer_common.db.driver_lookup`), on these working assumptions until the open questions below are
 answered:
 
-- **Mercury `GET by driver_licence`** is `GET {MERCURY_DRIVER_LICENCE_API_BASE_URL}/{licence_number}`
-  with the batch API's Bearer key, returning one driver object — `driver_id`, `first_name`,
-  `middle_name`, `last_name`, `licence_number`, `active_documents[]` (`file_name`,
-  `document_type`, `document_status`, `uploaded_date`, `dps_date`, `document_url`) and `case` — or a
-  list of drivers, and 404 when there is none. The dev mock (`func-mock-mercury-api-dev`,
-  `services/intake-processor/tests/local/mock-mercury-function-app/`) serves exactly this.
+- **Mercury `POST drivers/lookup`** is `POST {MERCURY_DRIVER_LICENCE_API_BASE_URL}/lookup` with
+  `{"driverLicenceNumber": "<licence>"}` (the licence travels in the body, never the URL) and the
+  bearer token. The **response shape is Mercury's** (Mercury DEV's Swagger, checked 2026-11-24):
+  one driver — `driver_id`, `first_name`, `middle_name`, `last_name`, `licence_number` in
+  snake_case; `documents[]` in camelCase (`fileName`, `documentType`, `submittalStatus`,
+  `uploadedDate`, `documentRecordId`); and the driver's open case as `activeCase` (`caseId`,
+  `caseTitle`, `caseType`, `casePriority`, `caseOwner`, `caseStatus`). A document's
+  `documentRecordId` is our `document_guid`. (Mercury's earlier sample, 2026-11-19, showed
+  snake_case documents and a `case` object; both are still read.) The
+  client translates it to the pipeline's shape (`documents[]` → `active_documents[]`,
+  `document_id` → `document_guid`, `file_name` → `document_name`); a list of drivers, the
+  camelCase of `GET dmers`' `driver` object, and 404 / an empty answer (no driver) are handled too.
+  The dev mock (`func-mock-mercury-api-dev`,
+  `services/intake-processor/tests/local/mock-mercury-function-app/`) serves the same shape.
 - **`expected_document_count`** = the driver's `active_documents` whose `document_type` is in
-  `MERCURY_COUNTED_DOCUMENT_TYPES` (default `DMER`) and whose `document_status` is not in
-  `MERCURY_UNCOUNTED_DOCUMENT_STATUSES` (default `Rejected`).
+  `MERCURY_COUNTED_DOCUMENT_TYPES` (default `DMER`) and whose `document_status` is in
+  `MERCURY_WAITING_DOCUMENT_STATUSES` (default `Uploaded`). Only `Uploaded` documents are still
+  waiting; `dps_date` is not consulted (decided 2026-11-19). The Decision Gateway's re-count uses
+  the same rule.
 - **"Open"** is the V0001 `open` boolean: the activity upserts `ON CONFLICT (driver_key, open)` with
   `open = true`.
 - **Discrepancy recording**: `dmer_document.licence_mismatch` (V0005), alongside
@@ -167,7 +177,7 @@ document's fault) and logged at ERROR each time for alerting.
 - Driver not resolvable (Driver Lookup: no readable licence, no match, or ambiguous match) → the
   activity routes the document to `MANUAL_REVIEW` (I-12) and the orchestrator ends **without**
   publishing to `driver-decision`; a document with no `driver_key` can never join a driver batch.
-- Mercury `GET by driver_licence` failure → transient; activity-level retry with backoff. Never
+- Mercury `POST drivers/lookup` failure → transient; activity-level retry with backoff. Never
   guess a driver on retry exhaustion; route to `MANUAL_REVIEW`.
 
 ## Interaction with upstream/downstream stages
@@ -183,9 +193,9 @@ fully-parallel stage — everything after this point is serialized per driver.
 | `AzureWebJobsStorage` / task hub storage account | Durable Functions history/control-queue storage — separate from `dmer_common`'s own storage client. |
 | `SERVICE_BUS_NAMESPACE_FQDN`, `DMER_EXTRACTED_QUEUE`, `DRIVER_DECISION_QUEUE` | See `../message-contracts.md`. `DRIVER_DECISION_QUEUE` defaults to `driver-decision`. |
 | `ORCHESTRATION_RETRY_FIRST_INTERVAL_SECONDS`, `ORCHESTRATION_RETRY_MAX_ATTEMPTS` | Activity retry policy (defaults 30 s, 3 attempts); read by the starter and passed in the orchestration input. |
-| `MERCURY_DRIVER_LICENCE_API_BASE_URL` + `MERCURY_API_KEY` | Driver Lookup's `GET by driver_licence` call (`{base}/{licence_number}`); shared with [Decision Gateway](07-decision-gateway.md). Dev: `https://func-mock-mercury-api-dev.azurewebsites.net/api/mercury/drivers`. |
+| `MERCURY_DRIVER_LICENCE_API_BASE_URL` + `MERCURY_AUTH_TOKEN_URL` + `MERCURY_API_KEY` | Driver Lookup's `POST drivers/lookup` call (`POST {base}/lookup`, body `{"driverLicenceNumber": ...}`), with a bearer token bought with the key (see [Ingest](01-ingest.md#configuration--environment-variables)); shared with [Decision Gateway](07-decision-gateway.md). Dev: `https://func-mock-mercury-api-dev.azurewebsites.net/api/mercury/drivers`. |
 | `MERCURY_COUNTED_DOCUMENT_TYPES` | Comma-separated `document_type`s counted toward `expected_document_count`; default `DMER`. |
-| `MERCURY_UNCOUNTED_DOCUMENT_STATUSES` | Comma-separated `document_status`es not counted; default `Rejected`. |
+| `MERCURY_WAITING_DOCUMENT_STATUSES` | Comma-separated `document_status`es that mean a document is still waiting (counted); default `Uploaded`. |
 
 ## Authentication / identity
 
@@ -244,10 +254,15 @@ for the recommended folder).
 
 - **`driver_evaluation (driver_key, open)`**: what "open" means. Driver Lookup currently uses the
   V0001 `open` boolean (see [Activity: Driver Lookup](#activity-driver-lookup)).
-- **Mercury `GET by driver_licence` contract**: response shape and auth. Driver Lookup is built
-  against the assumed shape above (served by the dev mock); confirm with Mercury.
-- **Which documents count toward `expected_document_count`**: assumed DMERs not `Rejected`;
-  configurable.
+- **Mercury `POST drivers/lookup` contract**: request and response shape are Mercury's (above).
+  Still to confirm: how "not found" is answered (404 or an empty body assumed). Confirmed
+  2026-11-19: a DMER stays `Uploaded` until a person reviews it in Mercury (our AI Processed mark
+  and posted outcome don't change it); the Decision Gateway's re-count therefore skips the
+  driver's documents we've already given an outcome, by `document_id` (see
+  [Decision Gateway, step 1](07-decision-gateway.md#step-1--completeness)). This
+  `expected_document_count` does not, so it can over-count; it is only the first estimate.
+- **Which documents count toward `expected_document_count`**: DMERs whose status is `Uploaded`
+  (decided 2026-11-19, replacing the empty-`dps_date` rule); configurable.
 - **Discrepancy recording**: implemented as `dmer_document.licence_mismatch` (V0005); confirm.
 - **The I-12 Mercury comment for unresolvable licences**: Driver Lookup routes a document with no
   readable licence, no matching Mercury driver, or several, to `MANUAL_REVIEW` and ends its
@@ -255,7 +270,9 @@ for the recommended folder).
   driver row from the page's licence and leaves I-12 to the Decision Gateway). I-12 still requires
   the licence information and reason in a Mercury comment. **Resolved** (I-22, confirmed by
   email): Driver Lookup's manual-review route queues an `UPDATE_OUTCOME` IN to `mercury_outbox`
-  in the same transaction, with the reason and the licence read; no driver file is created. See
+  in the same transaction, with the reason and the driver's details as read from the form
+  (licence, first name and surname, from the extraction's `combined.json`; the page's licence
+  read when that can't be read); no driver file is created. See
   [Post-Processing](08-post-processing.md#implementation).
 - Whether Normalize and Rule Engine activity code lives as Python functions directly inside
   `services/workflow-orchestrator/`, or as importable modules in `libs/dmer_common` invoked from

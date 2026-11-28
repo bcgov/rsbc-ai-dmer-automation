@@ -54,6 +54,68 @@ def test_a_run_publishes_with_a_fresh_engine_and_disposes_it(monkeypatch):
     engine.dispose.assert_awaited_once()
 
 
+def test_a_run_passes_the_forms_driver_note_reader(monkeypatch):
+    engine = SimpleNamespace(dispose=AsyncMock())
+    publish = AsyncMock(return_value=PublishSummary())
+    monkeypatch.setattr(fa, "publish_due", publish)
+
+    def reader(document_id):
+        return "note"
+
+    asyncio.run(
+        fa.run_publisher(
+            engine_factory=AsyncMock(return_value=engine),
+            client=object(),
+            form_driver_note_reader=lambda: reader,
+        )
+    )
+    assert publish.await_args.kwargs["form_driver_note"] is reader
+
+
+def test_no_form_driver_note_reader_without_a_blob_account(monkeypatch):
+    monkeypatch.delenv("BLOB_ACCOUNT_URL", raising=False)
+    assert fa.form_driver_note_reader() is None
+
+
+def test_the_form_driver_note_reader_reads_the_documents_combined_json(monkeypatch):
+    from dmer_common import storage
+
+    class _Blob:
+        def __init__(self, account_url):
+            self.account_url = account_url
+            self.urls = []
+
+        def blob_url(self, container, path):
+            return f"{self.account_url}/{container}/{path}"
+
+        def download_if_exists(self, url):
+            self.urls.append(url)
+            return b'{"fields": {"first_name": "Jo", "last_name": "Doe"}}'
+
+    made = []
+    monkeypatch.setenv("BLOB_ACCOUNT_URL", "https://data.blob")
+    monkeypatch.setattr(
+        storage, "BlobClient", lambda url: made.append(_Blob(url)) or made[-1]
+    )
+
+    reader = fa.form_driver_note_reader()
+    assert reader("doc-1") == (
+        "Driver details as read from the DMER form: first name Jo, surname Doe."
+    )
+    assert made[0].urls == ["https://data.blob/extracted-dmer/doc-1/combined.json"]
+
+
+def test_no_form_driver_note_reader_when_the_blob_client_cant_be_built(monkeypatch):
+    from dmer_common import storage
+
+    def broken(url):
+        raise RuntimeError("no credential")
+
+    monkeypatch.setenv("BLOB_ACCOUNT_URL", "https://data.blob")
+    monkeypatch.setattr(storage, "BlobClient", broken)
+    assert fa.form_driver_note_reader() is None
+
+
 def test_the_engine_is_disposed_even_when_the_run_fails(monkeypatch):
     engine = SimpleNamespace(dispose=AsyncMock())
     monkeypatch.setattr(

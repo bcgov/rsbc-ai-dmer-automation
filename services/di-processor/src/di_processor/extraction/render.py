@@ -21,6 +21,17 @@ CROP_TOP_PERCENT = 0.25
 PAGE_NUMBER = 1  # page 1 only
 
 
+def page_count(pdf_bytes: bytes) -> int:
+    """Number of pages in the PDF (``dmer_extraction.page_count``).
+
+    A DMER is two pages (the form plus the standard instruction page); more
+    means a medical report is attached, which the Decision Gateway sends to
+    Intake rather than processing automatically.
+    """
+    with fitz.open(stream=pdf_bytes, filetype="pdf") as pdf:
+        return pdf.page_count
+
+
 def render_page(
     pdf_bytes: bytes, page_number: int = PAGE_NUMBER, dpi: int = DEFAULT_DPI
 ) -> Image.Image:

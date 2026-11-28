@@ -540,7 +540,7 @@ def test_route_batch_to_manual_review_gives_every_undecided_document_a_fallback(
                 assert o.payload["outcome_code"] == "IN"
                 assert o.payload["decided_by"] == "FALLBACK"
                 assert o.payload["comment"] == (
-                    "AI could not process. FAKE note for Intake"
+                    "Unable to AI process due to error. FAKE note for Intake"
                 )
                 assert (o.status, o.attempt_count, o.next_attempt_at) == (
                     "PENDING",
@@ -571,7 +571,12 @@ def test_decisions_and_their_outbox_rows_commit_together():
         async with database() as (engine, driver_key, evaluation_id, docs):
             older, newer = docs
             async with engine.begin() as conn:
-                await conn.execute(text("UPDATE driver SET mercury_driver_id = 'M-7'"))
+                await conn.execute(
+                    text(
+                        "UPDATE driver SET mercury_driver_id = 'M-7', "
+                        "first_name = 'FAKE', last_name = 'DRIVER'"
+                    )
+                )
                 guids = dict(
                     (
                         await conn.execute(
@@ -624,16 +629,30 @@ def test_decisions_and_their_outbox_rows_commit_together():
                 (newer, "CREATE_CASE"),
                 (newer, "UPDATE_OUTCOME"),
                 (older, "CREATE_CASE"),
-                (older, "MARK_DUPLICATE"),
                 (older, "UPDATE_OUTCOME"),
             }
             by_op = {(o.document_id, o.operation): o.payload for o in outbox}
             assert by_op[(newer, "MAP_DRIVER")]["mercury_driver_id"] == "M-7"
+            # what Mercury's add_driver needs
+            assert {
+                k: by_op[(newer, "MAP_DRIVER")][k]
+                for k in ("licence_number", "first_name", "last_name")
+            } == {
+                "licence_number": "01234567",
+                "first_name": "FAKE",
+                "last_name": "DRIVER",
+            }
             assert by_op[(older, "CREATE_CASE")]["mercury_driver_id"] == "M-7"
-            assert by_op[(older, "MARK_DUPLICATE")] == {
+            # what add_case needs: the driver's licence, and the DMER's own case
+            assert by_op[(older, "CREATE_CASE")]["licence_number"] == "01234567"
+            assert by_op[(older, "CREATE_CASE")]["mercury_case_id"] is None
+            # the duplicate is flagged on its outcome row (I-7)
+            assert by_op[(older, "UPDATE_OUTCOME")] == {
                 "document_guid": guids[older],
                 "comment": "AI outcome: CP. Reason: FAKE reason CP.",
-                "status": "Rejected",
+                "outcome_code": "CP",
+                "decided_by": "AI",
+                "is_duplicate": True,
                 "duplicate_of_document_guid": guids[newer],
             }
             assert by_op[(newer, "UPDATE_OUTCOME")]["outcome_code"] == "CP"

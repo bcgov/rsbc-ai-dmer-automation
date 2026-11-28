@@ -11,8 +11,8 @@
 #   AZURE_CLIENT_ID        — the GitHub Actions app registration's client ID
 #   AZURE_TENANT_ID         — the Azure AD tenant ID
 #   AZURE_SUBSCRIPTION_ID   — the target subscription ID
-# and one more for the intake-processor template's @secure() parameter:
-#   MERCURY_API_KEY
+# The Mercury API key is not a deployment parameter: the template reads it from
+# Key Vault (keyVaultName / mercuryApiKeySecretName in the parameters file).
 # If AZURE_CLIENT_ID isn't set yet, the build+lint job still runs and still
 # gates PRs; only the what-if job is skipped (see its `if:` condition).
 
@@ -101,5 +101,4 @@ jobs:
           az deployment group what-if \
             --resource-group rsbc-dmer-ai-optimization-rg \
             --template-file intake-processor.bicep \
-            --parameters @../../deployment/dev/intake-processor.parameters.json \
-            --parameters mercuryApiKey="${{ secrets.MERCURY_API_KEY }}"
+            --parameters @../../deployment/dev/intake-processor.parameters.json

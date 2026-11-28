@@ -20,6 +20,11 @@
 //   queue against the pipeline's tables and writes the report to the
 //   reconciliation-reports container on the runtime storage account.
 //
+// The OutboxPublisher also reads the extraction's combined.json from the
+// extracted-dmer container on the pipeline data storage account (read-only,
+// container-scoped below): when add_driver fails for good, the outcome's
+// note carries the driver's licence and names as read from the form.
+//
 // Not created here, referenced as already existing:
 // - The VNet integration subnet (delegated to Microsoft.App/environments) --
 //   shared with the two orchestrator apps. Timers run as a singleton, so this
@@ -154,11 +159,14 @@ param reconciliationEnabled bool = false
 @description('NCRONTAB schedule for the DailyReconciliation (default: 13:00 UTC, early morning Pacific).')
 param reconciliationSchedule string = '0 0 13 * * *'
 
-@description('Mercury batch API base URL (unpaginated) -- the DPS queue the reconciliation report reads, the same one the Page Poller reads.')
+@description('Mercury GET dmers endpoint (https://<mercury-host>/Dmers) -- the documents still in the DPS queues, which the reconciliation report reads; the same one the Page Poller reads.')
 param mercuryApiBaseUrl string = ''
 
-@description('Mercury queue the reconciliation report reads -- the same one the Page Poller reads.')
+@description('Label for the Mercury queue in the reconciliation report (GET dmers takes no queue).')
 param mercuryQueue string = 'BOTH'
+
+@description('IANA time zone Mercury\'s receivedDate is read in when it carries no offset (Mercury sends "MM/DD/YYYY HH:MM:SS"). Pacific until Mercury confirms the zone.')
+param mercuryReceivedDateTimezone string = 'America/Vancouver'
 
 @description('Fully-qualified Service Bus namespace hostname, e.g. sb-rsbc-dmer-shared-dev-001.servicebus.windows.net.')
 @minLength(1)
@@ -193,9 +201,19 @@ param postgresPort string = '5432'
 @description('Postgres database name.')
 param postgresDatabase string = 'dmer'
 
-@secure()
-@description('Mercury API key, if the write endpoints need one. Supply at deploy time; never logged.')
-param mercuryApiKey string = ''
+@description('Name of the existing pipeline data storage account (in this resource group) holding extracted-dmer. The OutboxPublisher reads combined.json from it (read-only) for the driver details in the note when add_driver fails.')
+@minLength(1)
+param dataStorageAccountName string
+
+@description('Mercury token endpoint, e.g. https://<mercury-host>/Authentication/token (MERCURY_AUTH_TOKEN_URL). Called with ?secret=<MERCURY_API_KEY>; the bearer token it returns is reused until it expires.')
+param mercuryAuthTokenUrl string = ''
+
+@description('Name of the existing Key Vault (in this resource group) holding the Mercury API key -- resolved as a Key Vault reference by this app\'s identity.')
+@minLength(1)
+param keyVaultName string
+
+@description('Name of the Key Vault secret holding the Mercury API key (MERCURY_API_KEY): exchanged at MERCURY_AUTH_TOKEN_URL for the bearer token every Mercury call carries. The app reads it as a Key Vault reference, so the key never sits in an app setting or a deployment parameter; rotate it by adding a new version of the secret.')
+param mercuryApiKeySecretName string = 'mercury-api-key'
 
 @description('Cost center tag value.')
 param costCenter string = 'RSBC'
@@ -211,6 +229,8 @@ var serviceTags = buildTags(environment, 'reliability', costCenter, owner, dataC
 var serviceBusNamespaceName = split(serviceBusNamespaceFqdn, '.')[0]
 var serviceBusDataReceiverRoleId = '4f6d3b9b-027b-4f4c-9142-0e5a2a2247e0'
 var serviceBusDataSenderRoleId = '69a216fc-b8fb-44d8-bc22-1f3c2cd27a39'
+var storageBlobDataReaderRoleId = '2a2b9908-6ea1-4ae2-8e65-a410df84e7d1'
+var keyVaultSecretsUserRoleId = '4633458b-17de-408a-b874-0445c86b69e6'
 var pipelineQueueNames = [
   dmerIngestQueueName
   dmerRawQueueName
@@ -261,6 +281,7 @@ var appSettings = {
   RECONCILIATION_CONTAINER: 'reconciliation-reports'
   MERCURY_API_BASE_URL: mercuryApiBaseUrl
   MERCURY_QUEUE: mercuryQueue
+  MERCURY_RECEIVED_DATE_TIMEZONE: mercuryReceivedDateTimezone
   SERVICE_BUS_NAMESPACE_FQDN: serviceBusNamespaceFqdn
   DMER_INGEST_QUEUE: dmerIngestQueueName
   DMER_RAW_QUEUE: dmerRawQueueName
@@ -272,7 +293,10 @@ var appSettings = {
   POSTGRES_USER: functionAppName
   POSTGRES_SSLMODE: 'require'
   MERCURY_WRITE_API_BASE_URL: mercuryWriteApiBaseUrl
-  MERCURY_API_KEY: mercuryApiKey
+  MERCURY_AUTH_TOKEN_URL: mercuryAuthTokenUrl
+  MERCURY_API_KEY: '@Microsoft.KeyVault(VaultName=${keyVaultName};SecretName=${mercuryApiKeySecretName})'
+  BLOB_ACCOUNT_URL: 'https://${dataStorageAccountName}.blob.${az.environment().suffixes.storage}/'
+  EXTRACTED_DMER_CONTAINER: 'extracted-dmer'
 }
 
 module functionApp 'modules/compute/function-app.bicep' = {
@@ -344,6 +368,48 @@ module queueSenderRoleAssignments 'modules/servicebus/data-plane-role-assignment
     }
   }
 ]
+
+// ---------------------------------------------------------------------------
+// 5. Blob RBAC (container-scoped, least privilege): the OutboxPublisher reads
+//    combined.json from extracted-dmer for the form's driver details. Nothing
+//    else on the data storage account.
+// ---------------------------------------------------------------------------
+resource extractedContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' existing = {
+  name: '${dataStorageAccountName}/default/extracted-dmer'
+}
+
+resource extractedBlobDataReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(extractedContainer.id, functionAppName, storageBlobDataReaderRoleId)
+  scope: extractedContainer
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', storageBlobDataReaderRoleId)
+    principalId: functionApp.outputs.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 6. Key Vault RBAC -- resolves the MERCURY_API_KEY reference. Scoped to
+//    the one secret, not the vault.
+// ---------------------------------------------------------------------------
+resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' existing = {
+  name: keyVaultName
+}
+
+resource mercuryApiKeySecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' existing = {
+  parent: keyVault
+  name: mercuryApiKeySecretName
+}
+
+resource mercuryApiKeySecretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(mercuryApiKeySecret.id, functionAppName, keyVaultSecretsUserRoleId)
+  scope: mercuryApiKeySecret
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', keyVaultSecretsUserRoleId)
+    principalId: functionApp.outputs.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Outputs

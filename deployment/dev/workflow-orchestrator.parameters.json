@@ -32,8 +32,11 @@
     "postgresPort": { "value": "5432" },
     "postgresDatabase": { "value": "dmer" },
     "dataStorageAccountName": { "value": "stdmerdevcac001" },
+    "mercuryAuthTokenUrl": {
+      "value": "https://rsbc-dfp-icbc-adapter-dev.apps.silver.devops.gov.bc.ca/Authentication/token"
+    },
     "mercuryDriverLicenceApiBaseUrl": {
-      "value": "https://func-mock-mercury-api-dev.azurewebsites.net/api/mercury/drivers"
+      "value": "https://rsbc-dfp-icbc-adapter-dev.apps.silver.devops.gov.bc.ca/drivers"
     },
     "azureOpenAiEndpoint": { "value": "https://test.aihub.gov.bc.ca/rsbc-dmer-ai-optimization" },
     "azureOpenAiDeployment": { "value": "gpt-5.1" },

@@ -44,11 +44,11 @@ document's current position in the pipeline.
 | `document_name` | text | As received from Mercury. |
 | `mercury_document_status` | text | Mercury's own status field (`Uploaded`, `Rejected`, ...). Refreshed only by the driver orchestration's completeness call ([Decision Gateway](stages/07-decision-gateway.md)), never by the poller. |
 | `document_priority` | text | From Mercury. Per question I-3, does **not** override the rule engine's PR/PU/TCM/CR selection. |
-| `received_date` / `dps_date` | timestamptz | `dps_date` empty = "not yet triaged" (question I-9, confirmed reliable signal). Refreshed at decision time only. |
+| `received_date` / `dps_date` | timestamptz | `dps_date` empty = "not yet triaged" (question I-9). Stored for reference; completeness uses `document_status = Uploaded`, not `dps_date` (2026-11-19). Refreshed at decision time only. |
 | `queue` / `business_area` | text | DPS General / DPS Unknown, etc. |
 | `mercury_case_id` | text, nullable | Set when Mercury supplied a case. |
 | `driver_key` | uuid FK → `driver.driver_key`, nullable | Null until Mercury supplies a driver object at Ingest. When Mercury supplies none it stays null — it is resolved by [Document Orchestration's Driver Lookup activity](stages/03-document-orchestration.md#activity-driver-lookup), not by Extraction. |
-| `document_url` | text, nullable | Mercury's pre-signed source URL, set by the Page Poller from the batch GET response. Not carried on the `dmer-ingest` message — the Ingest Function re-reads it from here (see [Ingest](stages/01-ingest.md)). Left populated after download, not nulled out, as a fallback for a DLQ replay/re-poll — pending question M-1's answer on presigned URL TTL and refresh. |
+| `document_url` | text, nullable | Mercury's `documentUrl`, set by the Page Poller from the batch GET response: a path inside Mercury (`dfp_driver/<driverId>/…`), kept for reference. **Not used to download** — the Ingest Function fetches the PDF by `document_guid` (`GET dmers/{documentRecordId}/files`, see [Ingest](stages/01-ingest.md)). |
 | `raw_blob_url` | text | Set by Ingest once the source PDF lands in `raw-dmer`. |
 | `pipeline_status` | enum | Health/lifecycle state — see [Status modelling](#status-modelling). |
 | `current_stage` | enum | Position — see [Status modelling](#status-modelling). A stage that finishes sets the **next** stage (Ingest → `EXTRACT` with `DOWNLOADED`; Extraction → `NORMALIZE` with `EXTRACTED`). Status-only writes such as `MANUAL_REVIEW` leave it unchanged, so it still shows where the document stopped. |
@@ -115,7 +115,7 @@ The join unit — the row that makes "waiting on siblings" explicit and queryabl
 | `id` | uuid PK | |
 | `driver_key` | uuid FK → `driver.driver_key` | |
 | `status` | enum | `WAITING`, `STALE`, `READY`, `EVALUATING`, `DECIDED`, `POSTED` — see [Status modelling](#status-modelling). |
-| `expected_document_count` | int | Set from the Mercury `GET by driver_licence` call — by [Document Orchestration's Driver Lookup activity](stages/03-document-orchestration.md#activity-driver-lookup), **not** by Extraction; **re-verified** at decision time (question: a new document may have arrived mid-wait). |
+| `expected_document_count` | int | Set from the Mercury `POST drivers/lookup` call — by [Document Orchestration's Driver Lookup activity](stages/03-document-orchestration.md#activity-driver-lookup), **not** by Extraction; **re-verified** at decision time (question: a new document may have arrived mid-wait). |
 | `completed_document_count` | int | Incremented by the rule-engine activity each time a sibling document reaches `RULES_APPLIED`. |
 | `last_mercury_check_at` | timestamptz | |
 | `evaluated_at` | timestamptz, nullable | |
@@ -341,6 +341,8 @@ Full diagram: `docs/architecture/Figure3_Status_Lifecycle.png`.
 CREATE UNIQUE INDEX ON dmer_document (document_guid);
 -- the sweeper's main scan
 CREATE INDEX ON dmer_document (pipeline_status, updated_at);
+-- the Page Poller's daily limit: records first stored since midnight (V0013)
+CREATE INDEX ON dmer_document (first_seen_at);
 -- driver completeness checks
 CREATE INDEX ON dmer_document (driver_key, pipeline_status);
 CREATE INDEX ON driver_evaluation (status, last_mercury_check_at);

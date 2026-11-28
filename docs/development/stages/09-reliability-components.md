@@ -54,22 +54,31 @@ Each layer covers a failure the previous one cannot.
 | Table | Operation | Fields |
 |---|---|---|
 | `mercury_outbox` | `UPDATE` | On success: `status = SENT`, `sent_at`, `mercury_response`. On failure: `attempt_count` incremented, `last_error`, `next_attempt_at` set by exponential backoff. After the attempt ceiling: `status = FAILED` and an alert. |
-| `dmer_document` | `UPDATE` | `pipeline_status = COMPLETED` once **every** outbox row for the document is `SENT`. |
+| `dmer_document` | `UPDATE` | `pipeline_status = COMPLETED` once **every** outbox row for the document is `SENT`; `MANUAL_REVIEW` instead when its driver link (`MAP_DRIVER`) failed for good but its outcome was sent, as an error, to Intake (2026-11-20). |
 | `driver_evaluation` | `UPDATE` | `status = POSTED` once **every** outbox row in the batch is `SENT`. |
 
 ### Implementation
 
 `services/reliability/` (the `OutboxPublisher` timer) over
 `dmer_common.db.outbox_publisher.publish_due`; Mercury writes via
-`MercuryClient.send_outbox` (**provisional endpoints until M-6** -- the dev mock implements them).
+`MercuryClient.send_outbox`: the outcome via Mercury's `SetDmerAIProccessedStatus` (see
+[Post-Processing](08-post-processing.md#mercury-write-back--setdmeraiproccessedstatus-confirmed-2026-11-20));
+the driver mapping via Mercury's `add_driver`, the case via `add_case` (the dev mock implements all
+of them).
 
 - **Claim with a lease:** a run claims up to `OUTBOX_BATCH_SIZE` documents with a due `PENDING`
   row, with all their `PENDING` rows (`FOR UPDATE SKIP LOCKED`), and moves `next_attempt_at`
   `OUTBOX_LEASE_SECONDS` ahead; a run that dies mid-send leaves the rows to be claimed again.
   The send itself is outside any transaction.
-- **Per-document order:** `MAP_DRIVER`, `CREATE_CASE`, `MARK_DUPLICATE`, `UPDATE_OUTCOME`. A
+- **Per-document order:** `MAP_DRIVER`, `CREATE_CASE`, `UPDATE_OUTCOME` (and `MARK_DUPLICATE`, for
+  rows queued before duplicates moved onto the outcome). A
   failure stops the document: the rows after it wait for the failed row's next attempt, so an
-  outcome is never written before its driver or case.
+  outcome is never written before its driver or case. **Exception (2026-11-20):** when
+  `MAP_DRIVER` (`add_driver`) fails for good, the outcome still goes — as a processing error
+  (`Error`, IN, Team - Intake) with the driver-link error in its notes, for Intake to review by
+  hand; only `CREATE_CASE` is blocked. When `CREATE_CASE` (`add_case`) fails for good, the
+  outcome goes as usual with the case error added to its notes. While either is still being
+  retried, the outcome waits.
 - **Retryable vs rejected:** network errors, timeouts, 408, 429 and 5xx (and the circuit breaker
   open) back off exponentially; any other 4xx marks the row `FAILED` at once, and the document's
   later rows `FAILED` as "blocked" -- a person resolves it.
@@ -98,7 +107,7 @@ per row via `next_attempt_at`, alert on a growing count of `PENDING` rows past S
 | Documents in a non-terminal `pipeline_status` whose `updated_at` is older than the stage SLA | Re-publish to the appropriate queue, increment `attempt_count`, alert after N sweeps. |
 | `driver_evaluation` rows in `WAITING` where every document for that driver has in fact reached `RULES_APPLIED` | Re-signal the driver orchestration. **This is the direct remedy for the lost-update race** described in [Driver Orchestration](06-driver-orchestration.md#why-serialization-is-required). |
 | `mercury_outbox` rows `PENDING` beyond a threshold, or with a high `attempt_count` | Alert — a sustained backlog here means Mercury is unavailable or rejecting. |
-| Documents present in Mercury's `GET by driver_licence` response with no `dmer_document` row at all | Ingest them — this catches a lost webhook delivery and a page the poller skipped. |
+| Documents present in Mercury's `POST drivers/lookup` response with no `dmer_document` row at all | Ingest them — this catches a lost webhook delivery and a page the poller skipped. |
 
 ### Database writes
 
@@ -145,8 +154,9 @@ incident — it is the evidence that the guarantee holds.
 ### Implementation
 
 `services/reliability/` (the `DailyReconciliation` timer, `reliability.reconciliation`) over
-`dmer_common.db.reconciliation`. It pages through Mercury's batch API (the DPS queue,
-`MERCURY_QUEUE`, at most `RECONCILIATION_MAX_PAGES`) and reports every document there that is
+`dmer_common.db.reconciliation`. It reads one page of Mercury's `GET dmers` — the documents
+still in the DPS queues, not yet marked AI Processed (the API is claim-based, so it cannot page
+further without claiming, which only the Page Poller does) — and reports every document there that is
 `NOT_RECEIVED` (past a grace period), `OVERDUE` in the pipeline, in `MANUAL_REVIEW` with nothing
 sent to Mercury, `NOT_POSTED` or `POST_FAILED`. A document whose outbox rows are all `SENT` is
 accounted for. The report (ids, statuses and dates only, plus the day's manual-review, fallback and
@@ -204,6 +214,7 @@ different triggers — a sweeper-detected stall vs. a drained dead-letter messag
 | `STAGE_SLA_INGEST_MINUTES` / `_EXTRACT_` / `_NORMALIZE_` / `_DRIVER_` | Per-stage SLA thresholds that define "stalled" (default 30) — set once question I-14 (target time to AI-processed queue) is answered precisely. |
 | `SWEEPER_MAX_REPUBLISH` | Re-publishes per document and stage before `MANUAL_REVIEW` (default 3). |
 | `OUTBOX_BACKLOG_SLA_MINUTES` / `OUTBOX_ATTEMPT_ALERT` | Outbox backlog alert thresholds (defaults 60, 5). |
+| `BLOB_ACCOUNT_URL` / `EXTRACTED_DMER_CONTAINER` | The pipeline data storage account and `extracted-dmer`: when `add_driver` fails for good, the publisher reads the form's driver details (licence, first name, surname) from `combined.json` for the outcome's note. Read-only, container-scoped. Unset: the note goes without them. |
 
 ## Authentication / identity
 

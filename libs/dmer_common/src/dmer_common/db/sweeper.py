@@ -42,7 +42,7 @@ from ..telemetry import get_logger
 from .dmer_document import dmer_document
 from .dmer_stage_run import dmer_stage_run
 from .driver_decision import driver_evaluation
-from .mercury_outbox import mercury_outbox
+from .mercury_outbox import mercury_outbox, queue_fallback_outcome
 from .processing_error import _LEGACY_CLASS, FailureCategory, processing_error
 from .status import PipelineStage, PipelineStatus
 
@@ -75,6 +75,12 @@ _IN_FLIGHT: Final = {
     _S.NORMALIZED: (PipelineStage.NORMALIZE, SweepQueue.EXTRACTED),
 }
 _PRE_RULES: Final = tuple(s.value for s in _IN_FLIGHT)
+# How a stage reads in the note Intake gets.
+_STAGE_NAMES: Final = {
+    PipelineStage.INGEST: "ingest",
+    PipelineStage.EXTRACT: "extraction",
+    PipelineStage.NORMALIZE: "normalization",
+}
 _AWAITING_DRIVER: Final = (
     _S.RULES_APPLIED.value,
     _S.AWAITING_DRIVER_COMPLETION.value,
@@ -260,6 +266,18 @@ async def sweep_stalled_documents(
                     resolution=_S.MANUAL_REVIEW.value,
                     now=now,
                 )
+                # Not processed: Mercury is told (Error, Team - Intake).
+                await queue_fallback_outcome(
+                    conn,
+                    document_id=row.id,
+                    document_guid=str(row.document_guid),
+                    reason=(
+                        "The DMER stopped moving in the AI pipeline "
+                        f"({_STAGE_NAMES.get(stage, stage.value.lower())}) "
+                        "and was not processed."
+                    ),
+                    now=now,
+                )
                 result.manual_review.append(row.id)
                 _log.error(
                     "stalled document routed to manual review",
@@ -310,6 +328,69 @@ async def sweep_stalled_documents(
     return result
 
 
+async def _give_up_on_batch(
+    conn: AsyncConnection,
+    evaluation_id: object,
+    driver_key: str,
+    *,
+    signals: int,
+    now: datetime,
+) -> int:
+    """The driver's batch never got decided: route its waiting documents to
+    ``MANUAL_REVIEW``, each with a ``processing_error`` and an error outcome
+    queued for Mercury (Error, Team - Intake), and close the evaluation
+    (``DECIDED``, ``open = false``) so the driver's next DMER starts a new
+    batch. Returns how many documents were routed."""
+    documents = (
+        await conn.execute(
+            dmer_document.update()
+            .where(
+                dmer_document.c.driver_key == driver_key,
+                dmer_document.c.pipeline_status.in_(_AWAITING_DRIVER),
+            )
+            .values(pipeline_status=_S.MANUAL_REVIEW.value, updated_at=now)
+            .returning(dmer_document.c.id, dmer_document.c.document_guid)
+        )
+    ).all()
+    for doc in documents:
+        await _record(
+            conn,
+            document_id=doc.id,
+            stage=PipelineStage.DECISION,
+            category=FailureCategory.UNKNOWN,
+            reason_code=UNKNOWN_STALLED,
+            message=f"driver batch not decided after {signals} re-signals",
+            sweep=signals,
+            resolution=_S.MANUAL_REVIEW.value,
+            now=now,
+        )
+        await queue_fallback_outcome(
+            conn,
+            document_id=doc.id,
+            document_guid=str(doc.document_guid),
+            reason=(
+                "The AI pipeline could not complete the decision for this "
+                "driver's DMERs."
+            ),
+            now=now,
+        )
+    await conn.execute(
+        driver_evaluation.update()
+        .where(driver_evaluation.c.id == evaluation_id)
+        .values(
+            status="DECIDED",
+            open=False,
+            evaluated_at=now,
+            decision_summary={
+                "path": "fallback",
+                "reason_code": UNKNOWN_STALLED,
+                "document_count": len(documents),
+            },
+        )
+    )
+    return len(documents)
+
+
 async def sweep_stale_evaluations(
     engine: AsyncEngine, *, settings: SweeperSettings, now: datetime
 ) -> list[Republish]:
@@ -321,8 +402,10 @@ async def sweep_stale_evaluations(
     ``WAITING -> STALE`` and one ``driver-decision`` signal is returned for
     the driver. A ``STALE`` evaluation is re-signalled again after the next
     SLA, at most ``max_republish`` times (counted on the signalling
-    document's ``DECISION`` stage); after that it is left ``STALE`` and
-    logged at ERROR for a person.
+    document's ``DECISION`` stage). After that the pipeline gives up on the
+    batch (:func:`_give_up_on_batch`): its documents go to ``MANUAL_REVIEW``
+    with an error outcome queued for Mercury, the evaluation is closed, and
+    it is logged at ERROR.
     """
     driver_docs = dmer_document.alias("driver_docs")
     in_flight = exists().where(
@@ -377,11 +460,16 @@ async def sweep_stale_evaluations(
             ).one()
             prior = await _prior_sweeps(conn, document.id, PipelineStage.DECISION)
             if prior >= settings.max_republish:
+                routed = await _give_up_on_batch(
+                    conn, evaluation.id, driver_key, signals=prior, now=now
+                )
                 _log.error(
-                    "stale driver evaluation not re-signalled: budget used up",
+                    "stale driver evaluation given up: batch routed to manual "
+                    "review, error outcomes queued",
                     extra={
                         "driver_evaluation_id": str(evaluation.id),
                         "signals": prior,
+                        "document_count": routed,
                     },
                 )
                 continue

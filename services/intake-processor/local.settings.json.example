@@ -14,8 +14,11 @@
     "DMER_RAW_CONTAINER": "raw",
     "DMER_POLL_SCHEDULE": "0 */5 * * * *",
     "MERCURY_API_BASE_URL": "",
+    "MERCURY_AUTH_TOKEN_URL": "",
     "MERCURY_API_KEY": "",
-    "MERCURY_QUEUE": "BOTH",
-    "MERCURY_PAGE_SIZE": "50"
+    "MERCURY_PAGE_SIZE": "50",
+    "MERCURY_MAX_PAGES_PER_POLL": "1",
+    "MERCURY_DAILY_POLL_LIMIT": "1000",
+    "MERCURY_RECEIVED_DATE_TIMEZONE": "America/Vancouver"
   }
 }

@@ -130,18 +130,28 @@ param postgresPort string = '5432'
 @description('Postgres database name.')
 param postgresDatabase string = 'dmer'
 
-@description('Mercury backlog API base URL (unpaginated), e.g. https://<mercury-host>/documents. Passed straight through as MERCURY_API_BASE_URL — see function_app.py\'s _get_base_mercury_url.')
+@description('Mercury GET dmers endpoint, e.g. https://<mercury-host>/Dmers (MERCURY_API_BASE_URL). The Page Poller calls it with ?pageSize= and marks what it read AI Processed at <this URL>/BatchSetDmerAIProccessedStatus.')
 param mercuryApiBaseUrl string = ''
 
-@secure()
-@description('Bearer token for the Mercury API. Supply via a pipeline secret, never checked into a parameters.json file.')
-param mercuryApiKey string = ''
+@description('Mercury token endpoint, e.g. https://<mercury-host>/Authentication/token (MERCURY_AUTH_TOKEN_URL). Called with ?secret=<MERCURY_API_KEY>; the bearer token it returns is reused until it expires.')
+param mercuryAuthTokenUrl string = ''
 
-@description('Mercury queue selector, passed straight through as the `queue` query parameter — DPS_GENERAL | DPS_UNKNOWN | BOTH (a single combined result stream, not something this code fans out over — see docs/services/intake-processor.md).')
-param mercuryQueue string = 'BOTH'
+@description('Name of the existing Key Vault (in this resource group) holding the Mercury API key -- resolved as a Key Vault reference by this app\'s identity.')
+@minLength(1)
+param keyVaultName string
+
+@description('Name of the Key Vault secret holding the Mercury API key (MERCURY_API_KEY): exchanged at MERCURY_AUTH_TOKEN_URL for the bearer token every Mercury call carries. The app reads it as a Key Vault reference, so the key never sits in an app setting or a deployment parameter; rotate it by adding a new version of the secret.')
+param mercuryApiKeySecretName string = 'mercury-api-key'
+
+@description('IANA time zone Mercury\'s receivedDate is read in when it carries no offset (Mercury sends "MM/DD/YYYY HH:MM:SS"). Pacific until Mercury confirms the zone.')
+param mercuryReceivedDateTimezone string = 'America/Vancouver'
 
 @description('Mercury API page size.')
 param mercuryPageSize string = '50'
+
+@description('Most records (DMERs and non-DMERs) the Page Poller takes from Mercury per day, counted from midnight in mercuryReceivedDateTimezone (MERCURY_DAILY_POLL_LIMIT). Once reached, nothing more is read until the next day. 0 pauses polling.')
+@minValue(0)
+param mercuryDailyPollLimit int = 1000
 
 @description('Fully-qualified Service Bus namespace hostname (e.g. sb-rsbc-dmer-shared-dev-001.servicebus.windows.net) the Page Poller, Webhook Listener, and Ingest Function authenticate against via DefaultAzureCredential. This template grants its own managed identity queue-scoped Service Bus roles on dmer-ingest and dmer-raw -- see the role assignment modules below.')
 @minLength(1)
@@ -166,6 +176,7 @@ var serviceTags = buildTags(environment, 'intake-processor', costCenter, owner, 
 var serviceBusNamespaceName = split(serviceBusNamespaceFqdn, '.')[0]
 var serviceBusDataSenderRoleId = '69a216fc-b8fb-44d8-bc22-1f3c2cd27a39'
 var serviceBusDataReceiverRoleId = '4f6d3b9b-027b-4f4c-9142-0e5a2a2247e0'
+var keyVaultSecretsUserRoleId = '4633458b-17de-408a-b874-0445c86b69e6'
 
 // ---------------------------------------------------------------------------
 // 1. Application Insights
@@ -198,9 +209,11 @@ var appSettings = {
   POSTGRES_DATABASE: postgresDatabase
   POSTGRES_USER: functionAppName
   MERCURY_API_BASE_URL: mercuryApiBaseUrl
-  MERCURY_API_KEY: mercuryApiKey
-  MERCURY_QUEUE: mercuryQueue
+  MERCURY_AUTH_TOKEN_URL: mercuryAuthTokenUrl
+  MERCURY_API_KEY: '@Microsoft.KeyVault(VaultName=${keyVaultName};SecretName=${mercuryApiKeySecretName})'
   MERCURY_PAGE_SIZE: mercuryPageSize
+  MERCURY_DAILY_POLL_LIMIT: string(mercuryDailyPollLimit)
+  MERCURY_RECEIVED_DATE_TIMEZONE: mercuryReceivedDateTimezone
   SERVICE_BUS_NAMESPACE_FQDN: serviceBusNamespaceFqdn
   // Identity-based connection for the dmer_ingest function's Service Bus
   // *trigger* binding specifically -- a different mechanism from
@@ -299,6 +312,29 @@ module dmerRawSenderRoleAssignment 'modules/servicebus/data-plane-role-assignmen
     queueName: dmerRawQueueName
     principalId: functionApp.outputs.principalId
     roleDefinitionId: serviceBusDataSenderRoleId
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 5. Key Vault RBAC -- resolves the MERCURY_API_KEY reference. Scoped to
+//    the one secret, not the vault.
+// ---------------------------------------------------------------------------
+resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' existing = {
+  name: keyVaultName
+}
+
+resource mercuryApiKeySecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' existing = {
+  parent: keyVault
+  name: mercuryApiKeySecretName
+}
+
+resource mercuryApiKeySecretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(mercuryApiKeySecret.id, functionAppName, keyVaultSecretsUserRoleId)
+  scope: mercuryApiKeySecret
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', keyVaultSecretsUserRoleId)
+    principalId: functionApp.outputs.principalId
+    principalType: 'ServicePrincipal'
   }
 }
 

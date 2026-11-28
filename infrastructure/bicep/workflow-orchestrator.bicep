@@ -168,18 +168,20 @@ param triagePolicyContainer string = 'triage-policy'
 ])
 param decisionEngine string = 'rules'
 
-@description('Mercury driver-by-licence API base URL (Driver Lookup).')
+@description('Mercury drivers root, e.g. https://<mercury-host>/drivers (MERCURY_DRIVER_LICENCE_API_BASE_URL): Driver Lookup calls POST <this URL>/lookup with {"driverLicenceNumber": ...}.')
 param mercuryDriverLicenceApiBaseUrl string = ''
 
-@secure()
-@description('Bearer token for the Mercury API. Supply at deploy time, never checked into a parameters.json file.')
-param mercuryApiKey string = ''
+@description('Mercury token endpoint, e.g. https://<mercury-host>/Authentication/token (MERCURY_AUTH_TOKEN_URL). Called with ?secret=<MERCURY_API_KEY>; the bearer token it returns is reused until it expires.')
+param mercuryAuthTokenUrl string = ''
+
+@description('Name of the Key Vault secret holding the Mercury API key (MERCURY_API_KEY): exchanged at MERCURY_AUTH_TOKEN_URL for the bearer token every Mercury call carries. The app reads it as a Key Vault reference, so the key never sits in an app setting or a deployment parameter; rotate it by adding a new version of the secret.')
+param mercuryApiKeySecretName string = 'mercury-api-key'
 
 @description('Mercury document types that count toward a driver\'s evaluation (comma-separated).')
 param mercuryCountedDocumentTypes string = 'DMER'
 
-@description('Mercury document statuses that don\'t count (comma-separated).')
-param mercuryUncountedDocumentStatuses string = 'Rejected'
+@description('Mercury document statuses that mean a document is still waiting (comma-separated).')
+param mercuryWaitingDocumentStatuses string = 'Uploaded'
 
 @description('External Azure OpenAI (AI Hub) endpoint for Normalize.')
 @minLength(1)
@@ -193,7 +195,7 @@ param azureOpenAiDeployment string
 @minLength(1)
 param azureOpenAiApiVersion string
 
-@description('Name of the existing Key Vault (in this resource group) holding the Azure OpenAI API key -- resolved as a Key Vault reference by this app\'s identity.')
+@description('Name of the existing Key Vault (in this resource group) holding the Azure OpenAI and Mercury API keys -- resolved as Key Vault references by this app\'s identity.')
 @minLength(1)
 param keyVaultName string
 
@@ -268,9 +270,10 @@ var appSettings = {
   TRIAGE_POLICY_CONTAINER: triagePolicyContainer
   DECISION_ENGINE: decisionEngine
   MERCURY_DRIVER_LICENCE_API_BASE_URL: mercuryDriverLicenceApiBaseUrl
-  MERCURY_API_KEY: mercuryApiKey
+  MERCURY_AUTH_TOKEN_URL: mercuryAuthTokenUrl
+  MERCURY_API_KEY: '@Microsoft.KeyVault(VaultName=${keyVaultName};SecretName=${mercuryApiKeySecretName})'
   MERCURY_COUNTED_DOCUMENT_TYPES: mercuryCountedDocumentTypes
-  MERCURY_UNCOUNTED_DOCUMENT_STATUSES: mercuryUncountedDocumentStatuses
+  MERCURY_WAITING_DOCUMENT_STATUSES: mercuryWaitingDocumentStatuses
   AZURE_OPENAI_ENDPOINT: azureOpenAiEndpoint
   // The documented Managed Identity exception (external AI Hub key) --
   // resolved from Key Vault by this app's identity, never stored here.
@@ -411,8 +414,8 @@ resource triagePolicyBlobDataContributor 'Microsoft.Authorization/roleAssignment
 }
 
 // ---------------------------------------------------------------------------
-// 6. Key Vault RBAC -- resolves the AZURE_OPENAI_API_KEY reference. Scoped
-//    to the one secret, not the vault.
+// 6. Key Vault RBAC -- resolves the AZURE_OPENAI_API_KEY and MERCURY_API_KEY
+//    references. Scoped to each secret, not the vault.
 // ---------------------------------------------------------------------------
 resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' existing = {
   name: keyVaultName
@@ -426,6 +429,21 @@ resource openAiKeySecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' existing
 resource openAiKeySecretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(openAiKeySecret.id, functionAppName, keyVaultSecretsUserRoleId)
   scope: openAiKeySecret
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', keyVaultSecretsUserRoleId)
+    principalId: functionApp.outputs.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource mercuryApiKeySecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' existing = {
+  parent: keyVault
+  name: mercuryApiKeySecretName
+}
+
+resource mercuryApiKeySecretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(mercuryApiKeySecret.id, functionAppName, keyVaultSecretsUserRoleId)
+  scope: mercuryApiKeySecret
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', keyVaultSecretsUserRoleId)
     principalId: functionApp.outputs.principalId

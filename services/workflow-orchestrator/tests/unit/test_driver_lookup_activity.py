@@ -49,7 +49,7 @@ SETTINGS = MercuryDriverSettings(
     base_url="https://mercury/drivers",
     api_key="key",  # pragma: allowlist secret
     counted_document_types=frozenset({"dmer"}),
-    uncounted_document_statuses=frozenset({"rejected"}),
+    waiting_document_statuses=frozenset({"uploaded"}),
 )
 
 
@@ -80,6 +80,8 @@ def dependencies(monkeypatch):
     monkeypatch.setattr(activity, "driver_lookup_session", session)
     monkeypatch.setattr(activity, "_get_async_engine", AsyncMock(return_value=engine))
     monkeypatch.setattr(activity, "MercuryClient", lambda: client)
+    # No storage by default: the fallback note goes without the form's details.
+    monkeypatch.delenv("BLOB_ACCOUNT_URL", raising=False)
     return SimpleNamespace(repo=repository, engine=engine, client=client)
 
 
@@ -99,9 +101,9 @@ def test_page_licence_found_once_is_attached_and_flagged_as_a_lookup(dependencie
     d.engine.dispose.assert_awaited_once()
 
 
-def test_expected_count_is_counted_types_not_in_uncounted_statuses(dependencies):
+def test_expected_count_is_counted_types_in_waiting_statuses(dependencies):
     _run()
-    # DMER/Rejected and Test Report/Uploaded are not counted.
+    # Only DMER/Uploaded: DMER/Rejected and Test Report/Uploaded are not counted.
     assert (
         dependencies.repo.attach_driver.call_args.kwargs["expected_document_count"] == 1
     )
@@ -110,9 +112,10 @@ def test_expected_count_is_counted_types_not_in_uncounted_statuses(dependencies)
 @pytest.mark.parametrize(
     "types,statuses,expected",
     [
-        ({"dmer"}, set(), 2),
-        ({"dmer", "test report"}, {"rejected"}, 2),
-        ({"dmer", "test report"}, set(), 3),
+        ({"dmer"}, {"uploaded"}, 1),
+        ({"dmer"}, set(), 0),
+        ({"dmer", "test report"}, {"uploaded"}, 2),
+        ({"dmer", "test report"}, {"uploaded", "rejected"}, 3),
     ],
 )
 def test_expected_count_follows_configuration(types, statuses, expected):
@@ -120,7 +123,7 @@ def test_expected_count_follows_configuration(types, statuses, expected):
         activity.expected_document_count(
             MERCURY_DRIVER,
             counted_types=frozenset(types),
-            uncounted_statuses=frozenset(statuses),
+            waiting_statuses=frozenset(statuses),
         )
         == expected
     )
@@ -175,6 +178,81 @@ def test_unresolvable_documents_go_to_manual_review(dependencies, run, drivers, 
     d.repo.attach_driver.assert_not_awaited()
     if reason == LICENCE_UNREADABLE:
         d.client.get_driver_by_licence.assert_not_called()
+
+
+class _FormBlob:
+    """BlobClient stand-in serving one document's combined.json."""
+
+    def __init__(self, account_url, combined=None, error=None):
+        self.account_url = account_url
+        self.combined = combined
+        self.error = error
+        self.urls = []
+
+    def blob_url(self, container, path):
+        return f"{self.account_url}/{container}/{path}"
+
+    def download_if_exists(self, url):
+        self.urls.append(url)
+        if self.error:
+            raise self.error
+        return None if self.combined is None else json.dumps(self.combined).encode()
+
+
+def _form_blob(monkeypatch, **kwargs):
+    monkeypatch.setenv("BLOB_ACCOUNT_URL", "https://data.blob")
+    made = []
+
+    def factory(account_url):
+        made.append(_FormBlob(account_url, **kwargs))
+        return made[-1]
+
+    monkeypatch.setattr(activity, "BlobClient", factory)
+    return made
+
+
+def test_manual_review_gets_the_driver_details_from_the_forms_combined_json(
+    dependencies, monkeypatch
+):
+    d = dependencies
+    made = _form_blob(
+        monkeypatch,
+        combined={
+            "fields": {"dl_number": "1234567", "first_name": "Jo", "last_name": "Doe"}
+        },
+    )
+    d.client.get_driver_by_licence.return_value = []
+    assert _run() == {"manual_review": True, "reason": DRIVER_NOT_FOUND}
+    form = d.repo.manual_review.call_args.kwargs["form_driver"]
+    assert (form.licence, form.first_name, form.last_name) == ("1234567", "Jo", "Doe")
+    assert made[0].urls == [f"https://data.blob/extracted-dmer/{DOC_ID}/combined.json"]
+
+
+@pytest.mark.parametrize(
+    "blob_kwargs",
+    [{"combined": None}, {"error": RuntimeError("storage down")}],
+    ids=["missing", "unreadable"],
+)
+def test_manual_review_still_happens_without_the_forms_driver_details(
+    dependencies, monkeypatch, blob_kwargs
+):
+    d = dependencies
+    _form_blob(monkeypatch, **blob_kwargs)
+    d.client.get_driver_by_licence.return_value = []
+    assert _run() == {"manual_review": True, "reason": DRIVER_NOT_FOUND}
+    form = d.repo.manual_review.call_args.kwargs["form_driver"]
+    assert (form.licence, form.first_name, form.last_name) == (None, None, None)
+
+
+def test_without_a_blob_account_the_note_goes_without_the_forms_details(
+    dependencies, monkeypatch
+):
+    d = dependencies
+    monkeypatch.delenv("BLOB_ACCOUNT_URL", raising=False)
+    d.client.get_driver_by_licence.return_value = []
+    _run()
+    form = d.repo.manual_review.call_args.kwargs["form_driver"]
+    assert form.licence is None and form.first_name is None
 
 
 @pytest.mark.parametrize(

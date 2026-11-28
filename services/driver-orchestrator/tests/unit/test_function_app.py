@@ -42,7 +42,7 @@ class _Engine:
 class _Mercury:
     driver_settings = SimpleNamespace(
         counted_document_types=frozenset({"dmer"}),
-        uncounted_document_statuses=frozenset({"rejected"}),
+        waiting_document_statuses=frozenset({"uploaded"}),
     )
 
     def get_driver_by_licence(self, licence):  # pragma: no cover - not reached
@@ -87,7 +87,7 @@ def test_handle_runs_one_evaluation_for_the_signalled_driver(monkeypatch):
     ((eng, driver_key, kwargs),) = calls
     assert (eng, driver_key) == (engine, DRIVER_KEY)
     assert kwargs["counted_types"] == frozenset({"dmer"})
-    assert kwargs["uncounted_statuses"] == frozenset({"rejected"})
+    assert kwargs["waiting_statuses"] == frozenset({"uploaded"})
     assert engine.disposed
 
 

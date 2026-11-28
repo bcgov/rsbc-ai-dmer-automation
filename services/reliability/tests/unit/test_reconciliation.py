@@ -14,16 +14,18 @@ NOW = datetime(2026, 10, 19, 13, tzinfo=UTC)
 
 
 class FakeMercury:
-    def __init__(self, pages):
-        self.pages, self.calls = pages, []
+    """GET dmers: the documents still in the DPS queues, and whether more
+    wait beyond them."""
 
-    def get_page(self, *, queue, page_size, next_url=None):
-        self.calls.append((queue, page_size, next_url))
-        records, next_link = self.pages[len(self.calls) - 1]
-        return SimpleNamespace(records=records, next_url=next_link)
+    def __init__(self, records, has_more=False):
+        self.records, self.has_more, self.calls = records, has_more, []
+
+    def get_page(self, *, page_size):
+        self.calls.append(page_size)
+        return SimpleNamespace(records=self.records, has_more=self.has_more)
 
 
-def _run(monkeypatch, pages, entries, settings=None):
+def _run(monkeypatch, mercury, entries, settings=None):
     seen = {}
 
     async def fake_reconcile(engine, documents, *, now, receive_grace, overdue):
@@ -36,7 +38,6 @@ def _run(monkeypatch, pages, entries, settings=None):
     monkeypatch.setattr(rc, "reconcile", fake_reconcile)
     monkeypatch.setattr(rc, "daily_metrics", fake_metrics)
     saved = {}
-    mercury = FakeMercury(pages)
     report = asyncio.run(
         rc.run_report(
             object(),
@@ -49,14 +50,21 @@ def _run(monkeypatch, pages, entries, settings=None):
     return report, saved, seen, mercury
 
 
-def test_every_page_of_the_dps_queue_is_checked_and_the_report_saved(monkeypatch):
-    pages = [
-        ([{"document_guid": "g1", "received_date": "2026-10-18T10:00:00Z"}], "next"),
-        ([{"document_guid": "g2"}, {"document_name": "no guid"}], None),
-    ]
+def test_the_documents_still_in_the_dps_queues_are_checked_and_the_report_saved(
+    monkeypatch,
+):
+    mercury = FakeMercury(
+        [
+            {"document_guid": "g1", "received_date": "2026-10-18T03:00:00-07:00"},
+            {"document_guid": "g2"},
+            {"document_name": "no guid"},
+        ]
+    )
     entry = ReportEntry(Finding.NOT_RECEIVED, "g2", None, None, None, None)
-    report, saved, seen, mercury = _run(monkeypatch, pages, [entry])
-    assert [c[2] for c in mercury.calls] == [None, "next"]
+    report, saved, seen, mercury = _run(monkeypatch, mercury, [entry])
+    # One GET dmers call: the next page only appears once these are marked,
+    # which only the Page Poller does.
+    assert mercury.calls == [2]
     assert seen["documents"] == [
         MercuryDocument("g1", datetime(2026, 10, 18, 10, tzinfo=UTC)),
         MercuryDocument("g2", None),
@@ -70,12 +78,10 @@ def test_every_page_of_the_dps_queue_is_checked_and_the_report_saved(monkeypatch
     assert report["metrics"]["manual_review_24h"] == 2
 
 
-def test_a_queue_longer_than_max_pages_is_reported_as_incomplete(monkeypatch):
-    pages = [([{"document_guid": f"g{i}"}], f"p{i + 1}") for i in range(5)]
-    report, _, _, mercury = _run(
-        monkeypatch, pages, [], settings=rc.ReportSettings(max_pages=3)
-    )
-    assert len(mercury.calls) == 3
+def test_more_waiting_than_one_page_is_reported_as_incomplete(monkeypatch):
+    mercury = FakeMercury([{"document_guid": "g1"}], has_more=True)
+    report, _, _, mercury = _run(monkeypatch, mercury, [])
+    assert len(mercury.calls) == 1
     assert report["mercury_read_complete"] is False
 
 

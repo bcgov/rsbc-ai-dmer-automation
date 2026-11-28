@@ -35,6 +35,10 @@ class FailureCode(str, enum.Enum):
     STALE_STATUS = "STALE_STATUS"
     SOURCE_DOWNLOAD_FAILED = "SOURCE_DOWNLOAD_FAILED"
     PDF_UNREADABLE = "PDF_UNREADABLE"
+    # Page 1 shows neither the form header nor the examiner / signature block
+    # (cutoff.not_a_dmer_form): not an MV2011C, or too incomplete to identify.
+    # Raised deliberately after Stage A, before OCR and the LLM.
+    NOT_A_DMER_FORM = "NOT_A_DMER_FORM"
     DI_CUSTOM_MODEL_FAILED = "DI_CUSTOM_MODEL_FAILED"
     OCR_FAILED = "OCR_FAILED"
     LLM_CALL_FAILED = "LLM_CALL_FAILED"

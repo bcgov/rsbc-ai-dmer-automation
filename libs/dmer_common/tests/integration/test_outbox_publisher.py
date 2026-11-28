@@ -14,6 +14,7 @@ from uuid import uuid4
 
 import pytest
 from dmer_common.db.mercury_outbox import (
+    ProposedDriver,
     decision_rows,
     fallback_rows,
     queue_outbox_rows,
@@ -36,16 +37,19 @@ SETTINGS = PublisherSettings(batch_size=10, max_attempts=3)
 class FakeMercury:
     """Records (operation, key); fails per operation from *failures*."""
 
-    def __init__(self, failures=None):
+    def __init__(self, failures=None, responses=None):
         self.calls = []
+        self.payloads = []
         self.failures = dict(failures or {})
+        self.responses = dict(responses or {})
 
     def send_outbox(self, operation, payload, key):
         self.calls.append((operation, key))
+        self.payloads.append((operation, dict(payload)))
         failure = self.failures.get(operation)
         if failure is not None:
             raise failure
-        return {"ok": True, "operation": operation}
+        return self.responses.get(operation, {"ok": True, "operation": operation})
 
 
 class Clock:
@@ -81,7 +85,7 @@ async def database():
         await engine.dispose()
 
 
-async def _decided_batch(engine, *, duplicate=False):
+async def _decided_batch(engine, *, duplicate=False, proposed_driver=False):
     """A DECIDED evaluation with two POSTING documents and their outbox rows
     (the second a rejected duplicate when *duplicate*). Returns ids."""
     async with engine.begin() as conn:
@@ -135,6 +139,13 @@ async def _decided_batch(engine, *, duplicate=False):
                 mercury_driver_id="D7",
                 is_duplicate=is_dup,
                 duplicate_of_document_guid=docs[0][1] if is_dup else None,
+                proposed_driver=proposed_driver,
+                proposed_mercury_driver_id="D7" if proposed_driver else None,
+                proposed_driver_details=(
+                    ProposedDriver("01234567", "FAKE", "DRIVER")
+                    if proposed_driver
+                    else None
+                ),
             )
         await queue_outbox_rows(conn, rows, now=T0)
     return evaluation, [d for d, _ in docs]
@@ -174,14 +185,11 @@ def test_a_decided_batch_is_sent_in_order_and_completes():
                 engine, mercury, settings=SETTINGS, clock=Clock()
             )
             outbox, documents, evaluations = await _statuses(engine)
-            assert (summary.documents, summary.sent, summary.failed) == (2, 5, 0)
-            # per document: the case before the duplicate before the outcome
+            assert (summary.documents, summary.sent, summary.failed) == (2, 4, 0)
+            # per document: the case before the outcome (a duplicate is
+            # flagged on its outcome row)
             ops = [op for op, _ in mercury.calls]
-            first, second = ops[:2], ops[2:]
-            assert {tuple(first), tuple(second)} == {
-                ("CREATE_CASE", "UPDATE_OUTCOME"),
-                ("CREATE_CASE", "MARK_DUPLICATE", "UPDATE_OUTCOME"),
-            }
+            assert ops == ["CREATE_CASE", "UPDATE_OUTCOME"] * 2
             assert {r.status for r in outbox} == {"SENT"}
             assert {r.attempt_count for r in outbox} == {1}
             assert set(documents.values()) == {"COMPLETED"}
@@ -189,7 +197,262 @@ def test_a_decided_batch_is_sent_in_order_and_completes():
             assert summary.evaluations_posted == 1
             # nothing left: a second run sends nothing
             again = await publish_due(engine, mercury, settings=SETTINGS, clock=Clock())
-            assert again.documents == 0 and len(mercury.calls) == 5
+            assert again.documents == 0 and len(mercury.calls) == 4
+
+    asyncio.run(run())
+
+
+def test_a_failed_driver_link_still_sends_the_outcome_as_an_error():
+    # add_driver rejected for good: the outcome still goes (as a processing
+    # error for Intake, the error in its notes); only the case is blocked.
+    async def run():
+        async with database() as engine:
+            await _decided_batch(engine, proposed_driver=True)
+            rejected = MercuryWriteError(
+                "Mercury write POST rejected: Driver not found",
+                status=200,
+                retryable=False,
+            )
+            mercury = FakeMercury({"MAP_DRIVER": rejected})
+            summary = await publish_due(
+                engine, mercury, settings=SETTINGS, clock=Clock()
+            )
+            assert [op for op, _ in mercury.calls] == [
+                "MAP_DRIVER",
+                "UPDATE_OUTCOME",
+            ] * 2
+            outcomes = [p for op, p in mercury.payloads if op == "UPDATE_OUTCOME"]
+            assert {p["driver_link_error"] for p in outcomes} == {
+                "Mercury write POST rejected: Driver not found"
+            }
+            assert (summary.sent, summary.failed) == (2, 2)
+            outbox, documents, evaluations = await _statuses(engine)
+            by_op = {}
+            for _, op, status, *_rest, last_error in outbox:
+                by_op.setdefault(op, set()).add((status, last_error))
+            assert by_op["UPDATE_OUTCOME"] == {("SENT", None)}
+            assert by_op["CREATE_CASE"] == {("FAILED", "blocked: MAP_DRIVER failed")}
+            assert {s for s, _ in by_op["MAP_DRIVER"]} == {"FAILED"}
+            # handed to Intake: manual review, and the batch counts as posted
+            assert set(documents.values()) == {"MANUAL_REVIEW"}
+            assert evaluations == ["POSTED"]
+            assert summary.documents_manual_review == 2
+            assert summary.documents_completed == 0
+            # the saved payload keeps the error, so a later retry sends the same
+            async with engine.connect() as conn:
+                saved = (
+                    (
+                        await conn.execute(
+                            text(
+                                "SELECT payload FROM mercury_outbox "
+                                "WHERE operation = 'UPDATE_OUTCOME'"
+                            )
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+            assert all("driver_link_error" in p for p in saved)
+
+    asyncio.run(run())
+
+
+FORM_NOTE = "Driver details as read from the DMER form: first name Jo, surname Doe."
+
+
+def test_a_failed_driver_link_adds_the_forms_driver_details_to_the_outcome():
+    # The form's details are read once per document, when add_driver fails
+    # for good, and saved with the error so a retry sends the same notes.
+    async def run():
+        async with database() as engine:
+            await _decided_batch(engine, proposed_driver=True)
+            rejected = MercuryWriteError("rejected", status=400, retryable=False)
+            mercury = FakeMercury({"MAP_DRIVER": rejected})
+            read_for = []
+
+            def reader(document_id):
+                read_for.append(document_id)
+                return FORM_NOTE
+
+            await publish_due(
+                engine,
+                mercury,
+                settings=SETTINGS,
+                clock=Clock(),
+                form_driver_note=reader,
+            )
+            outcomes = [p for op, p in mercury.payloads if op == "UPDATE_OUTCOME"]
+            assert len(outcomes) == 2
+            assert {p["form_driver_note"] for p in outcomes} == {FORM_NOTE}
+            assert len(set(read_for)) == 2 and len(read_for) == 2
+            async with engine.connect() as conn:
+                saved = (
+                    (
+                        await conn.execute(
+                            text(
+                                "SELECT payload FROM mercury_outbox "
+                                "WHERE operation = 'UPDATE_OUTCOME'"
+                            )
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+            assert {p["form_driver_note"] for p in saved} == {FORM_NOTE}
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("note", ["", RuntimeError("storage down")])
+def test_the_outcome_still_goes_when_the_forms_driver_details_cant_be_read(note):
+    async def run():
+        async with database() as engine:
+            await _decided_batch(engine, proposed_driver=True)
+            rejected = MercuryWriteError("rejected", status=400, retryable=False)
+            mercury = FakeMercury({"MAP_DRIVER": rejected})
+
+            def reader(document_id):
+                if isinstance(note, Exception):
+                    raise note
+                return note
+
+            summary = await publish_due(
+                engine,
+                mercury,
+                settings=SETTINGS,
+                clock=Clock(),
+                form_driver_note=reader,
+            )
+            outcomes = [p for op, p in mercury.payloads if op == "UPDATE_OUTCOME"]
+            assert len(outcomes) == 2
+            assert all(
+                "driver_link_error" in p and "form_driver_note" not in p
+                for p in outcomes
+            )
+            assert summary.documents_manual_review == 2
+
+    asyncio.run(run())
+
+
+def test_an_error_outcome_retried_later_still_hands_the_document_to_intake():
+    # The driver link fails for good, then the outcome itself hits an outage:
+    # the document waits in POSTING; once the outcome goes (next run, from the
+    # saved payload), it moves to MANUAL_REVIEW.
+    async def run():
+        async with database() as engine:
+            await _decided_batch(engine, proposed_driver=True)
+            rejected = MercuryWriteError("rejected", status=400, retryable=False)
+            outage = MercuryWriteError("HTTP 503", status=503, retryable=True)
+            mercury = FakeMercury({"MAP_DRIVER": rejected, "UPDATE_OUTCOME": outage})
+            clock = Clock()
+            await publish_due(engine, mercury, settings=SETTINGS, clock=clock)
+            _, documents, evaluations = await _statuses(engine)
+            assert set(documents.values()) == {"POSTING"}
+            assert evaluations == ["DECIDED"]
+
+            mercury.failures = {}
+            clock.now += timedelta(hours=1)
+            summary = await publish_due(engine, mercury, settings=SETTINGS, clock=clock)
+            sent = [p for op, p in mercury.payloads[-2:] if op == "UPDATE_OUTCOME"]
+            assert len(sent) == 2 and all("driver_link_error" in p for p in sent)
+            _, documents, evaluations = await _statuses(engine)
+            assert set(documents.values()) == {"MANUAL_REVIEW"}
+            assert evaluations == ["POSTED"]
+            assert summary.documents_manual_review == 2
+
+    asyncio.run(run())
+
+
+def test_a_failed_case_still_sends_the_outcome_as_usual_with_the_error():
+    async def run():
+        async with database() as engine:
+            await _decided_batch(engine)
+            conflict = MercuryWriteError(
+                "Mercury write POST returned HTTP 409", status=409, retryable=False
+            )
+            mercury = FakeMercury({"CREATE_CASE": conflict})
+            read_for = []
+            summary = await publish_due(
+                engine,
+                mercury,
+                settings=SETTINGS,
+                clock=Clock(),
+                # only a failed driver link adds the form's driver details
+                form_driver_note=lambda d: read_for.append(d) or "note",
+            )
+            assert read_for == []
+            assert [op for op, _ in mercury.calls] == [
+                "CREATE_CASE",
+                "UPDATE_OUTCOME",
+            ] * 2
+            outcomes = [p for op, p in mercury.payloads if op == "UPDATE_OUTCOME"]
+            assert all(
+                p["case_error"] == "Mercury write POST returned HTTP 409"
+                and "driver_link_error" not in p
+                and "form_driver_note" not in p
+                for p in outcomes
+            )
+            assert (summary.sent, summary.failed) == (2, 2)
+            outbox, documents, evaluations = await _statuses(engine)
+            assert {(r[1], r[2]) for r in outbox} == {
+                ("CREATE_CASE", "FAILED"),
+                ("UPDATE_OUTCOME", "SENT"),
+            }
+            # the case is for a person to resolve: the documents stay POSTING
+            assert set(documents.values()) == {"POSTING"}
+            assert evaluations == ["DECIDED"]
+            assert summary.documents_manual_review == 0
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize(
+    "open_case",
+    [None, {"caseId": "C0", "caseTitle": "00000000- DFC- DMER- 1"}],
+)
+def test_add_drivers_answer_decides_the_case(open_case):
+    # The case write after a driver link carries add_driver's answer about the
+    # driver's active case (saved on the row, so a retry sends it the same way).
+    async def run():
+        async with database() as engine:
+            await _decided_batch(engine, proposed_driver=True)
+            linked = {"resultMessage": "linked", "driverOpenCase": open_case}
+            mercury = FakeMercury(responses={"MAP_DRIVER": linked})
+            await publish_due(engine, mercury, settings=SETTINGS, clock=Clock())
+            sent = [p for op, p in mercury.payloads if op == "CREATE_CASE"]
+            assert len(sent) == 2
+            assert all(
+                p["driver_linked"] is True and p["driver_open_case"] == open_case
+                for p in sent
+            )
+            async with engine.connect() as conn:
+                saved = (
+                    (
+                        await conn.execute(
+                            text(
+                                "SELECT payload FROM mercury_outbox "
+                                "WHERE operation = 'CREATE_CASE'"
+                            )
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+            assert all(p["driver_linked"] is True for p in saved)
+
+    asyncio.run(run())
+
+
+def test_while_the_driver_link_is_retried_the_outcome_waits():
+    async def run():
+        async with database() as engine:
+            await _decided_batch(engine, proposed_driver=True)
+            outage = MercuryWriteError("HTTP 503", status=503, retryable=True)
+            mercury = FakeMercury({"MAP_DRIVER": outage})
+            await publish_due(engine, mercury, settings=SETTINGS, clock=Clock())
+            assert [op for op, _ in mercury.calls] == ["MAP_DRIVER"] * 2
+            outbox, _, _ = await _statuses(engine)
+            assert {r[2] for r in outbox} == {"PENDING"}
 
     asyncio.run(run())
 
@@ -231,36 +494,6 @@ def test_a_mercury_outage_backs_off_and_recovers_with_nothing_lost():
             assert {r.status for r in outbox} == {"SENT"}
             assert set(documents.values()) == {"COMPLETED"}
             assert evaluations == ["POSTED"]
-
-    asyncio.run(run())
-
-
-def test_a_rejected_write_fails_the_row_and_blocks_the_rest_of_the_document():
-    async def run():
-        async with database() as engine:
-            _, docs = await _decided_batch(engine)
-            rejected = MercuryWriteError("HTTP 400", status=400, retryable=False)
-            mercury = FakeMercury({"CREATE_CASE": rejected})
-            summary = await publish_due(
-                engine, mercury, settings=SETTINGS, clock=Clock()
-            )
-            assert summary.failed == 2
-            outbox, documents, evaluations = await _statuses(engine)
-            by_op = {(r.document_id, r.operation): r for r in outbox}
-            for doc in docs:
-                case, outcome = (
-                    by_op[(doc, "CREATE_CASE")],
-                    by_op[(doc, "UPDATE_OUTCOME")],
-                )
-                assert (case.status, case.last_error) == ("FAILED", "HTTP 400")
-                assert (outcome.status, outcome.last_error) == (
-                    "FAILED",
-                    "blocked: CREATE_CASE failed",
-                )
-                assert outcome.next_attempt_at is None
-            # visible, not completed
-            assert set(documents.values()) == {"POSTING"}
-            assert evaluations == ["DECIDED"]
 
     asyncio.run(run())
 
@@ -321,7 +554,7 @@ def test_a_fallback_outcome_is_sent_and_the_document_stays_in_manual_review():
                         source_id=f"{doc}:FALLBACK",
                         document_id=doc,
                         document_guid=guid,
-                        comment="AI could not process. FAKE",
+                        comment="Unable to AI process due to error. FAKE",
                     ),
                     now=T0,
                 )

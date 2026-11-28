@@ -5,7 +5,7 @@ Service Bus session), under the driver's advisory lock (the second guard):
 
 1. Find the driver's open evaluation (Driver Lookup made it).
 2. Load the batch: every document counted into it.
-3. Re-check Mercury (``GET by driver_licence``) -- "verify twice".
+3. Re-check Mercury (``POST drivers/lookup``) -- "verify twice".
 4. Completeness. Not ready -> record WAITING (with the Mercury check time
    and refreshed count) and stop; the next document's signal, or the
    Reconciliation Sweeper, evaluates it again.
@@ -44,6 +44,7 @@ from .decision import (
     check_completeness,
     decide,
     mercury_waiting_count,
+    waiting_documents,
 )
 
 _log = get_logger(__name__)
@@ -88,7 +89,7 @@ UNVERIFIED_NOTE = (
     "driver, checked 6 times over about 8 hours. Sent for manual review."
 )
 
-# Mercury GET by driver_licence: licence -> list of driver records ([] = none).
+# Mercury POST drivers/lookup: licence -> list of driver records ([] = none).
 MercuryLookup = Callable[[str], list[dict[str, Any]]]
 
 
@@ -116,7 +117,7 @@ async def evaluate_driver(
     *,
     mercury_lookup: MercuryLookup,
     counted_types: frozenset[str],
-    uncounted_statuses: frozenset[str],
+    waiting_statuses: frozenset[str],
     final_attempt: bool = False,
     session=driver_decision_session,
     clock: Callable[[], datetime] = lambda: datetime.now(UTC),
@@ -148,7 +149,7 @@ async def evaluate_driver(
 
         batch = await repo.load_batch(evaluation.id)
         expected = await _mercury_expected(
-            repo, mercury_lookup, counted_types, uncounted_statuses
+            repo, mercury_lookup, counted_types, waiting_statuses
         )
         completeness = check_completeness(expected, batch)
         now = clock()
@@ -282,10 +283,12 @@ async def _mercury_expected(
     repo,
     mercury_lookup: MercuryLookup,
     counted_types: frozenset[str],
-    uncounted_statuses: frozenset[str],
+    waiting_statuses: frozenset[str],
 ) -> int | None:
-    """Mercury's waiting DMERs for the driver, or None if it can't be verified
-    (no licence on record, Mercury unavailable, no driver or several)."""
+    """The driver's DMERs still waiting for a decision -- Mercury's waiting
+    DMERs less those we've already given an outcome -- or None if it can't
+    be verified (no licence on record, Mercury unavailable, no driver or
+    several)."""
     licence = await repo.driver_licence()
     if not licence:
         _log.error("decision gateway: driver has no licence on record")
@@ -298,6 +301,19 @@ async def _mercury_expected(
             extra={"error_code": type(exc).__name__},
         )
         return None
+    already_decided: frozenset[str] = frozenset()
+    if len(drivers) == 1:
+        types = {t.strip().lower() for t in counted_types}
+        waiting = {s.strip().lower() for s in waiting_statuses}
+        guids = [
+            str(d["document_guid"])
+            for d in waiting_documents(drivers[0], types, waiting)
+            if d.get("document_guid")
+        ]
+        already_decided = await repo.already_decided(guids)
     return mercury_waiting_count(
-        drivers, counted_types=counted_types, uncounted_statuses=uncounted_statuses
+        drivers,
+        counted_types=counted_types,
+        waiting_statuses=waiting_statuses,
+        already_decided=already_decided,
     )

@@ -147,6 +147,25 @@ def test_a_non_terminal_document_is_routed_with_its_reason(status):
                 ).one()
             # UNKNOWN has no legacy error_class.
             assert tuple(row) == ("NORMALIZE", "UNKNOWN", None, "fixed description", 0)
+            # Not processed: Mercury is told (Error, Team - Intake).
+            async with engine.connect() as conn:
+                (operation, payload, key) = (
+                    await conn.execute(
+                        text(
+                            "SELECT operation::text, payload, idempotency_key "
+                            "FROM mercury_outbox"
+                        )
+                    )
+                ).one()
+            assert (operation, key) == (
+                "UPDATE_OUTCOME",
+                f"{doc_id}:FALLBACK:UPDATE_OUTCOME",
+            )
+            assert payload["decided_by"] == "FALLBACK"
+            assert payload["comment"] == (
+                "Unable to AI process due to error. The AI pipeline could not "
+                "complete the normalization step for this DMER."
+            )
 
     asyncio.run(run())
 

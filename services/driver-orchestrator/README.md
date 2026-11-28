@@ -17,7 +17,7 @@ Each signal runs `evaluate.evaluate_driver`:
 1. Take the driver's advisory lock and find its open `driver_evaluation`.
 2. Load the batch (documents counted into it) with extraction values and the
    latest rule evaluation.
-3. Re-check Mercury `GET by driver_licence`; check completeness.
+3. Re-check Mercury `POST drivers/lookup`; check completeness.
 4. Not complete: record `WAITING` (reason, Mercury check time, refreshed
    count) and stop. If the reason is that **Mercury couldn't verify** the
    batch (down, timing out, no driver or several), the function schedules its
@@ -50,9 +50,9 @@ Each signal runs `evaluate.evaluate_driver`:
 
 **Post-Processing** (architecture 4.5) runs inside the same transactions: deciding a batch
 also queues each decision's `mercury_outbox` rows (`MAP_DRIVER`, `CREATE_CASE`,
-`MARK_DUPLICATE`, `UPDATE_OUTCOME` -- see `dmer_common.db.mercury_outbox`) and moves the
+`UPDATE_OUTCOME`, flagged as a duplicate where it is one -- see `dmer_common.db.mercury_outbox`) and moves the
 documents to `POSTING`; the Mercury-unverified fallback queues an `UPDATE_OUTCOME` IN with
-"AI could not process" and its note. Nothing calls Mercury here: the Outbox Publisher
+"Unable to AI process due to error" and its note. Nothing calls Mercury here: the Outbox Publisher
 drains the rows.
 
 ## Deploy
@@ -81,11 +81,15 @@ The `DriverDecision` trigger deploys **disabled** (`driverDecisionTriggerEnabled
 signals wait on `driver-decision` until it is switched on.
 
 ```bash
-az deployment group create -g rg-rsbc-dmer-dev   -f infrastructure/bicep/driver-orchestrator.bicep   -p @deployment/dev/driver-orchestrator.parameters.json   -p mercuryApiKey="$(az functionapp config appsettings list -g rg-rsbc-dmer-dev -n func-rsbc-dmer-workflow-orchestrator-dev --query "[?name=='MERCURY_API_KEY'].value" -o tsv)"
+az deployment group create -g rg-rsbc-dmer-dev   -f infrastructure/bicep/driver-orchestrator.bicep   -p @deployment/dev/driver-orchestrator.parameters.json
 ```
 
-`mercuryApiKey` must be supplied on every deploy: it defaults to empty, and an empty
-`MERCURY_API_KEY` fails every signal (`ConfigError`) until the messages dead-letter.
+The Mercury API key is read from Key Vault: `MERCURY_API_KEY` is a Key Vault reference to the
+secret `mercury-api-key` (`mercuryApiKeySecretName`) in `keyVaultName`, and the template gives
+the app's identity Key Vault Secrets User on that one secret. The secret must exist before the
+deploy; rotate the key by adding a new version of it (the apps pick it up within 24 hours, or
+on restart). If the reference can't be resolved, every signal fails (`ConfigError`) until the
+messages dead-letter.
 
 Then the Postgres role (once per environment): run `services/intake-processor/create-principal.sql`
 against `postgres` and `roles.sql` against `dmer` with `function_app_name` set to this app's name

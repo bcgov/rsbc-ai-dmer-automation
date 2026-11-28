@@ -77,7 +77,7 @@ async def _fallback(engine, document_id, guid, status="PENDING"):
                 source_id=f"{document_id}:FALLBACK",
                 document_id=document_id,
                 document_guid=guid,
-                comment="AI could not process.",
+                comment="Unable to AI process due to error.",
             ),
             now=NOW,
         )

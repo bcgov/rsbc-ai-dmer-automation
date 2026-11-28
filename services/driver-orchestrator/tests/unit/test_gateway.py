@@ -42,6 +42,26 @@ def _doc(
     )
 
 
+# comparison_fields of a clear copy, and of a cut-off copy of the same DMER:
+# the bottom is missing, so the physician isn't read and a box there reads
+# unticked -- neither counts against a match.
+CLEAR = {
+    "version": 3,
+    "medical_examination_date": "2026-10-01",
+    "medical_issued_date": "2026-09-15",
+    "physician.name": "dr fake",
+    "cns.dementia": True,
+    "cardiovascular.cad": True,
+}
+CUT_SAME = {
+    "version": 3,
+    "medical_examination_date": "2026-10-01",
+    "medical_issued_date": "2026-09-15",
+    "cns.dementia": True,
+    "cardiovascular.cad": False,
+}
+
+
 def _by_id(batch):
     return {d.document_id: d for d in batch.decisions}
 
@@ -108,7 +128,10 @@ def test_unknown_cutoff_state_counts_as_cut_off():
 def test_newer_cut_off_never_beats_older_clear_copy_on_clean_pass():
     # GIVEN an older clear CP copy and a newer cut-off copy
     batch = decide(
-        [_doc("old-clear", day=1), _doc("new-cut", day=5, cutoff=True, hash_="h2")]
+        [
+            _doc("old-clear", day=1, fields=CLEAR),
+            _doc("new-cut", day=5, cutoff=True, hash_="h2", fields=CUT_SAME),
+        ]
     )
     d = _by_id(batch)
     # THEN the clear copy is kept and the cut-off copy is rejected as its duplicate
@@ -126,7 +149,12 @@ def test_newer_cut_off_never_beats_older_clear_copy_on_clean_pass():
 
 
 def test_cut_off_copy_is_not_rejected_when_not_a_clean_pass():
-    batch = decide([_doc("clear", outcome="PR"), _doc("cut", day=2, cutoff=True)])
+    batch = decide(
+        [
+            _doc("clear", outcome="PR", fields=CLEAR),
+            _doc("cut", day=2, cutoff=True, fields=CUT_SAME),
+        ]
+    )
     d = _by_id(batch)
     assert d["clear"].outcome_code == "PR"
     assert (d["cut"].outcome_code, d["cut"].is_duplicate) == ("PR", False)
@@ -136,10 +164,65 @@ def test_cut_off_copy_is_not_rejected_when_not_a_clean_pass():
 def test_cut_off_copy_outcome_is_ignored():
     # The cut-off copy's own rule outcome (read from a partial page) does not count
     batch = decide(
-        [_doc("clear", outcome="CP"), _doc("cut", day=2, cutoff=True, outcome="PU")]
+        [
+            _doc("clear", outcome="CP", fields=CLEAR),
+            _doc("cut", day=2, cutoff=True, outcome="PU", fields=CUT_SAME),
+        ]
     )
     assert {d.outcome_code for d in batch.decisions} == {"CP"}
     assert _by_id(batch)["cut"].is_duplicate is True
+
+
+@pytest.mark.parametrize(
+    ("change", "field"),
+    [
+        ({"medical_examination_date": "2026-08-20"}, "medical_examination_date"),
+        ({"medical_issued_date": "2026-07-01"}, "medical_issued_date"),
+        ({"physician.name": "dr other"}, "physician.name"),
+        ({"cns.epilepsy": True}, "cns.epilepsy"),  # ticked only on the cut-off copy
+    ],
+)
+def test_a_cut_off_copy_that_differs_from_the_clear_copy_sends_all_to_in(change, field):
+    # I-4: the cut-off copy's readable data differs -> manual review (IN)
+    batch = decide(
+        [
+            _doc("clear", outcome="CP", fields=CLEAR),
+            _doc("cut", day=2, cutoff=True, hash_="h2", fields={**CUT_SAME, **change}),
+        ]
+    )
+    for d in batch.decisions:
+        assert (d.outcome_code, d.path, d.is_duplicate) == (
+            "IN",
+            Path.CUT_OFF_DIFFERS,
+            False,
+        )
+        assert "differs from the clear copy" in d.reason["notes"][0]
+        assert set(d.reason["differing_fields"]) == {field}
+
+
+def test_a_box_unticked_on_the_cut_off_copy_is_not_a_difference():
+    # It may be in the missing part of the page: CLEAR has cardiovascular.cad
+    # ticked, CUT_SAME doesn't, and they still match.
+    batch = decide(
+        [
+            _doc("clear", outcome="CP", fields=CLEAR),
+            _doc("cut", day=2, cutoff=True, hash_="h2", fields=CUT_SAME),
+        ]
+    )
+    assert _by_id(batch)["cut"].path is Path.CUT_OFF_SUPERSEDED
+
+
+@pytest.mark.parametrize("fields", [None, {"version": 3}, {"cns.dementia": False}])
+def test_a_cut_off_copy_with_nothing_readable_to_compare_sends_all_to_in(fields):
+    batch = decide(
+        [
+            _doc("clear", outcome="PR", fields=CLEAR),
+            _doc("cut", day=2, cutoff=True, hash_="h2", fields=fields),
+        ]
+    )
+    for d in batch.decisions:
+        assert (d.outcome_code, d.path) == ("IN", Path.CUT_OFF_DIFFERS)
+        assert "could not be compared" in d.reason["notes"][0]
 
 
 # --- duplicates -----------------------------------------------------------------

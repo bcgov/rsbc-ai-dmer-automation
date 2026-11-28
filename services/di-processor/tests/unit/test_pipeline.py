@@ -174,6 +174,7 @@ def _pipeline(
     di_custom=None,
     stage_runs=None,
     prompt_version=None,
+    not_a_dmer_check=True,
 ):
     """Build a Pipeline with extraction functions monkeypatched to fakes."""
     import di_processor.pipeline as pl
@@ -182,6 +183,7 @@ def _pipeline(
     monkeypatch.setattr(
         pl.render, "render_cropped_page", lambda b: Image.new("RGB", (10, 10))
     )
+    monkeypatch.setattr(pl.render, "page_count", lambda b: 2)
     monkeypatch.setattr(pl.render, "PAGE_NUMBER", 1, raising=False)
     monkeypatch.setattr(pl.splitter, "create_tiles", lambda img: [])
     monkeypatch.setattr(
@@ -211,7 +213,9 @@ def _pipeline(
 
     return Pipeline(
         config=PipelineConfig(
-            custom_model_id="rsbc-ocr-dmer-v9", prompt_version=prompt_version
+            custom_model_id="rsbc-ocr-dmer-v9",
+            prompt_version=prompt_version,
+            not_a_dmer_check=not_a_dmer_check,
         ),
         blob=blob or FakeBlob(),
         di_custom=di_custom or FakeDICustom(),
@@ -441,6 +445,21 @@ async def test_comparison_fields_and_hash_persisted(monkeypatch):
     assert record.comparison_hash == comparison.comparison_hash(
         record.comparison_fields
     )
+
+
+async def test_page_count_persisted(monkeypatch):
+    # GIVEN a PDF with a medical report attached (five pages)
+    import di_processor.pipeline as pl
+
+    extractions = FakeExtractionRepo()
+    pipeline = _pipeline(monkeypatch, extractions=extractions)
+    monkeypatch.setattr(pl.render, "page_count", lambda b: 5)
+
+    # WHEN the pipeline runs
+    await pipeline.run(_raw_message())
+
+    # THEN the page count lands on the dmer_extraction row for the gateway
+    assert extractions.records[0].page_count == 5
 
 
 # --- audit trail (dmer_stage_run) -------------------------------------------
@@ -874,4 +893,102 @@ async def test_same_status_reentry_still_allowed(monkeypatch):
 
     # THEN EXTRACTING -> EXTRACTING is accepted and extraction completes
     assert repo.transitions == [PipelineStatus.EXTRACTING, PipelineStatus.EXTRACTED]
+    assert len(publisher.published) == 1
+
+
+# --- not a DMER form (NOT_A_DMER_FORM) ---------------------------------------
+
+
+def _non_dmer_page_di():
+    """The custom model's result for a page that is not an MV2011C: text, but
+    neither the form header nor the examiner block."""
+    from dmer_common.doc_intelligence import DIResult
+
+    def line(text, y):
+        return {
+            "content": text,
+            "polygon": [0.5, y, 5.0, y, 5.0, y + 0.1, 0.5, y + 0.1],
+        }
+
+    page = {
+        "pageNumber": 1,
+        "width": 8.5,
+        "height": 11.0,
+        "lines": [line("LABORATORY REPORT", 1.0), line("Results attached", 5.0)],
+    }
+
+    class DI:
+        def analyze(self, model_id, document, *, pages=None):
+            return DIResult(content="", pages=[page], documents=[{"fields": {}}])
+
+    return DI()
+
+
+async def test_not_a_dmer_form_stops_before_ocr_and_dead_letters(monkeypatch):
+    import di_processor.pipeline as pl
+
+    # GIVEN page 1 shows neither the form header nor the examiner block
+    repo = FakeRepo()
+    blob = FakeBlob()
+    publisher = FakePublisher()
+    stage_runs = FakeStageRunRepo()
+    extractions = FakeExtractionRepo()
+    pipeline = _pipeline(
+        monkeypatch,
+        repo=repo,
+        blob=blob,
+        publisher=publisher,
+        stage_runs=stage_runs,
+        extractions=extractions,
+        di_custom=_non_dmer_page_di(),
+    )
+    ocr_calls = []
+    monkeypatch.setattr(pl.di_ocr, "ocr_tiles", lambda *a, **k: ocr_calls.append(1))
+
+    # WHEN the pipeline runs
+    failure = await _run_expecting_failure(pipeline)
+
+    # THEN it fails as NOT_A_DMER_FORM (the dead-letter reason the DLQ Drain
+    # maps to a permanent failure + the Error outcome), with a safe detail
+    assert failure.code is FailureCode.NOT_A_DMER_FORM
+    assert failure.dead_letter_reason == "NOT_A_DMER_FORM"
+    assert failure.safe_detail == "has_header=false; has_signature=false"
+    assert stage_runs.failed == [
+        (1, "NOT_A_DMER_FORM", "has_header=false; has_signature=false")
+    ]
+    # AND it goes to MANUAL_REVIEW before OCR / the LLM run, publishing nothing
+    assert PipelineStatus.MANUAL_REVIEW in repo.transitions
+    assert PipelineStatus.EXTRACTED not in repo.transitions
+    assert ocr_calls == []
+    assert publisher.published == []
+    assert extractions.records == []
+    # AND top_level.json is still kept as the evidence
+    assert [p for _, p in blob.uploads] == ["doc-1/top_level.json"]
+
+
+async def test_not_a_dmer_check_can_be_turned_off(monkeypatch):
+    # GIVEN the same page but the check turned off
+    publisher = FakePublisher()
+    pipeline = _pipeline(
+        monkeypatch,
+        publisher=publisher,
+        di_custom=_non_dmer_page_di(),
+        not_a_dmer_check=False,
+    )
+
+    # WHEN the pipeline runs THEN it is extracted and published as before
+    await pipeline.run(_raw_message())
+    assert len(publisher.published) == 1
+
+
+async def test_cut_off_dmer_is_not_stopped_by_the_check(monkeypatch):
+    # GIVEN the real bottom-cut-off DMER (header found, examiner block not)
+    raw = json.loads(
+        (FIXTURES / "top_level_raw_cutoff_bottom.json").read_text(encoding="utf-8")
+    )
+    publisher = FakePublisher()
+    pipeline = _pipeline(monkeypatch, publisher=publisher, di_custom=FakeDICustom(raw))
+
+    # WHEN the pipeline runs THEN it is still extracted and published
+    await pipeline.run(_raw_message())
     assert len(publisher.published) == 1

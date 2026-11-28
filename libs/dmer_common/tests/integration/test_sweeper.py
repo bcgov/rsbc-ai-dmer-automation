@@ -212,9 +212,15 @@ def test_a_document_that_keeps_stalling_goes_to_a_person():
                 "UNKNOWN_STALLED",
                 "MANUAL_REVIEW",
             )
-            # no decision, no Mercury write: a stall is not a business failure
-            (outbox,) = await _one(engine, "SELECT count(*) FROM mercury_outbox")
-            assert outbox == 0
+            # not processed: Mercury is told (Error, Team - Intake); no decision
+            (count, comment) = await _one(
+                engine,
+                "SELECT count(*), max(payload->>'comment') FROM mercury_outbox "
+                "WHERE document_id = :d AND operation = 'UPDATE_OUTCOME'",
+                d=doc,
+            )
+            assert count == 1
+            assert comment.startswith("Unable to AI process due to error. The DMER")
 
     asyncio.run(run())
 
@@ -256,6 +262,59 @@ def test_a_stuck_waiting_evaluation_is_marked_stale_and_re_signalled():
     asyncio.run(run())
 
 
+def test_a_batch_still_stuck_after_every_re_signal_is_given_up_with_error_outcomes():
+    # max_republish=2: two re-signals, then the pipeline gives up on the batch:
+    # its documents go to manual review and Mercury is told (Error).
+    async def run():
+        async with database() as engine:
+            driver = await _driver(engine)
+            evaluation = await _evaluation(engine, driver)
+            docs = [
+                await _document(
+                    engine, "AWAITING_DRIVER_COMPLETION", driver_key=driver
+                ),
+                await _document(engine, "RULES_APPLIED", driver_key=driver),
+            ]
+            now = NOW
+            for _ in range(2):
+                assert (
+                    len(
+                        await sweep_stale_evaluations(
+                            engine, settings=SETTINGS, now=now
+                        )
+                    )
+                    == 1
+                )
+                now += timedelta(hours=1)
+            assert (
+                await sweep_stale_evaluations(engine, settings=SETTINGS, now=now) == []
+            )
+            (status, is_open, summary) = await _one(
+                engine,
+                "SELECT status::text, open, decision_summary FROM driver_evaluation "
+                "WHERE id = :e",
+                e=evaluation,
+            )
+            assert (status, is_open) == ("DECIDED", False)
+            assert summary["path"] == "fallback"
+            for doc in docs:
+                (doc_status,) = await _one(
+                    engine,
+                    "SELECT pipeline_status::text FROM dmer_document WHERE id = :d",
+                    d=doc,
+                )
+                assert doc_status == "MANUAL_REVIEW"
+                (count, decided_by) = await _one(
+                    engine,
+                    "SELECT count(*), max(payload->>'decided_by') FROM mercury_outbox "
+                    "WHERE document_id = :d AND operation = 'UPDATE_OUTCOME'",
+                    d=doc,
+                )
+                assert (count, decided_by) == (1, "FALLBACK")
+
+    asyncio.run(run())
+
+
 def test_an_evaluation_with_documents_in_flight_or_recent_activity_is_not_signalled():
     async def run():
         async with database() as engine:
@@ -288,7 +347,7 @@ def test_the_outbox_backlog_counts_what_needs_an_alert():
                             source_id=f"{doc}:FALLBACK",
                             document_id=doc,
                             document_guid=str(uuid4()),
-                            comment="AI could not process.",
+                            comment="Unable to AI process due to error.",
                         ),
                         now=OLD - timedelta(hours=1),
                     )
@@ -333,7 +392,7 @@ def test_failed_rows_alone_do_not_alert_every_sweep():
                         source_id=f"{doc}:FALLBACK",
                         document_id=doc,
                         document_guid=str(uuid4()),
-                        comment="AI could not process.",
+                        comment="Unable to AI process due to error.",
                     ),
                     now=NOW,
                 )

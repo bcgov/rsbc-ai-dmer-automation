@@ -14,9 +14,12 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 import function_app as fa
+import pytest
+from dmer_common.mercury_client import MercuryPage
 
 
 def test_parse_mercury_datetime_none_and_empty_return_none():
@@ -30,14 +33,9 @@ def test_parse_mercury_datetime_parses_iso8601():
     )
 
 
-def test_mercury_auth_headers_uses_api_key_env(monkeypatch):
-    monkeypatch.setenv("MERCURY_API_KEY", "test-key-123")
-    assert fa._mercury_auth_headers() == {"Authorization": "Bearer test-key-123"}
-
-
 def test_envelope_defaults_blob_url_to_none_for_dmer_ingest():
-    """The dmer-ingest message has nothing to point at yet (module docstring:
-    Ingest reads document_url from dmer_document, not the queue message)."""
+    """The dmer-ingest message has nothing to point at yet (Ingest downloads
+    the file from Mercury by the document guid)."""
     envelope = fa._envelope(
         document_id="doc-1", document_guid="DMER-1", driver_key=None, blob_url=None
     )
@@ -73,14 +71,21 @@ class _FakeDriverRepo:
 
 
 class _FakeDocRepo:
-    """Records every upsert_received() call; returns a fixed document_id."""
+    """Records every upsert_received() call; returns a fixed document_id.
+    *taken_today* records were already stored today (the daily limit)."""
 
-    def __init__(self):
+    def __init__(self, taken_today=0):
         self.calls: list[dict] = []
+        self.taken_today = taken_today
+        self.counted_since: list[datetime] = []
 
     async def upsert_received(self, **kwargs):
         self.calls.append(kwargs)
         return "document-id-1"
+
+    async def count_first_seen_since(self, since):
+        self.counted_since.append(since)
+        return self.taken_today
 
 
 def test_upsert_document_and_driver_uses_null_driver_key_when_no_driver():
@@ -111,7 +116,7 @@ def test_upsert_document_and_driver_upserts_driver_when_licence_present():
         "document_guid": "A2",
         "document_url": "https://x/A2.pdf",
         "driver": {
-            "licence_number": "123456",
+            "licence_number": "1234567",
             "driver_id": "mercury-driver-9",
             "first_name": "Jane",
             "last_name": "Doe",
@@ -127,17 +132,45 @@ def test_upsert_document_and_driver_upserts_driver_when_licence_present():
 
     _document_id, driver_key = asyncio.run(run())
 
-    assert driver_key == "driver-key-for-123456"
+    assert driver_key == "driver-key-for-01234567"
     assert driver_repo.calls == [
         {
-            "licence_number": "123456",
+            "licence_number": "01234567",  # canonical 8 digits
             "mercury_driver_id": "mercury-driver-9",
             "first_name": "Jane",
             "last_name": "Doe",
             "last_synced_at": driver_repo.calls[0]["last_synced_at"],
         }
     ]
-    assert doc_repo.calls[0]["driver_key"] == "driver-key-for-123456"
+    assert doc_repo.calls[0]["driver_key"] == "driver-key-for-01234567"
+
+
+@pytest.mark.parametrize("licence", ["00000000", "0000000000", "123456"])
+def test_placeholder_or_invalid_mercury_licence_is_stored_without_a_driver(licence):
+    # 00000000 is Mercury's placeholder driver for a DMER it couldn't map; an
+    # invalid licence is bad data. Either way: no driver, and no failed poll.
+    record = {
+        "document_guid": "A9",
+        "document_url": "https://x/A9.pdf",
+        "driver": {
+            "licence_number": licence,
+            "driver_id": "placeholder-driver",
+            "first_name": "",
+            "last_name": "DFC",
+        },
+    }
+    doc_repo = _FakeDocRepo()
+    driver_repo = _FakeDriverRepo()
+
+    async def run():
+        return await fa._upsert_document_and_driver(
+            record, doc_repo=doc_repo, driver_repo=driver_repo
+        )
+
+    _document_id, driver_key = asyncio.run(run())
+    assert driver_key is None
+    assert driver_repo.calls == []
+    assert doc_repo.calls[0]["driver_key"] is None
 
 
 def test_upsert_document_and_driver_skips_driver_upsert_without_licence_number():
@@ -222,6 +255,261 @@ def test_upsert_document_and_driver_extracts_mercury_case_id():
     asyncio.run(run())
 
     assert doc_repo.calls[0]["mercury_case_id"] == "C1234"
+
+
+# ---------------------------------------------------------------------------
+# Page Poller: one GET dmers page, then mark it AI Processed
+# ---------------------------------------------------------------------------
+
+
+class _FakeMercury:
+    """GET dmers returns *records*; every call is recorded in *events*."""
+
+    def __init__(self, records, events, *, mark_fails=False):
+        self.records, self.events, self.mark_fails = records, events, mark_fails
+
+    def get_page(self, *, page_size):
+        self.events.append(("get_page", page_size))
+        return MercuryPage(records=self.records, has_more=False)
+
+    def set_ai_processed(self, guids):
+        self.events.append(("set_ai_processed", list(guids)))
+        if self.mark_fails:
+            raise RuntimeError("Mercury unavailable")
+
+
+class _FakeCheckpointRepo:
+    def __init__(self, events):
+        self.events = events
+
+    async def update(self, source, **kwargs):
+        self.events.append(("checkpoint", source, kwargs["last_cursor"]))
+
+
+def _poll(monkeypatch, records, *, mark_fails=False, taken_today=0):
+    events: list = []
+    doc_repo = _FakeDocRepo(taken_today)
+    monkeypatch.setattr(fa, "DmerDocumentRepository", lambda engine: doc_repo)
+    monkeypatch.setattr(fa, "DriverRepository", lambda engine: _FakeDriverRepo())
+    monkeypatch.setattr(
+        fa, "PollCheckpointRepository", lambda engine: _FakeCheckpointRepo(events)
+    )
+    monkeypatch.setattr(
+        fa,
+        "_publish_message",
+        lambda queue, message_id, body: events.append(("publish", message_id)),
+    )
+    monkeypatch.setenv("MERCURY_PAGE_SIZE", "50")
+
+    async def record_non_dmer(engine, record, *, now, send_after):
+        events.append(("non_dmer", record["document_guid"], send_after))
+        return SimpleNamespace(
+            document_id=f"doc-{record['document_guid']}", queued=True
+        )
+
+    monkeypatch.setattr(fa, "record_non_dmer", record_non_dmer)
+    mercury = _FakeMercury(records, events, mark_fails=mark_fails)
+    error = None
+    try:
+        asyncio.run(fa._run_poll(object(), mercury))
+    except RuntimeError as exc:
+        error = exc
+    return events, doc_repo, error
+
+
+_DMER = {"document_guid": "G1", "document_type": "DMER", "document_url": "u1"}
+_HRDIR = {
+    "document_guid": "G2",
+    "document_type": "HRDIR High Risk Driving Incident Report",
+    "document_url": None,
+}
+_DMER_2 = {"document_guid": "G3", "document_type": "dmer", "document_url": "u3"}
+
+
+def test_poll_stores_and_queues_only_the_dmers(monkeypatch):
+    events, doc_repo, _ = _poll(monkeypatch, [_DMER, _HRDIR, _DMER_2])
+    assert [c["document_guid"] for c in doc_repo.calls] == ["G1", "G3"]
+    assert [e[1] for e in events if e[0] == "publish"] == ["G1", "G3"]
+
+
+def test_non_dmers_get_an_error_outcome_due_after_the_claim(monkeypatch):
+    events, doc_repo, error = _poll(monkeypatch, [_DMER, _HRDIR, _DMER_2])
+    assert error is None
+    (non_dmer,) = [e for e in events if e[0] == "non_dmer"]
+    assert non_dmer[1] == "G2"
+    assert non_dmer[2] == timedelta(seconds=300)  # NON_DMER_OUTCOME_DELAY_SECONDS
+    assert "G2" not in [c["document_guid"] for c in doc_repo.calls]  # not ingested
+
+
+def test_poll_marks_every_record_ai_processed_after_queuing_the_dmers(monkeypatch):
+    # Non-DMERs are marked too, so GET dmers stops returning them.
+    events, _, error = _poll(monkeypatch, [_DMER, _HRDIR, _DMER_2])
+    assert error is None
+    assert [e[0] for e in events] == [
+        "get_page",
+        "publish",
+        "publish",
+        "non_dmer",  # the HRDIR: error outcome queued before the claim
+        "set_ai_processed",
+        "checkpoint",
+    ]
+    assert ("set_ai_processed", ["G1", "G2", "G3"]) in events
+    assert ("get_page", 50) in events
+    assert ("checkpoint", "BACKLOG", None) in events  # claim-based: no cursor
+
+
+class _PagedMercury(_FakeMercury):
+    """GET dmers returns *pages* in turn (claim-based: the next call returns
+    the next records)."""
+
+    def __init__(self, pages, events):
+        super().__init__([], events)
+        self.pages = list(pages)
+
+    def get_page(self, *, page_size):
+        self.events.append(("get_page", page_size))
+        records, full = self.pages.pop(0) if self.pages else ([], False)
+        return MercuryPage(records=records, has_more=full)
+
+
+def _paged_poll(monkeypatch, pages, max_pages, *, taken_today=0, events=None):
+    events = [] if events is None else events
+    monkeypatch.setattr(
+        fa, "DmerDocumentRepository", lambda engine: _FakeDocRepo(taken_today)
+    )
+    monkeypatch.setattr(fa, "DriverRepository", lambda engine: _FakeDriverRepo())
+    monkeypatch.setattr(
+        fa, "PollCheckpointRepository", lambda engine: _FakeCheckpointRepo(events)
+    )
+    monkeypatch.setattr(fa, "_publish_message", lambda *a: None)
+    monkeypatch.setenv("MERCURY_PAGE_SIZE", "1")
+    if max_pages is None:
+        monkeypatch.delenv("MERCURY_MAX_PAGES_PER_POLL", raising=False)
+    else:
+        monkeypatch.setenv("MERCURY_MAX_PAGES_PER_POLL", str(max_pages))
+    asyncio.run(fa._run_poll(object(), _PagedMercury(pages, events)))
+    return [e[1] for e in events if e[0] == "set_ai_processed"]
+
+
+def _dmer(guid):
+    return {"document_guid": guid, "document_type": "DMER", "document_url": "u"}
+
+
+def test_full_pages_are_read_one_after_another_up_to_the_cap(monkeypatch):
+    pages = [([_dmer("A")], True), ([_dmer("B")], True), ([_dmer("C")], True)]
+    assert _paged_poll(monkeypatch, pages, max_pages=2) == [["A"], ["B"]]
+
+
+def test_a_short_page_ends_the_run(monkeypatch):
+    pages = [([_dmer("A")], True), ([_dmer("B")], False), ([_dmer("C")], True)]
+    assert _paged_poll(monkeypatch, pages, max_pages=5) == [["A"], ["B"]]
+
+
+def test_one_page_per_run_by_default(monkeypatch):
+    pages = [([_dmer("A")], True), ([_dmer("B")], True)]
+    assert _paged_poll(monkeypatch, pages, max_pages=None) == [["A"]]
+
+
+def test_an_empty_page_claims_nothing_and_ends_the_run(monkeypatch):
+    assert _paged_poll(monkeypatch, [([], True)], max_pages=5) == []
+
+
+def test_a_failed_mark_fails_the_poll_so_the_next_tick_gets_the_page_again(
+    monkeypatch,
+):
+    events, _, error = _poll(monkeypatch, [_DMER], mark_fails=True)
+    assert error is not None
+    assert [e[0] for e in events] == ["get_page", "publish", "set_ai_processed"]
+
+
+# ---------------------------------------------------------------------------
+# Daily limit (MERCURY_DAILY_POLL_LIMIT)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def daily_limit(monkeypatch):
+    def set_limit(value):
+        if value is None:
+            monkeypatch.delenv("MERCURY_DAILY_POLL_LIMIT", raising=False)
+        else:
+            monkeypatch.setenv("MERCURY_DAILY_POLL_LIMIT", str(value))
+
+    return set_limit
+
+
+def test_the_daily_limit_defaults_to_1000(daily_limit):
+    daily_limit(None)
+    assert fa._daily_poll_limit() == 1000
+
+
+def test_the_daily_limit_is_configurable(daily_limit):
+    daily_limit(250)
+    assert fa._daily_poll_limit() == 250
+
+
+def test_a_negative_daily_limit_is_a_configuration_error(daily_limit):
+    daily_limit(-1)
+    with pytest.raises(ValueError):
+        fa._daily_poll_limit()
+
+
+def test_nothing_is_read_from_mercury_once_the_daily_limit_is_reached(
+    monkeypatch, daily_limit
+):
+    daily_limit(1000)
+    events, doc_repo, error = _poll(monkeypatch, [_DMER], taken_today=1000)
+    assert error is None
+    assert events == []  # no GET, so nothing claimed: the records stay in Mercury
+    assert doc_repo.calls == []
+
+
+def test_a_zero_daily_limit_pauses_polling(monkeypatch, daily_limit):
+    daily_limit(0)
+    events, _, _ = _poll(monkeypatch, [_DMER])
+    assert events == []
+
+
+def test_near_the_limit_the_page_asks_only_for_what_is_left(monkeypatch, daily_limit):
+    daily_limit(1000)
+    events, _, _ = _poll(monkeypatch, [_DMER], taken_today=993)
+    assert ("get_page", 7) in events  # not MERCURY_PAGE_SIZE (50)
+
+
+def test_the_limit_stops_a_run_between_pages(monkeypatch, daily_limit):
+    # page size 1, 5 pages allowed, 2 left today: two pages, then stop.
+    daily_limit(10)
+    pages = [([_dmer(g)], True) for g in "ABCDE"]
+    events: list = []
+    claimed = _paged_poll(monkeypatch, pages, max_pages=5, taken_today=8, events=events)
+    assert claimed == [["A"], ["B"]]
+    assert [e for e in events if e[0] == "get_page"] == [("get_page", 1)] * 2
+
+
+def test_the_day_starts_at_midnight_in_mercurys_time_zone(monkeypatch):
+    monkeypatch.delenv("MERCURY_RECEIVED_DATE_TIMEZONE", raising=False)
+    # 05:00 UTC on Nov 27 is still Nov 26 in Vancouver (UTC-7 or -8, whichever
+    # the installed tz database says): the day is Vancouver's, not UTC's.
+    start = fa._start_of_day(datetime(2026, 11, 27, 5, 0, tzinfo=UTC))
+    assert str(start.tzinfo) == "America/Vancouver"
+    assert (start.year, start.month, start.day) == (2026, 11, 26)
+    assert (start.hour, start.minute, start.second) == (0, 0, 0)
+
+
+def test_the_poll_counts_the_records_stored_since_the_start_of_the_day(
+    monkeypatch, daily_limit
+):
+    daily_limit(None)
+    _, doc_repo, _ = _poll(monkeypatch, [_DMER])
+    (since,) = doc_repo.counted_since
+    assert since == fa._start_of_day(datetime.now(UTC))
+
+
+def test_an_empty_page_stores_nothing_and_marks_nothing(monkeypatch):
+    events, doc_repo, _ = _poll(monkeypatch, [])
+    assert doc_repo.calls == []
+    # nothing to claim: no Mercury call at all
+    assert not [e for e in events if e[0] == "set_ai_processed"]
 
 
 class _FakeBlobServiceClient:
@@ -433,3 +721,89 @@ def test_engine_keeps_bound_values_out_of_error_text(monkeypatch):
         assert "DL1234567" not in str(exc)
     else:
         raise AssertionError("expected an error")
+
+
+class _IngestRow:
+    def __init__(self):
+        self.pipeline_status = "RECEIVED"
+        self.document_guid = "26946190-c3b4-ee11-b84f-00505683d8c0"
+        self.document_url = None  # Mercury's documentUrl is not used to download
+        self.attempt_count = 0
+
+
+class _FakeDocRepoForIngest:
+    def __init__(self, row):
+        self._row = row
+        self.downloaded = []
+
+    async def get_by_id(self, _document_id):
+        return self._row
+
+    async def mark_downloaded(self, document_id, *, raw_blob_url, now):
+        self.downloaded.append((document_id, raw_blob_url))
+
+
+class _FakeStageRuns:
+    def __init__(self):
+        self.events = []
+
+    async def start(self, **kwargs):
+        self.events.append("start")
+        return 1
+
+    async def succeed(self, run_id, **kwargs):
+        self.events.append("succeed")
+
+    async def fail(self, run_id, **kwargs):
+        self.events.append("fail")
+
+
+def test_dmer_ingest_downloads_from_mercury_by_document_guid(monkeypatch):
+    """Ingest fetches the PDF by the row's document guid (Mercury's
+    GET dmers/{documentRecordId}/files), not from documentUrl -- which is a
+    path inside Mercury, and may be empty -- then stores and hands it on."""
+    row = _IngestRow()
+    docs = _FakeDocRepoForIngest(row)
+    runs = _FakeStageRuns()
+
+    async def fake_get_async_engine():
+        return _FakeEngine()
+
+    downloads, uploads, published = [], [], []
+    monkeypatch.setattr(fa, "_get_async_engine", fake_get_async_engine)
+    monkeypatch.setattr(fa, "DmerDocumentRepository", lambda engine: docs)
+    monkeypatch.setattr(fa, "DmerStageRunRepository", lambda engine: runs)
+    monkeypatch.setattr(
+        fa, "_download_source_pdf", lambda guid: downloads.append(guid) or b"%PDF-1.7"
+    )
+    monkeypatch.setattr(
+        fa,
+        "_upload_raw_dmer_blob",
+        lambda content, guid, container: (
+            uploads.append((content, guid)) or f"https://raw/{guid}.pdf"
+        ),
+    )
+    monkeypatch.setattr(
+        fa, "_publish_message", lambda queue, *a, **k: published.append(queue)
+    )
+
+    asyncio.run(fa.dmer_ingest(_make_ingest_message(document_guid=row.document_guid)))
+
+    assert downloads == [row.document_guid]
+    assert uploads == [(b"%PDF-1.7", row.document_guid)]
+    assert docs.downloaded == [("doc-1", f"https://raw/{row.document_guid}.pdf")]
+    assert published == ["dmer-raw"]
+    assert runs.events == ["start", "succeed"]
+
+
+def test_download_source_pdf_uses_the_mercury_client(monkeypatch):
+    calls = []
+
+    class FakeClient:
+        def download_dmer(self, guid):
+            calls.append(guid)
+            return b"%PDF-1.7"
+
+    monkeypatch.setattr(fa, "MercuryClient", FakeClient)
+    assert fa._download_source_pdf("G1") == b"%PDF-1.7"
+    assert calls == ["G1"]

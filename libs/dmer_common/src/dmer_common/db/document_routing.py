@@ -20,8 +20,17 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from .dmer_document import _pipeline_status_enum
 from .driver_batch import count_into_open_batch
+from .mercury_outbox import queue_fallback_outcome
 from .processing_error import FailureCategory, record_processing_error
 from .status import PipelineStatus, next_statuses
+
+# How a stage reads in the note Intake gets.
+_STEP_NAMES = {
+    "DRIVER_LOOKUP": "driver lookup",
+    "NORMALIZE": "normalization",
+    "RULES": "rule engine",
+    "DECISION": "decision",
+}
 
 metadata = MetaData()
 
@@ -107,7 +116,11 @@ async def route_to_manual_review(
     A document with a driver (it failed after Driver Lookup) is also counted
     into the driver's open batch, in the same transaction: it is finished, so
     the Decision Gateway must not wait for it (it decides the rest of the
-    batch; this document's outcome comes from the manual-review fallback).
+    batch).
+
+    The pipeline won't process it, so its error outcome is queued for Mercury
+    in the same transaction (:func:`queue_fallback_outcome`: Error, Team -
+    Intake), decided 2026-11-23.
     """
     async with engine.begin() as conn:
         routed = (
@@ -120,7 +133,9 @@ async def route_to_manual_review(
                 .values(
                     pipeline_status=PipelineStatus.MANUAL_REVIEW.value, updated_at=now
                 )
-                .returning(_document.c.id, _document.c.driver_key)
+                .returning(
+                    _document.c.id, _document.c.driver_key, _document.c.document_guid
+                )
             )
         ).first()
         if routed is None:
@@ -139,6 +154,16 @@ async def route_to_manual_review(
             category=category,
             reason_code=reason_code,
             message=message,
+            now=now,
+        )
+        await queue_fallback_outcome(
+            conn,
+            document_id=document_id,
+            document_guid=str(routed.document_guid),
+            reason=(
+                "The AI pipeline could not complete the "
+                f"{_STEP_NAMES.get(stage, stage.lower())} step for this DMER."
+            ),
             now=now,
         )
         return True

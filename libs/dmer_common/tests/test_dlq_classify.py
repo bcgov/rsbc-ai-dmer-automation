@@ -17,6 +17,13 @@ P, T, PR, U = (
     ("reason", "description", "category", "code"),
     [
         ("PDF_UNREADABLE", "error=PdfReadError", P, "PERMANENT_UNREADABLE_DOCUMENT"),
+        (
+            "NOT_A_DMER_FORM",
+            "has_header=false; has_signature=false",
+            P,
+            "PERMANENT_NOT_A_DMER_FORM",
+        ),
+        ("PERMANENT_NOT_A_DMER_FORM", "", P, "PERMANENT_NOT_A_DMER_FORM"),
         ("PERMANENT_DOCUMENT_GONE", "", P, "PERMANENT_DOCUMENT_GONE"),
         ("DB_WRITE_FAILED", "error=OperationalError", T, "TRANSIENT_DB_FAILURE"),
         (
@@ -102,4 +109,12 @@ def test_only_transient_and_processing_are_retriable():
     assert classify("DB_READ_FAILED", "", None).retriable
     assert classify("LLM_OUTPUT_INVALID", "", None).retriable
     assert not classify("PDF_UNREADABLE", "", None).retriable
+    assert not classify("NOT_A_DMER_FORM", "", None).retriable
     assert not classify("UNEXPECTED", "", None).retriable
+
+
+def test_not_a_dmer_form_has_a_fallback_note_for_mercury():
+    from dmer_common.dlq import FALLBACK_REASONS, PERMANENT_NOT_A_DMER_FORM
+
+    note = FALLBACK_REASONS[PERMANENT_NOT_A_DMER_FORM]
+    assert "does not appear to be a DMER form" in note

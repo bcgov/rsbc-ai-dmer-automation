@@ -50,7 +50,7 @@ serialized, and its answer a durable row rather than an in-memory branch.
 - **The wait is a row, not a branch.** `driver_evaluation` holds `status`, `expected_document_count`,
   `completed_document_count`. `WAITING` is a state the [Reconciliation Sweeper](09-reliability-components.md)
   can query. A code path that silently returns is not.
-- **Verify twice.** `expected_document_count` is set from the Mercury `GET by driver_licence`
+- **Verify twice.** `expected_document_count` is set from the Mercury `POST drivers/lookup`
   call by [Document Orchestration's Driver Lookup activity](03-document-orchestration.md#activity-driver-lookup)
   (not Extraction). It is **re-verified against a fresh call at decision time**, because
   a new document may have arrived in between and the batch may no longer be what was assumed.
@@ -87,7 +87,7 @@ row is found to actually be complete.
 | Variable | Purpose |
 |---|---|
 | `SERVICEBUS_NAMESPACE`, `DRIVER_DECISION_QUEUE` | Session-enabled — see `../message-contracts.md`. |
-| `MERCURY_DRIVER_LICENCE_API_BASE_URL` | The `GET by driver_licence` completeness call — see [Decision Gateway](07-decision-gateway.md). |
+| `MERCURY_DRIVER_LICENCE_API_BASE_URL` | The `POST drivers/lookup` completeness call — see [Decision Gateway](07-decision-gateway.md). |
 | `DRIVER_JOIN_LOCK_STRATEGY` | Not yet decided — Service Bus session vs. Durable Entity vs. Postgres advisory lock; see [Open Questions](#open-questions--decisions-required). |
 
 ## Authentication / identity

@@ -151,7 +151,7 @@ def test_permanent_failure_routes_to_manual_review_with_the_fallback_in():
             assert operation == "UPDATE_OUTCOME"
             assert payload["outcome_code"] == "IN"
             assert payload["decided_by"] == "FALLBACK"
-            assert payload["comment"].startswith("AI could not process.")
+            assert payload["comment"].startswith("Unable to AI process due to error.")
             assert "could not be read" in payload["comment"]
             assert key == f"{doc}:FALLBACK:UPDATE_OUTCOME"
             assert decisions == 0  # no driver evaluation: the outbox row alone
@@ -215,14 +215,25 @@ def test_redrives_are_bounded_then_the_document_goes_to_a_person():
                     )
             result = await _drain(engine, _raw(doc, "DB_READ_FAILED", message_id="m-3"))
             status, _, errors, outbox, decisions = await _state(engine, doc)
-            assert result.action is DrainAction.MANUAL_REVIEW
+            # not processed: Mercury is told (Error), but nothing is decided
+            assert result.action is DrainAction.FALLBACK_QUEUED
             assert status == "MANUAL_REVIEW"
             assert errors[-1][:3] == (
                 "UNKNOWN",
                 "UNKNOWN_REDRIVE_EXHAUSTED",
-                "MANUAL_REVIEW",
+                "FALLBACK_QUEUED",
             )
-            assert outbox == [] and decisions == 0
+            ((operation, payload, key),) = outbox
+            assert (operation, key) == (
+                "UPDATE_OUTCOME",
+                f"{doc}:FALLBACK:UPDATE_OUTCOME",
+            )
+            assert payload["decided_by"] == "FALLBACK"
+            assert payload["comment"] == (
+                "Unable to AI process due to error. The AI pipeline could not "
+                "process the DMER (extraction)."
+            )
+            assert decisions == 0
 
     asyncio.run(run())
 
@@ -243,10 +254,15 @@ def test_logical_failure_goes_to_manual_review_without_a_decision():
             )
             result = await _drain(engine, dead_letter)
             status, _, errors, outbox, decisions = await _state(engine, doc)
-            assert result.action is DrainAction.MANUAL_REVIEW
+            assert result.action is DrainAction.FALLBACK_QUEUED
             assert status == "MANUAL_REVIEW"
             assert errors[0][:2] == ("UNKNOWN", "UNKNOWN_LOGICAL_ERROR")
-            assert outbox == [] and decisions == 0
+            ((operation, payload, _key),) = outbox
+            assert operation == "UPDATE_OUTCOME"
+            assert payload["comment"].endswith(
+                "could not process the DMER (normalization)."
+            )
+            assert decisions == 0
 
     asyncio.run(run())
 
@@ -276,7 +292,7 @@ def test_a_document_with_a_fallback_already_queued_gets_no_second_one():
                         source_id=f"{doc}:FALLBACK",
                         document_id=doc,
                         document_guid=str(uuid4()),
-                        comment="AI could not process. Earlier reason.",
+                        comment="Unable to AI process due to error. Earlier reason.",
                     ),
                     now=T0,
                 )
@@ -284,7 +300,10 @@ def test_a_document_with_a_fallback_already_queued_gets_no_second_one():
             _, _, errors, outbox, _ = await _state(engine, doc)
             assert result.action is DrainAction.MANUAL_REVIEW
             assert len(outbox) == 1
-            assert outbox[0][1]["comment"] == "AI could not process. Earlier reason."
+            assert (
+                outbox[0][1]["comment"]
+                == "Unable to AI process due to error. Earlier reason."
+            )
             assert errors[0][1] == "PERMANENT_UNREADABLE_DOCUMENT"
 
     asyncio.run(run())

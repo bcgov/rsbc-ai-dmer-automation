@@ -92,36 +92,73 @@ class MercurySettings:
     ``api_key`` originates from a Key Vault reference (Mercury is outside our
     tenant boundary, over ExpressRoute -- key/credential auth, not Managed
     Identity, per question M-4); it must never be logged.
+
+    ``base_url`` is the ``GET dmers`` endpoint (``https://<host>/Dmers``); the
+    AI Processed status call hangs off it. ``received_date_timezone`` is the
+    IANA zone Mercury's ``receivedDate`` is read in when it carries no offset
+    (Pacific until Mercury confirms otherwise).
     """
 
     base_url: str
     api_key: str
+    received_date_timezone: str = "America/Vancouver"
 
 
 def mercury_settings() -> MercurySettings:
     """Load Mercury batch API settings from configuration."""
     return MercurySettings(
-        base_url=require("MERCURY_API_BASE_URL"),
+        base_url=require("MERCURY_API_BASE_URL").rstrip("/"),
         api_key=require("MERCURY_API_KEY"),
+        received_date_timezone=get("MERCURY_RECEIVED_DATE_TIMEZONE")
+        or "America/Vancouver",
+    )
+
+
+@dataclass(frozen=True)
+class MercuryAuthSettings:
+    """How a Mercury bearer token is obtained (every Mercury API needs one).
+
+    ``token_url`` is Mercury's ``Authentication/token`` endpoint
+    (``https://<host>/Authentication/token``); it is called with
+    ``?secret=<api_key>`` and answers with the bearer token. ``api_key`` is
+    that secret (Key Vault reference) and must never be logged -- nor the
+    token URL with it. ``default_ttl_seconds`` is how long a token is reused
+    when Mercury's response gives no expiry; a 401 from any API fetches a new
+    one regardless.
+    """
+
+    token_url: str
+    api_key: str
+    default_ttl_seconds: int = 1800
+
+
+def mercury_auth_settings() -> MercuryAuthSettings:
+    """Load the Mercury token settings from configuration."""
+    return MercuryAuthSettings(
+        token_url=require("MERCURY_AUTH_TOKEN_URL").rstrip("/"),
+        api_key=require("MERCURY_API_KEY"),
+        default_ttl_seconds=int(get("MERCURY_TOKEN_TTL_SECONDS") or "1800"),
     )
 
 
 @dataclass(frozen=True)
 class MercuryDriverSettings:
-    """Mercury ``GET by driver_licence`` settings (Driver Lookup and the
+    """Mercury ``POST drivers/lookup`` settings (Driver Lookup and the
     Decision Gateway; see ``docs/development/stages/03-document-orchestration.md``).
 
-    ``base_url`` is the endpoint the licence number is appended to as a path
-    segment (``{base_url}/{licence_number}``). ``counted_document_types`` and
-    ``uncounted_document_statuses`` decide which of the driver's active
-    documents make up ``driver_evaluation.expected_document_count``.
+    ``base_url`` is Mercury's drivers root (``https://<host>/drivers``); the
+    lookup is ``POST {base_url}/lookup`` with ``{"driverLicenceNumber": ...}``.
+    The driver's documents still waiting -- ``driver_evaluation.expected_document_count``
+    and the Decision Gateway's re-count -- are those whose ``document_type`` is
+    in ``counted_document_types`` (default DMER) and whose ``document_status``
+    is in ``waiting_document_statuses`` (default Uploaded).
     ``api_key`` is shared with the batch API and must never be logged.
     """
 
     base_url: str
     api_key: str
     counted_document_types: frozenset[str]
-    uncounted_document_statuses: frozenset[str]
+    waiting_document_statuses: frozenset[str]
 
 
 @dataclass(frozen=True)
@@ -159,7 +196,7 @@ def mercury_driver_settings() -> MercuryDriverSettings:
         base_url=require("MERCURY_DRIVER_LICENCE_API_BASE_URL").rstrip("/"),
         api_key=require("MERCURY_API_KEY"),
         counted_document_types=_csv(get("MERCURY_COUNTED_DOCUMENT_TYPES", "DMER")),
-        uncounted_document_statuses=_csv(
-            get("MERCURY_UNCOUNTED_DOCUMENT_STATUSES", "Rejected")
+        waiting_document_statuses=_csv(
+            get("MERCURY_WAITING_DOCUMENT_STATUSES", "Uploaded")
         ),
     )

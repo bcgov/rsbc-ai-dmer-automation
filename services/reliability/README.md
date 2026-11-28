@@ -17,21 +17,27 @@ as the decision. `OutboxPublisher` drains them about once a minute
 
 1. claim up to `OUTBOX_BATCH_SIZE` documents with a due `PENDING` row, leasing their rows
    (`OUTBOX_LEASE_SECONDS`) so a crashed run's rows come back rather than being lost;
-2. send each document's rows in order -- `MAP_DRIVER`, `CREATE_CASE`, `MARK_DUPLICATE`,
-   `UPDATE_OUTCOME` -- with the row's idempotency key; a failure stops that document so the
-   outcome is never written before its driver or case;
+2. send each document's rows in order -- `MAP_DRIVER`, `CREATE_CASE`, `UPDATE_OUTCOME` -- with the row's idempotency key; a failure stops that document so the
+   outcome is never written before its driver or case -- except that a driver link
+   (`MAP_DRIVER`) that fails for good still lets the outcome go, as a processing error for
+   Intake with the error in its notes (the case write is blocked), and a case write
+   (`CREATE_CASE`) that fails for good lets the outcome go as usual, the error in its notes;
 3. record `SENT`, or back off exponentially (`OUTBOX_BACKOFF_INITIAL_SECONDS` doubling to
    `OUTBOX_BACKOFF_MAX_SECONDS`), or `FAILED` when Mercury rejects the write (a 4xx) or after
    `OUTBOX_MAX_ATTEMPTS` -- logged at ERROR for the alert; the document's later rows fail as
    "blocked";
-4. a document whose rows are all `SENT` goes `POSTING` -> `COMPLETED`, and its driver
-   evaluation `DECIDED` -> `POSTED` once the whole batch is sent. Fallback outcomes for documents
-   in `MANUAL_REVIEW` leave their status alone.
+4. a document whose rows are all `SENT` goes `POSTING` -> `COMPLETED`; one whose driver link
+   failed but whose outcome went (as an error, to Intake) goes `POSTING` -> `MANUAL_REVIEW`, its
+   `FAILED` rows kept as the record. Its driver evaluation goes `DECIDED` -> `POSTED` once every
+   document of the batch is finished either way. Fallback outcomes for documents already in
+   `MANUAL_REVIEW` leave their status alone.
 
-**Mercury's write API is provisional** (question M-6: Mercury hasn't shared its POST/PUT
-structure or idempotency behaviour). `MercuryClient.send_outbox` and the dev mock
-(`services/intake-processor/tests/local/mock-mercury-function-app`) implement the assumed
-endpoints; only those two should need to change once M-6 is answered. The mock records every
+**Mercury's write API:** the outcome goes through Mercury's `SetDmerAIProccessedStatus`
+(`dmer_common.mercury_client.ai_status`), the driver mapping through `add_driver`
+(`dmer_common.mercury_client.driver_link`) and the case through `add_case`
+(`dmer_common.mercury_client.case_link`); Mercury's idempotency behaviour is still open (M-6). `MercuryClient.send_outbox` and the dev
+mock (`services/intake-processor/tests/local/mock-mercury-function-app`) implement them; only
+those two should need to change as Mercury shares the rest. The mock records every
 write under `mock-writes/<source PDF name>/<operation>/` (so a batch prefix such as
 `t20261016e-` lists one job's writes) and can simulate an outage with
 `MOCK_WRITE_FAIL_STATUS` (e.g. `503`).
@@ -54,7 +60,7 @@ message, in one transaction (`dmer_common.db.dlq_drain.drain_dead_letter`):
    message id, after `DLQ_REDRIVE_BACKOFF_SECONDS` doubling per re-send), at most
    `DLQ_REDRIVE_MAX_ATTEMPTS` times; after that it goes to a person as below;
 3. **can never succeed** (`PERMANENT_BUSINESS`: an unreadable PDF) -> `MANUAL_REVIEW` and the
-   fallback outcome queued to `mercury_outbox`: IN, "AI could not process" and the reason
+   fallback outcome queued to `mercury_outbox`: IN, "Unable to AI process due to error" and the reason
    (question I-1) -- the one case that produces a decision;
 4. **a logical error or an unknown reason** (`UNKNOWN`) -> `MANUAL_REVIEW`, no decision.
 
@@ -89,9 +95,9 @@ Mercury's GET-by-licence response with no `dmer_document` row) is not built yet.
 
 ## Daily Reconciliation
 
-`DailyReconciliation` runs once a day (`RECONCILIATION_SCHEDULE`, default 13:00 UTC). It pages
-through Mercury's DPS queue (`MERCURY_API_BASE_URL`, `MERCURY_QUEUE`, at most
-`RECONCILIATION_MAX_PAGES` pages) and checks every document against the pipeline
+`DailyReconciliation` runs once a day (`RECONCILIATION_SCHEDULE`, default 13:00 UTC). It reads
+the documents still in Mercury's DPS queues (one `GET dmers` page from
+`MERCURY_API_BASE_URL`; the API is claim-based) and checks every document against the pipeline
 (`dmer_common.db.reconciliation`): never received (after `RECONCILIATION_RECEIVE_GRACE_HOURS`),
 overdue in the pipeline (after `RECONCILIATION_OVERDUE_HOURS`), in manual review with nothing sent
 to Mercury, not posted, or a `FAILED` write. The report goes to `RECONCILIATION_CONTAINER`
@@ -116,14 +122,20 @@ create:
 All four timers deploy **disabled** (`outboxPublisherEnabled` / `dlqDrainEnabled` /
 `sweeperEnabled` / `reconciliationEnabled = false`): outbox rows wait as `PENDING`, dead letters
 stay in their DLQs and nothing is swept or reported until they are switched on. The template
-grants the app's identity receive and send on the four pipeline queues.
+grants the app's identity receive and send on the four pipeline queues, and Storage Blob Data
+Reader on the `extracted-dmer` container of the pipeline data storage account
+(`dataStorageAccountName`, `BLOB_ACCOUNT_URL`): when `add_driver` fails for good, the publisher
+reads the form's driver details from `combined.json` for the outcome's note.
 
 ```bash
-az deployment group create -g rg-rsbc-dmer-dev   -f infrastructure/bicep/reliability.bicep   -p @deployment/dev/reliability.parameters.json   -p mercuryApiKey="$(az functionapp config appsettings list -g rg-rsbc-dmer-dev -n func-rsbc-dmer-workflow-orchestrator-dev --query "[?name=='MERCURY_API_KEY'].value" -o tsv)"
+az deployment group create -g rg-rsbc-dmer-dev   -f infrastructure/bicep/reliability.bicep   -p @deployment/dev/reliability.parameters.json
 ```
 
-`mercuryApiKey` must be supplied on every deploy (it defaults to empty, and an empty
-`MERCURY_API_KEY` fails every run with `ConfigError`).
+The Mercury API key is read from Key Vault: `MERCURY_API_KEY` is a Key Vault reference to the
+secret `mercury-api-key` (`mercuryApiKeySecretName`) in `keyVaultName`, and the template gives
+the app's identity Key Vault Secrets User on that one secret. The secret must exist before the
+deploy; rotate the key by adding a new version of it (the apps pick it up within 24 hours, or
+on restart). If the reference can't be resolved, every run fails with `ConfigError`.
 
 Then the Postgres role (once per environment): run `services/intake-processor/create-principal.sql`
 against `postgres` and `roles.sql` against `dmer` with `function_app_name` set to this app's name

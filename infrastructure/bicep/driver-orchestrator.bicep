@@ -124,18 +124,24 @@ param postgresPort string = '5432'
 @description('Postgres database name.')
 param postgresDatabase string = 'dmer'
 
-@description('Mercury GET by driver_licence base URL (the licence is appended as a path segment) -- the Decision Gateway\'s completeness re-check.')
+@description('Mercury drivers root, e.g. https://<mercury-host>/drivers (MERCURY_DRIVER_LICENCE_API_BASE_URL): the Decision Gateway completeness re-check calls POST <this URL>/lookup with {"driverLicenceNumber": ...}.')
 param mercuryDriverLicenceApiBaseUrl string = ''
 
-@secure()
-@description('Mercury API key, if the endpoint needs one. Supply at deploy time; never logged.')
-param mercuryApiKey string = ''
+@description('Mercury token endpoint, e.g. https://<mercury-host>/Authentication/token (MERCURY_AUTH_TOKEN_URL). Called with ?secret=<MERCURY_API_KEY>; the bearer token it returns is reused until it expires.')
+param mercuryAuthTokenUrl string = ''
+
+@description('Name of the existing Key Vault (in this resource group) holding the Mercury API key -- resolved as a Key Vault reference by this app\'s identity.')
+@minLength(1)
+param keyVaultName string
+
+@description('Name of the Key Vault secret holding the Mercury API key (MERCURY_API_KEY): exchanged at MERCURY_AUTH_TOKEN_URL for the bearer token every Mercury call carries. The app reads it as a Key Vault reference, so the key never sits in an app setting or a deployment parameter; rotate it by adding a new version of the secret.')
+param mercuryApiKeySecretName string = 'mercury-api-key'
 
 @description('Comma-separated Mercury document types that count toward a driver\'s batch (shared with Driver Lookup).')
 param mercuryCountedDocumentTypes string = 'DMER'
 
-@description('Comma-separated Mercury document statuses that do not count (I-8: Rejected does not hold the batch up).')
-param mercuryUncountedDocumentStatuses string = 'Rejected'
+@description('Comma-separated Mercury document statuses that mean a document is still waiting (only these hold the batch up; Rejected, I-8, does not).')
+param mercuryWaitingDocumentStatuses string = 'Uploaded'
 
 @description('Cost center tag value.')
 param costCenter string = 'RSBC'
@@ -150,6 +156,7 @@ var serviceTags = buildTags(environment, 'driver-orchestrator', costCenter, owne
 var serviceBusNamespaceName = split(serviceBusNamespaceFqdn, '.')[0]
 var serviceBusDataReceiverRoleId = '4f6d3b9b-027b-4f4c-9142-0e5a2a2247e0'
 var serviceBusDataSenderRoleId = '69a216fc-b8fb-44d8-bc22-1f3c2cd27a39'
+var keyVaultSecretsUserRoleId = '4633458b-17de-408a-b874-0445c86b69e6'
 
 // ---------------------------------------------------------------------------
 // 1. Application Insights
@@ -185,9 +192,10 @@ var appSettings = {
   POSTGRES_USER: functionAppName
   POSTGRES_SSLMODE: 'require'
   MERCURY_DRIVER_LICENCE_API_BASE_URL: mercuryDriverLicenceApiBaseUrl
-  MERCURY_API_KEY: mercuryApiKey
+  MERCURY_AUTH_TOKEN_URL: mercuryAuthTokenUrl
+  MERCURY_API_KEY: '@Microsoft.KeyVault(VaultName=${keyVaultName};SecretName=${mercuryApiKeySecretName})'
   MERCURY_COUNTED_DOCUMENT_TYPES: mercuryCountedDocumentTypes
-  MERCURY_UNCOUNTED_DOCUMENT_STATUSES: mercuryUncountedDocumentStatuses
+  MERCURY_WAITING_DOCUMENT_STATUSES: mercuryWaitingDocumentStatuses
 }
 
 module functionApp 'modules/compute/function-app.bicep' = {
@@ -253,6 +261,29 @@ module driverDecisionSenderRoleAssignment 'modules/servicebus/data-plane-role-as
     queueName: driverDecisionQueueName
     principalId: functionApp.outputs.principalId
     roleDefinitionId: serviceBusDataSenderRoleId
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 5. Key Vault RBAC -- resolves the MERCURY_API_KEY reference. Scoped to
+//    the one secret, not the vault.
+// ---------------------------------------------------------------------------
+resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' existing = {
+  name: keyVaultName
+}
+
+resource mercuryApiKeySecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' existing = {
+  parent: keyVault
+  name: mercuryApiKeySecretName
+}
+
+resource mercuryApiKeySecretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(mercuryApiKeySecret.id, functionAppName, keyVaultSecretsUserRoleId)
+  scope: mercuryApiKeySecret
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', keyVaultSecretsUserRoleId)
+    principalId: functionApp.outputs.principalId
+    principalType: 'ServicePrincipal'
   }
 }
 

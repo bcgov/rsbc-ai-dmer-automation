@@ -4,6 +4,7 @@ from dmer_common.db.mercury_outbox import (
     AI_COULD_NOT_PROCESS,
     OPERATION_ORDER,
     OutboxOperation,
+    ProposedDriver,
     decision_comment,
     decision_rows,
     fallback_comment,
@@ -68,11 +69,34 @@ def test_duplicate_and_proposed_driver_add_their_operations_in_order():
         proposed_driver=True,
         proposed_mercury_driver_id="M-8",
     )
-    assert tuple(r.operation for r in rows) == OPERATION_ORDER
+    # A duplicate is flagged on its outcome row, not a MARK_DUPLICATE row.
+    assert [r.operation for r in rows] == [
+        op for op in OPERATION_ORDER if op is not _O.MARK_DUPLICATE
+    ]
     by_op = {r.operation: r.payload for r in rows}
     assert by_op[_O.MAP_DRIVER]["mercury_driver_id"] == "M-8"
-    assert by_op[_O.MARK_DUPLICATE]["status"] == "Rejected"  # I-7
-    assert by_op[_O.MARK_DUPLICATE]["duplicate_of_document_guid"] == "guid-0"
+    assert by_op[_O.UPDATE_OUTCOME]["is_duplicate"] is True  # I-7
+    assert by_op[_O.UPDATE_OUTCOME]["duplicate_of_document_guid"] == "guid-0"
+
+
+def test_map_driver_carries_what_mercurys_add_driver_needs():
+    (map_driver, *_) = _rows(
+        proposed_driver=True,
+        proposed_mercury_driver_id="M-8",
+        proposed_driver_details=ProposedDriver(
+            licence_number="01234567", first_name="FAKE", last_name="DRIVER"
+        ),
+    )
+    assert map_driver.operation is _O.MAP_DRIVER
+    assert map_driver.payload["licence_number"] == "01234567"
+    assert map_driver.payload["first_name"] == "FAKE"
+    assert map_driver.payload["last_name"] == "DRIVER"
+
+
+def test_a_decision_that_is_not_a_duplicate_carries_no_duplicate_fields():
+    outcome = _rows()[-1]
+    assert "is_duplicate" not in outcome.payload
+    assert "duplicate_of_document_guid" not in outcome.payload
 
 
 def test_idempotency_keys_are_deterministic_and_distinct_per_operation():

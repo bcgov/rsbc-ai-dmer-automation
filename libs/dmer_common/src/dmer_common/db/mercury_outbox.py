@@ -9,24 +9,32 @@ can never exist without someone trying to deliver it. The Outbox Publisher
 Operations per decided document:
 
 - ``MAP_DRIVER`` -- the driver was matched from the page's licence (I-11:
-  the AI may map it automatically);
-- ``CREATE_CASE`` -- on every AI decision; the publisher checks live whether
-  the driver has an open case and creates one only when there is none,
-  otherwise attaches the DMER to it (I-13);
-- ``MARK_DUPLICATE`` -- a copy rejected as a duplicate (Mercury status
-  ``Rejected``, I-7), only ever emitted for a clean pass;
+  the AI may map it automatically); carries the driver's licence and names,
+  which Mercury's ``add_driver`` requires (PII: database only, never logs);
+- ``CREATE_CASE`` -- on every AI decision (I-13); carries the driver's
+  licence and the case the DMER arrived on, if any. The publisher skips it
+  when the DMER already has a case or (live lookup) the driver has an open
+  one, and otherwise asks Mercury's ``add_case`` to create one;
 - ``UPDATE_OUTCOME`` -- always: the outcome and the reasoning (I-1, I-5,
-  I-12, I-13: the reason is always in the comment).
+  I-12, I-13: the reason is always in the comment). For a copy rejected as a
+  duplicate (I-7, only ever a clean pass) it carries ``is_duplicate`` and
+  ``duplicate_of_document_guid``, and Mercury is told only that it is a
+  duplicate.
+
+``MARK_DUPLICATE`` is no longer queued (Mercury's SetDmerAIProccessedStatus
+takes the duplicate flag in the outcome call); the operation remains in the
+enum for rows queued before.
 
 A fallback (the pipeline could not decide) gets ``UPDATE_OUTCOME`` only: IN,
-with "AI could not process" and the reason.
+``decided_by`` FALLBACK, with "Unable to AI process due to error" and the
+reason; it is sent as a processing error.
 
 The publisher applies a document's rows in :data:`OPERATION_ORDER`, so the
 driver and case exist before the outcome is written.
 
-**Payloads are provisional**: Mercury has not shared its POST/PUT structure
-or idempotency behaviour yet (question M-6). Everything the publisher needs
-is here; the field names may change once M-6 is answered.
+The outcome's Mercury request is built from this payload by
+``dmer_common.mercury_client.ai_status``. ``MAP_DRIVER`` and ``CREATE_CASE``
+payloads are provisional until Mercury shares those APIs.
 
 Comments carry clinical content (the rule engine's reason). They go to the
 database and to Mercury, never to logs: log lines carry ``document_id``,
@@ -74,7 +82,7 @@ OPERATION_ORDER: Final = (
 )
 
 # I-1: the comment every fallback outcome carries.
-AI_COULD_NOT_PROCESS: Final = "AI could not process"
+AI_COULD_NOT_PROCESS: Final = "Unable to AI process due to error"
 
 mercury_outbox = Table(
     "mercury_outbox",
@@ -122,6 +130,16 @@ class OutboxRow:
     idempotency_key: str
 
 
+@dataclass(frozen=True)
+class ProposedDriver:
+    """The driver matched from the page's licence, as Mercury holds it --
+    what ``MAP_DRIVER`` sends to link it to the DMER. PII."""
+
+    licence_number: str
+    first_name: str | None
+    last_name: str | None
+
+
 def idempotency_key(source_id: str, operation: OutboxOperation) -> str:
     """Deterministic per decision (or per document, for a fallback without a
     decision row) and operation, so the same outcome is never queued twice."""
@@ -149,7 +167,7 @@ def decision_comment(outcome_code: str, reason: Mapping[str, Any] | None) -> str
 
 
 def fallback_comment(*reasons: str) -> str:
-    """The comment on a fallback IN: "AI could not process" plus the reason(s)."""
+    """The comment on a fallback IN: "Unable to AI process due to error" plus the reason(s)."""
     detail = " ".join(r.strip() for r in reasons if r and r.strip())
     return f"{AI_COULD_NOT_PROCESS}. {detail}".strip()
 
@@ -167,6 +185,9 @@ def decision_rows(
     duplicate_of_document_guid: str | None = None,
     proposed_mercury_driver_id: str | None = None,
     proposed_driver: bool = False,
+    proposed_driver_details: ProposedDriver | None = None,
+    licence_number: str | None = None,
+    mercury_case_id: str | None = None,
 ) -> list[OutboxRow]:
     """The outbox rows for one AI decision, in :data:`OPERATION_ORDER`."""
     comment = decision_comment(outcome_code, reason)
@@ -184,16 +205,33 @@ def decision_rows(
         )
 
     if proposed_driver:
-        add(OutboxOperation.MAP_DRIVER, mercury_driver_id=proposed_mercury_driver_id)
-    add(OutboxOperation.CREATE_CASE, mercury_driver_id=mercury_driver_id)
-    if is_duplicate:
+        details = proposed_driver_details
         add(
-            OutboxOperation.MARK_DUPLICATE,
-            status="Rejected",
-            duplicate_of_document_guid=duplicate_of_document_guid,
+            OutboxOperation.MAP_DRIVER,
+            mercury_driver_id=proposed_mercury_driver_id,
+            licence_number=details.licence_number if details else None,
+            first_name=details.first_name if details else None,
+            last_name=details.last_name if details else None,
         )
     add(
-        OutboxOperation.UPDATE_OUTCOME, outcome_code=outcome_code, decided_by=decided_by
+        OutboxOperation.CREATE_CASE,
+        mercury_driver_id=mercury_driver_id,
+        licence_number=licence_number,
+        mercury_case_id=mercury_case_id,
+    )
+    duplicate = (
+        {
+            "is_duplicate": True,
+            "duplicate_of_document_guid": duplicate_of_document_guid,
+        }
+        if is_duplicate
+        else {}
+    )
+    add(
+        OutboxOperation.UPDATE_OUTCOME,
+        outcome_code=outcome_code,
+        decided_by=decided_by,
+        **duplicate,
     )
     return rows
 
@@ -216,6 +254,33 @@ def fallback_rows(
             idempotency_key=idempotency_key(source_id, operation),
         )
     ]
+
+
+async def queue_fallback_outcome(
+    conn: AsyncConnection,
+    *,
+    document_id: str,
+    document_guid: str,
+    reason: str,
+    now: datetime,
+) -> bool:
+    """Queue the error outcome for a DMER the pipeline won't process, inside
+    the caller's transaction: ``UPDATE_OUTCOME`` IN, ``decided_by`` FALLBACK,
+    comment "Unable to AI process due to error. <reason>" -- sent to Mercury
+    as ``aiProcessedStatus`` Error, routed to Team - Intake.
+
+    Every record the pipeline gives up on gets one (decided 2026-11-23), so
+    none is left InProgress in Mercury with nobody told. The key,
+    ``<document_id>:FALLBACK:UPDATE_OUTCOME``, is shared by every fallback
+    writer: a DMER gets at most one. True if it was queued now.
+    """
+    rows = fallback_rows(
+        source_id=f"{document_id}:FALLBACK",
+        document_id=document_id,
+        document_guid=document_guid,
+        comment=fallback_comment(reason),
+    )
+    return bool(await queue_outbox_rows(conn, rows, now=now))
 
 
 async def queue_outbox_rows(

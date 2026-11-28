@@ -87,6 +87,7 @@ def extract_top_level(
     result = client.analyze(model_id, pdf_bytes, pages=PAGE_1)
     documents = result.documents or []
     fields = documents[0].get("fields", {}) if documents else {}
+    document_confidence = documents[0].get("confidence") if documents else None
     mapped = map_di_fields(fields)
     # Cut-off check reuses this call's full-page layout (no extra DI call).
     flags = cutoff.detect_cutoff(result.pages[0] if result.pages else None, fields)
@@ -95,6 +96,11 @@ def extract_top_level(
         extra={
             "model_id": model_id,
             "field_count": len(mapped),
+            # Evidence for tuning the not-a-DMER check (not used by it yet):
+            # the model's confidence that the page is its form, and how many
+            # of its fields it actually found (field_count is every field).
+            "document_confidence": document_confidence,
+            "located_field_count": cutoff.located_field_count(fields),
             "has_header": flags.has_header,
             "has_signature": flags.has_signature,
             "is_cutoff": flags.is_cutoff,

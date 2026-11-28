@@ -77,10 +77,10 @@ because it's the other message-shaped contract in the system:
 
 | Operation | Purpose |
 |---|---|
-| `UPDATE_OUTCOME` | Write the outcome code (`CP`/`IN`/`PR`/`PU`/`TCM`/`CR`) and reason back to the DMER record. A **fallback** `UPDATE_OUTCOME` (`IN`, `decided_by = FALLBACK`, carrying `fallback_reason_code` + the "AI could not process" comment) is written **only** by the DLQ Drain for a `PERMANENT_BUSINESS` failure — never for a transient/processing/unknown failure. |
-| `MARK_DUPLICATE` | Flag a document as a duplicate of another — Mercury's `Rejected` status per question I-7. |
-| `MAP_DRIVER` | Attach the proposed driver to the DMER record (question I-11: AI may do this automatically). |
-| `CREATE_CASE` | Create a case where none exists, or attach to an existing open case (question I-13). |
+| `UPDATE_OUTCOME` | Sent as Mercury's `SetDmerAIProccessedStatus` (see [Post-Processing](stages/08-post-processing.md#mercury-write-back--setdmeraiproccessedstatus-confirmed-2026-11-20)). Write the outcome code (`CP`/`IN`/`PR`/`PU`/`TCM`/`CR`) and reason back to the DMER record. A **fallback** `UPDATE_OUTCOME` (`IN`, `decided_by = FALLBACK`, carrying `fallback_reason_code` + the "Unable to AI process due to error" comment) is written **only** by the DLQ Drain for a `PERMANENT_BUSINESS` failure — never for a transient/processing/unknown failure. |
+| `MARK_DUPLICATE` | No longer queued: a duplicate (I-7) is flagged on its `UPDATE_OUTCOME` (`is_duplicate`), sent to Mercury as `aiIsDuplicate`. Kept for rows queued earlier. |
+| `MAP_DRIVER` | Attach the proposed driver to the DMER record (question I-11: AI may do this automatically) — Mercury's `add_driver`, see [Post-Processing](stages/08-post-processing.md#driver-mapping--add_driver-confirmed-2026-11-20). |
+| `CREATE_CASE` | Give the DMER a case (question I-13) — Mercury's `add_case`, sent only when the DMER has no case and its driver no open case; see [Post-Processing](stages/08-post-processing.md#case--add_case-confirmed-2026-11-20). |
 
 See [Post-Processing](stages/08-post-processing.md) for how these rows are written and
 `azure-service-bus.md`/`reliability-components.md` for how they're drained.

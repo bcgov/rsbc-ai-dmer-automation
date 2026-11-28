@@ -4,13 +4,14 @@
 # replacing the original single-function `dmer_intake` design. Three
 # components, per that doc:
 #
-# - Page Poller (timer): calls Mercury's batch GET for one page, upserts
-#   `dmer_document`/`driver`, publishes one `dmer-ingest` message per
-#   document.
+# - Page Poller (timer): calls Mercury's GET dmers for one page, upserts
+#   `dmer_document`/`driver` and publishes one `dmer-ingest` message per
+#   DMER, then marks every record on the page AI Processed in Mercury (which
+#   is what makes the next GET return the next page).
 # - Ingest Function (Service Bus trigger on dmer-ingest): downloads the
-#   source PDF (from `dmer_document.document_url`, not the queue message --
-#   see that column's comment in database/migrations/V0001__*.sql for why),
-#   writes it to `raw-dmer`, publishes to `dmer-raw`.
+#   source PDF from Mercury by the row's document guid
+#   (`GET {MERCURY_API_BASE_URL}/{documentRecordId}/files`), writes it to
+#   `raw-dmer`, publishes to `dmer-raw`.
 # - Webhook Listener (HTTP, scaffolded but inactive): Mercury doesn't emit
 #   new-DMER events yet (question M-8, confirmed) -- this has no live data
 #   source, so it's registered but returns 501 rather than being wired to
@@ -39,10 +40,9 @@ import asyncio
 import functools
 import json
 import os
-import urllib.error
-import urllib.request
-from datetime import UTC, datetime
+from datetime import UTC, datetime, time, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import azure.functions as func
 from azure.identity import DefaultAzureCredential
@@ -54,6 +54,8 @@ from dmer_common.db import (
     DriverRepository,
     PollCheckpointRepository,
 )
+from dmer_common.db.non_dmer import record_non_dmer
+from dmer_common.licence import is_placeholder_licence, normalize_licence
 from dmer_common.mercury_client import MercuryClient
 from dmer_common.telemetry import document_id_context, get_logger
 from sqlalchemy import text
@@ -81,6 +83,32 @@ _MERCURY_POLL_LOCK_KEY = 727_100_001
 # table ("per source (BACKLOG or REALTIME)"). REALTIME would be the Webhook
 # Listener's, once Mercury actually emits events to listen for (question M-8).
 _POLL_SOURCE = "BACKLOG"
+
+# Most records the Page Poller takes from Mercury in one day
+# (MERCURY_DAILY_POLL_LIMIT overrides it; see _daily_poll_limit).
+DEFAULT_DAILY_POLL_LIMIT = 1000
+
+
+def _daily_poll_limit() -> int:
+    """``MERCURY_DAILY_POLL_LIMIT``: the most records (DMERs and non-DMERs)
+    the Page Poller takes from Mercury per day, default
+    :data:`DEFAULT_DAILY_POLL_LIMIT`. ``0`` takes none (polling paused)."""
+    raw = os.environ.get("MERCURY_DAILY_POLL_LIMIT", "").strip()
+    limit = int(raw) if raw else DEFAULT_DAILY_POLL_LIMIT
+    if limit < 0:
+        raise ValueError("MERCURY_DAILY_POLL_LIMIT must be 0 or more")
+    return limit
+
+
+def _start_of_day(now: datetime) -> datetime:
+    """Midnight today in Mercury's time zone (``MERCURY_RECEIVED_DATE_TIMEZONE``,
+    default America/Vancouver), as an aware datetime -- when the daily
+    limit resets."""
+    zone = ZoneInfo(
+        os.environ.get("MERCURY_RECEIVED_DATE_TIMEZONE", "").strip()
+        or "America/Vancouver"
+    )
+    return datetime.combine(now.astimezone(zone).date(), time.min, tzinfo=zone)
 
 
 async def _run_sync(fn, *args: Any, **kwargs: Any) -> Any:
@@ -148,15 +176,10 @@ def _parse_mercury_datetime(value: str | None) -> datetime | None:
     return datetime.fromisoformat(value)
 
 
-def _mercury_auth_headers() -> dict[str, str]:
-    return {"Authorization": f"Bearer {os.environ['MERCURY_API_KEY']}"}
-
-
-def _download_source_pdf(document_url: str) -> bytes:
-    """Blocking download of the source PDF from Mercury's pre-signed URL."""
-    request = urllib.request.Request(document_url, method="GET")
-    with urllib.request.urlopen(request, timeout=60) as response:
-        return response.read()
+def _download_source_pdf(document_guid: str) -> bytes:
+    """Blocking download of the source PDF from Mercury
+    (``GET {MERCURY_API_BASE_URL}/{documentRecordId}/files``)."""
+    return MercuryClient().download_dmer(document_guid)
 
 
 def _runtime_blob_service() -> BlobServiceClient:
@@ -221,8 +244,8 @@ def _envelope(
 ) -> dict:
     """The one shared envelope shape (message-contracts.md) -- `blob_url` is
     left null on a dmer-ingest message (nothing to point at yet; Ingest
-    reads document_url from dmer_document instead, see that column's
-    comment) and populated on dmer-raw once the download exists.
+    downloads the file from Mercury by the document guid) and populated on
+    dmer-raw once the download exists.
     """
     return {
         "schemaVersion": "1.0",
@@ -253,9 +276,24 @@ async def _upsert_document_and_driver(
 
     driver_key = None
     driver_obj = record.get("driver")
-    if driver_obj and driver_obj.get("licence_number"):
+    licence = (
+        normalize_licence(driver_obj.get("licence_number")) if driver_obj else None
+    )
+    if driver_obj and driver_obj.get("licence_number") and licence is None:
+        # Mercury's placeholder driver (licence 00000000: the DMER isn't mapped
+        # to a driver in Mercury) or an unusable licence: store the DMER with
+        # no driver, so Driver Lookup finds the driver from the licence read on
+        # the page and links it (add_driver). Never fail the poll over it.
+        _log.info(
+            "mercury driver not used: placeholder or invalid licence",
+            extra={
+                "document_guid": record.get("document_guid"),
+                "placeholder": is_placeholder_licence(driver_obj["licence_number"]),
+            },
+        )
+    if licence:
         driver_key = await driver_repo.upsert(
-            driver_obj["licence_number"],
+            licence,
             mercury_driver_id=driver_obj.get("driver_id"),
             first_name=driver_obj.get("first_name"),
             last_name=driver_obj.get("last_name"),
@@ -290,24 +328,78 @@ async def _upsert_document_and_driver(
     return document_id, driver_key
 
 
-async def _run_poll(engine: AsyncEngine) -> None:
+def _is_dmer(record: dict) -> bool:
+    """GET dmers also returns other document types (HRDIR reports, backfiles
+    -- with no documentUrl); only DMERs enter the pipeline. The others are
+    sent back to Mercury as an error (``dmer_common.db.non_dmer``)."""
+    return str(record.get("document_type") or "").strip().upper() == "DMER"
+
+
+async def _run_poll(engine: AsyncEngine, mercury: MercuryClient | None = None) -> None:
+    """Up to ``MERCURY_MAX_PAGES_PER_POLL`` pages (default 1), one after the
+    other: each is stored, queued and claimed (:func:`_poll_page`) before the
+    next is read -- GET dmers is claim-based, so the same request then returns
+    the next records. Another page is read only while the last one came back
+    full (Mercury sends no ``nextLink``). The cap bounds how much one run
+    pushes into extraction.
+
+    **Daily limit** (``MERCURY_DAILY_POLL_LIMIT``, default 1000): the records
+    first stored since midnight (Mercury's time zone) count against it, and
+    each GET asks for no more than what is left, so the day never goes over.
+    Once it is reached, nothing is read from Mercury until the next day --
+    the records stay in Mercury, unclaimed.
+    """
+    mercury = mercury or MercuryClient()
+    page_size = int(os.environ.get("MERCURY_PAGE_SIZE", "50"))
+    max_pages = max(1, int(os.environ.get("MERCURY_MAX_PAGES_PER_POLL", "1")))
+    daily_limit = _daily_poll_limit()
+    taken_today = await DmerDocumentRepository(engine).count_first_seen_since(
+        _start_of_day(datetime.now(UTC))
+    )
+    remaining = daily_limit - taken_today
+    if remaining <= 0:
+        _log.info(
+            "dmer_poll: daily limit reached; nothing read from Mercury",
+            extra={"daily_limit": daily_limit, "taken_today": taken_today},
+        )
+        return
+    for page_number in range(1, max_pages + 1):
+        size = min(page_size, remaining)
+        page = await _run_sync(functools.partial(mercury.get_page, page_size=size))
+        claimed = await _poll_page(engine, mercury, page, page_number=page_number)
+        remaining -= claimed
+        # Stop on a short page; if nothing could be claimed, the next read
+        # would return the same records; and at the daily limit.
+        if not page.has_more or not claimed:
+            break
+        if remaining <= 0:
+            _log.info(
+                "dmer_poll: daily limit reached",
+                extra={"daily_limit": daily_limit},
+            )
+            break
+
+
+async def _poll_page(
+    engine: AsyncEngine, mercury: MercuryClient, page, *, page_number: int
+) -> int:
+    """One page: store and queue its DMERs, queue an error outcome for each
+    non-DMER ("not a DMER", sent to Intake), then mark every record on it AI
+    Processed so GET dmers returns the next ones. Returns how many records
+    were claimed.
+
+    Marking comes last, once the DMERs are in dmer_document and on
+    dmer-ingest. If it fails the poll fails, and the next tick gets the same
+    records again -- storing and publishing them twice is harmless (upsert by
+    document_guid, Service Bus duplicate detection), so nothing is lost and
+    nothing is processed twice.
+    """
     checkpoint_repo = PollCheckpointRepository(engine)
     doc_repo = DmerDocumentRepository(engine)
     driver_repo = DriverRepository(engine)
 
-    checkpoint = await checkpoint_repo.get(_POLL_SOURCE)
-    last_cursor = checkpoint.last_cursor if checkpoint else None
-
-    mercury = MercuryClient()
-    queue = os.environ.get("MERCURY_QUEUE", "BOTH")
-    page_size = int(os.environ.get("MERCURY_PAGE_SIZE", "50"))
-    page = await _run_sync(
-        functools.partial(
-            mercury.get_page, queue=queue, page_size=page_size, next_url=last_cursor
-        )
-    )
-
-    for record in page.records:
+    dmers = [r for r in page.records if _is_dmer(r) and r.get("document_guid")]
+    for record in dmers:
         document_id, driver_key = await _upsert_document_and_driver(
             record, doc_repo=doc_repo, driver_repo=driver_repo
         )
@@ -335,17 +427,45 @@ async def _run_poll(engine: AsyncEngine) -> None:
                 extra={"document_guid": record["document_guid"]},
             )
 
+    # Non-DMERs: stored as MANUAL_REVIEW with an error outcome queued for
+    # Mercury ("not a DMER"), due a few minutes from now so it lands after
+    # the claim below. Idempotent: a re-polled page queues nothing twice.
+    send_after = timedelta(
+        seconds=int(os.environ.get("NON_DMER_OUTCOME_DELAY_SECONDS", "300"))
+    )
+    non_dmers = [r for r in page.records if not _is_dmer(r) and r.get("document_guid")]
+    for record in non_dmers:
+        result = await record_non_dmer(
+            engine, record, now=datetime.now(UTC), send_after=send_after
+        )
+        if result is not None:
+            _log.info(
+                "non-DMER record: error outcome queued for Mercury",
+                extra={"document_id": result.document_id, "queued": result.queued},
+            )
+
+    guids = [str(r["document_guid"]) for r in page.records if r.get("document_guid")]
+    if guids:
+        await _run_sync(mercury.set_ai_processed, guids)
+
     now = datetime.now(UTC)
+    # No cursor: GET dmers is claim-based, so the next page is the same call.
     await checkpoint_repo.update(
-        _POLL_SOURCE, last_cursor=page.next_url, last_received_date=now, last_run_at=now
+        _POLL_SOURCE, last_cursor=None, last_received_date=now, last_run_at=now
     )
     _log.info(
         "poll complete",
         extra={
             "record_count": len(page.records),
-            "has_next": bool(page.next_url),
+            "dmer_count": len(dmers),
+            "non_dmer_count": len(non_dmers),
+            "marked_ai_processed": len(guids),
+            "page_number": page_number,
+            "has_more": page.has_more,
+            "mercury_count": page.count,
         },
     )
+    return len(guids)
 
 
 @app.timer_trigger(
@@ -443,10 +563,6 @@ async def dmer_ingest(msg: func.ServiceBusMessage) -> None:
                     extra={"pipeline_status": row.pipeline_status},
                 )
                 return
-            if not row.document_url:
-                _log.error("dmer_ingest: dmer_document row has no document_url")
-                return
-
             now = datetime.now(UTC)
             run_id = await stage_run_repo.start(
                 document_id=document_id,
@@ -456,7 +572,7 @@ async def dmer_ingest(msg: func.ServiceBusMessage) -> None:
             )
 
             try:
-                content = await _run_sync(_download_source_pdf, row.document_url)
+                content = await _run_sync(_download_source_pdf, row.document_guid)
                 raw_blob_url = await _run_sync(
                     _upload_raw_dmer_blob,
                     content,

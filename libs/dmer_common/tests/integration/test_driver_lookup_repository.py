@@ -23,6 +23,7 @@ from dmer_common.db.driver_lookup import (
     MercuryDriver,
     driver_lookup_session,
 )
+from dmer_common.form_driver import FormDriver
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
@@ -234,7 +235,12 @@ def test_manual_review_routes_the_document_and_replays_its_reason():
             async with driver_lookup_session(engine, doc_id) as repository:
                 attempt = await repository.start_or_resume(now=datetime.now(UTC))
                 await repository.manual_review(
-                    attempt.run_id, reason=DRIVER_NOT_FOUND, now=datetime.now(UTC)
+                    attempt.run_id,
+                    reason=DRIVER_NOT_FOUND,
+                    now=datetime.now(UTC),
+                    # the form's names; its licence unreadable in combined.json,
+                    # so the page's licence read stands in
+                    form_driver=FormDriver(first_name="Jo", last_name="Doe"),
                 )
             async with driver_lookup_session(engine, doc_id) as repository:
                 replay = await repository.start_or_resume(now=datetime.now(UTC))
@@ -257,7 +263,7 @@ def test_manual_review_routes_the_document_and_replays_its_reason():
                     0,
                 )
                 # I-12/I-22: it reaches Intake as IN, with the reason and the
-                # licence read, through the outbox -- no decision row, no driver.
+                # driver's details from the form, through the outbox -- no decision row, no driver.
                 operation, key, payload, guid = await _one(
                     conn,
                     "SELECT o.operation::text, o.idempotency_key, o.payload, "
@@ -273,9 +279,10 @@ def test_manual_review_routes_the_document_and_replays_its_reason():
                     "outcome_code": "IN",
                     "decided_by": "FALLBACK",
                     "comment": (
-                        "AI could not process. The driver's file could not be "
+                        "Unable to AI process due to error. The driver's file could not be "
                         "found or mapped in Mercury. Mercury has no driver with "
-                        f"the page's licence. Licence read from the DMER: {LICENCE}."
+                        "the page's licence. Driver details as read from the DMER "
+                        f"form: licence {LICENCE}, first name Jo, surname Doe."
                     ),
                 }
                 assert await _one(conn, "SELECT count(*) FROM dmer_decision") == (0,)

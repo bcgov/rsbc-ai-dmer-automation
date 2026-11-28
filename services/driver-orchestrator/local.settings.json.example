@@ -13,8 +13,9 @@
     "POSTGRES_PASSWORD": "",
     "POSTGRES_SSLMODE": "require",
     "MERCURY_DRIVER_LICENCE_API_BASE_URL": "https://func-mock-mercury-api-dev.azurewebsites.net/api/mercury/drivers",
+    "MERCURY_AUTH_TOKEN_URL": "",
     "MERCURY_API_KEY": "",
     "MERCURY_COUNTED_DOCUMENT_TYPES": "DMER",
-    "MERCURY_UNCOUNTED_DOCUMENT_STATUSES": "Rejected"
+    "MERCURY_WAITING_DOCUMENT_STATUSES": "Uploaded"
   }
 }

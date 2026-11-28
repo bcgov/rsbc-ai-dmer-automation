@@ -1,5 +1,12 @@
 # DLQ Drain
 
+> **Changed 2026-11-23:** every dead letter that ends in `MANUAL_REVIEW` now gets the fallback
+> outcome (Error to Team - Intake), whatever its failure category — not only
+> `PERMANENT_BUSINESS`. A record the pipeline won't process must never sit InProgress in Mercury
+> with nobody told. Transient/processing failures are still redriven first; only when the redrive
+> budget is exhausted (or the failure is unknown/logical) is the outcome queued. This supersedes
+> the PERMANENT_BUSINESS-only gate below and in ADR-0002 (pending architect review).
+
 Source: architecture doc §4.6.3, §6. Data model: `../data-model.md`. Messages:
 `../message-contracts.md`. See also [Reliability Components](09-reliability-components.md).
 
@@ -72,7 +79,7 @@ Classification is conservative: **if a message cannot be confidently classified 
 3. Route by category:
    - **`PERMANENT_BUSINESS`** — set `pipeline_status = MANUAL_REVIEW`, and (only here) queue a
      **fallback outcome** to `mercury_outbox`: `IN`, `decided_by = FALLBACK`, with a `reason_code`
-     and the Mercury comment **"AI could not process"** (question I-1, answered), written back as
+     and the Mercury comment **"Unable to AI process due to error"** (question I-1, answered), written back as
      part of the POST/PUT — not just logged. This is the one category where making failure visible
      means producing a decision.
    - **`TRANSIENT`** — do **not** write any decision. Set `pipeline_status = MANUAL_REVIEW` (so the
@@ -139,8 +146,8 @@ departs from the text above:
   without routing the batch's documents -- the Reconciliation Sweeper owns stuck evaluations.
 - **A dead letter with no known document** (no `documentId`, or no `dmer_document` row) can't have a
   `processing_error` row; it is logged at ERROR and completed.
-- **Ingest redrive re-sends the same pre-signed URL** -- re-polling Mercury for a fresh one waits on
-  M-1 (see below). An expired URL fails again and ends in manual review after the redrive budget.
+- **Ingest redrive downloads again** -- the PDF is fetched by `documentRecordId` on demand
+  (`GET dmers/{documentRecordId}/files`), so there is no URL to go stale (M-1, answered; see below).
 
 ## Database writes
 
@@ -149,7 +156,7 @@ departs from the text above:
 | `processing_error` | `INSERT` | **all** | `document_id`, `stage`, `error_class` / `failure_category` (`PERMANENT_BUSINESS`, `TRANSIENT`, `PROCESSING`, `UNKNOWN`), `reason_code`, `message` (raw dead-letter reason), `dlq_message_id`, `occurred_at`. |
 | `dmer_document` | `UPDATE` | **all** | `pipeline_status = MANUAL_REVIEW`, `updated_at`. |
 | `dmer_decision` | `INSERT` | **`PERMANENT_BUSINESS` only** | `outcome_code = IN`, `decided_by = FALLBACK`, `fallback_reason_code`, `decision_reason` (jsonb: category, failed stage, dead-letter reason). Governed by question I-1's confirmed answer above. **Never written for `TRANSIENT`, `PROCESSING`, or `UNKNOWN`.** |
-| `mercury_outbox` | `INSERT` | **`PERMANENT_BUSINESS` only** | `operation = UPDATE_OUTCOME` carrying the fallback outcome and the "AI could not process" comment, so the document still reaches Intake. **Never written for the other three categories.** |
+| `mercury_outbox` | `INSERT` | **`PERMANENT_BUSINESS` only** | `operation = UPDATE_OUTCOME` carrying the fallback outcome and the "Unable to AI process due to error" comment, so the document still reaches Intake. **Never written for the other three categories.** |
 
 Note this inserts `dmer_decision` and `mercury_outbox` directly — unlike the normal path where only
 [Post-Processing](08-post-processing.md) writes these tables. DLQ Drain is the one other writer, and
@@ -172,17 +179,13 @@ there is no business rule that says "a lock expired, therefore this driver is `I
 
 ## Pre-signed URL replay caveat
 
-If a message dead-letters at [Ingest](01-ingest.md) and is replayed hours later, it may fail again
-on an **expired pre-signed URL** (question M-1, open — see `01-ingest.md#failure-handling`). If the
-TTL is short and no fresh-URL mechanism exists, DLQ Drain's remedy for an Ingest-stage dead letter
-is **not** "resubmit the original message" but "re-poll that document through the Mercury batch API
-to obtain a new URL." Build this branch from the start; do not discover the need during the first
-incident.
+**Resolved (M-1):** Mercury has no pre-signed URL. Ingest downloads the PDF on demand with
+`GET dmers/{documentRecordId}/files` (see `01-ingest.md#failure-handling`), so resubmitting an
+Ingest-stage dead letter simply downloads again — no re-poll is needed.
 
-Crucially, an expired-URL failure is **`TRANSIENT`**, not `PERMANENT_BUSINESS` — the document itself
-is fine, only the URL went stale. It must be routed to operational recovery (re-poll + redrive), and
-it must **never** receive a fallback `IN` decision. Misclassifying it as permanent would fabricate a
-business outcome for a document that could have processed cleanly with a fresh URL.
+A download that failed because Mercury was unavailable is still **`TRANSIENT`**, not
+`PERMANENT_BUSINESS`: the document itself is fine. It must be routed to operational recovery
+(redrive), and it must **never** receive a fallback `IN` decision.
 
 ## Interaction with upstream/downstream
 
@@ -264,7 +267,7 @@ generated for `TRANSIENT`, `PROCESSING`, or `UNKNOWN`.
 {
   "document_guid": "123e4567-e89b-...",
   "outcome_code": "IN",
-  "comment": "AI could not process",
+  "comment": "Unable to AI process due to error",
   "decided_by": "FALLBACK",
   "fallback_reason_code": "PERMANENT_UNREADABLE_DOCUMENT",
   "failure_category": "PERMANENT_BUSINESS",
@@ -281,6 +284,7 @@ so decisions and failures are queryable and auditable rather than free-text-only
 | `reason_code` | Category | Meaning |
 |---|---|---|
 | `PERMANENT_UNREADABLE_DOCUMENT` | `PERMANENT_BUSINESS` | PDF is malformed/unreadable and cannot be extracted. |
+| `PERMANENT_NOT_A_DMER_FORM` | `PERMANENT_BUSINESS` | Extraction's `NOT_A_DMER_FORM`: page 1 shows neither the form header nor the examiner block (not a DMER form, or too incomplete to identify). Mercury note: "The document does not appear to be a DMER form, or is too incomplete to identify (neither the form header nor the examiner section was found)." |
 | `PERMANENT_SCHEMA_VIOLATION` | `PERMANENT_BUSINESS` | Content violates the extraction schema in a non-recoverable way. |
 | `PERMANENT_DOCUMENT_GONE` | `PERMANENT_BUSINESS` | `document_guid` no longer exists in Mercury. |
 | `TRANSIENT_LOCK_EXPIRED` | `TRANSIENT` | Lock/session lost mid-processing. |
@@ -313,7 +317,7 @@ generated stubs under `services/reliability/tests/` must cover before this funct
 ## Assumptions made in this revision
 
 - **Assumption A-1:** the *only* explicit business rule permitting a fallback decision is question
-  I-1 ("un-processable DMER defaults to `IN` with comment 'AI could not process'"). No business rule
+  I-1 ("un-processable DMER defaults to `IN` with comment 'Unable to AI process due to error'"). No business rule
   authorizes a fallback for transient/processing/unknown failures, so this revision introduces none.
   If Intake later defines such a rule, add the category to `FALLBACK_ENABLED_CATEGORIES` and document
   the rule here first — do not enable it in code alone.
@@ -322,18 +326,15 @@ generated stubs under `services/reliability/tests/` must cover before this funct
   `dmer_stage_run.error_code`. If richer signals become available, they refine classification but do
   not relax the safety rule.
 - **Assumption A-3:** an unreadable/malformed PDF and a `document_guid` that no longer exists in
-  Mercury are genuinely permanent (retry can never succeed). If Ingest gains a fresh-URL-on-demand
-  mechanism (question M-1), a document that dead-lettered on an *expired pre-signed URL* is
-  `TRANSIENT`, not `PERMANENT_BUSINESS`, and must be redriven after re-polling Mercury — not given a
-  fallback decision.
+  Mercury are genuinely permanent (retry can never succeed). A download that failed only because
+  Mercury was unavailable is `TRANSIENT`, not `PERMANENT_BUSINESS`, and must be redriven — not given
+  a fallback decision.
 
 ## Open Questions / Decisions Required
 
-- **M-1** — pre-signed URL TTL / fresh-URL-on-demand availability (see
-  [Pre-signed URL replay caveat](#pre-signed-url-replay-caveat)) — blocks whether Ingest-stage DLQ
-  replay can work via resubmission at all, or must always re-poll Mercury. **Interacts with the
-  categorization model:** an expired-URL dead-letter is `TRANSIENT` (redrive after re-poll), not
-  `PERMANENT_BUSINESS` (see Assumption A-3) — it must never receive a fallback decision.
+- **M-1** — *Answered:* no pre-signed URL; the PDF is downloaded on demand by `documentRecordId`,
+  so Ingest-stage DLQ replay works by resubmission (see
+  [Pre-signed URL replay caveat](#pre-signed-url-replay-caveat)).
 - Drain trigger mechanism (timer sweep vs. continuous peek-lock consumer per DLQ) — not specified;
   this doc assumes a timer for consistency with the other reliability functions.
 - **Reason-code catalogue ownership** — the [reason codes](#reason-codes) here are a proposed

@@ -22,7 +22,7 @@ as the stage run's ``error_code``, and a ``processing_error`` row
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Final
 
@@ -41,6 +41,7 @@ from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
+from ..form_driver import FormDriver, form_driver_note
 from ._advisory import advisory_lock_session
 from .dmer_document import _pipeline_status_enum
 from .dmer_stage_run import dmer_stage_run
@@ -104,15 +105,22 @@ DRIVER_FILE_NOT_FOUND: Final = (
 )
 
 
-def unidentified_driver_comment(reason: str, licence_read: str | None) -> str:
-    """The comment on an I-12/I-22 fallback: "AI could not process", that the
-    driver's file could not be found or mapped, the reason and the licence
-    read from the page. Goes to Mercury -- licence is PII, never log it."""
+def unidentified_driver_comment(
+    reason: str, licence_read: str | None, form_driver: FormDriver | None = None
+) -> str:
+    """The comment on an I-12/I-22 fallback: "Unable to AI process due to error", that the
+    driver's file could not be found or mapped, the reason and the driver's
+    details as read from the form (*form_driver*, from ``combined.json``:
+    licence, first name, surname). *licence_read* stands in for the licence
+    when the form's can't be read. Goes to Mercury -- PII, never log it."""
+    details = form_driver or FormDriver()
     licence = (licence_read or "").strip()
+    if not details.licence and licence:
+        details = replace(details, licence=licence)
     return fallback_comment(
         DRIVER_FILE_NOT_FOUND,
         MANUAL_REVIEW_REASONS[reason],
-        f"Licence read from the DMER: {licence}." if licence else "",
+        form_driver_note(details),
     )
 
 
@@ -376,13 +384,22 @@ class DriverLookupRepository:
             ).scalar_one()
             return str(driver_key), str(evaluation_id)
 
-    async def manual_review(self, run_id: int, *, reason: str, now: datetime) -> None:
+    async def manual_review(
+        self,
+        run_id: int,
+        *,
+        reason: str,
+        now: datetime,
+        form_driver: FormDriver | None = None,
+    ) -> None:
         """Route the document to MANUAL_REVIEW with *reason* (a
         :data:`MANUAL_REVIEW_REASONS` code), and queue its fallback outcome.
 
         I-12/I-22: a DMER whose driver's file can't be found or mapped goes to
-        Intake as IN, with a comment saying so, the reason and the licence
-        read from the page; no driver file is created. Without a driver there
+        Intake as IN, with a comment saying so, the reason and the driver's
+        details as read from the form (*form_driver*, read by the caller from
+        ``combined.json``; the page's licence when it has none); no driver
+        file is created. Without a driver there
         is no driver evaluation (so no ``dmer_decision`` row): the outcome is
         the ``UPDATE_OUTCOME`` outbox row alone, in the same transaction.
         """
@@ -437,7 +454,7 @@ class DriverLookupRepository:
                     source_id=f"{self._document_id}:FALLBACK",
                     document_id=self._document_id,
                     document_guid=str(guid),
-                    comment=unidentified_driver_comment(reason, licence),
+                    comment=unidentified_driver_comment(reason, licence, form_driver),
                 ),
                 now=now,
             )
