@@ -341,6 +341,8 @@ Full diagram: `docs/architecture/Figure3_Status_Lifecycle.png`.
 CREATE UNIQUE INDEX ON dmer_document (document_guid);
 -- the sweeper's main scan
 CREATE INDEX ON dmer_document (pipeline_status, updated_at);
+-- the Page Poller's daily limit: records first stored since midnight (V0013)
+CREATE INDEX ON dmer_document (first_seen_at);
 -- driver completeness checks
 CREATE INDEX ON dmer_document (driver_key, pipeline_status);
 CREATE INDEX ON driver_evaluation (status, last_mercury_check_at);

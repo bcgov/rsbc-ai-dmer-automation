@@ -40,8 +40,9 @@ import asyncio
 import functools
 import json
 import os
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, time, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import azure.functions as func
 from azure.identity import DefaultAzureCredential
@@ -82,6 +83,32 @@ _MERCURY_POLL_LOCK_KEY = 727_100_001
 # table ("per source (BACKLOG or REALTIME)"). REALTIME would be the Webhook
 # Listener's, once Mercury actually emits events to listen for (question M-8).
 _POLL_SOURCE = "BACKLOG"
+
+# Most records the Page Poller takes from Mercury in one day
+# (MERCURY_DAILY_POLL_LIMIT overrides it; see _daily_poll_limit).
+DEFAULT_DAILY_POLL_LIMIT = 1000
+
+
+def _daily_poll_limit() -> int:
+    """``MERCURY_DAILY_POLL_LIMIT``: the most records (DMERs and non-DMERs)
+    the Page Poller takes from Mercury per day, default
+    :data:`DEFAULT_DAILY_POLL_LIMIT`. ``0`` takes none (polling paused)."""
+    raw = os.environ.get("MERCURY_DAILY_POLL_LIMIT", "").strip()
+    limit = int(raw) if raw else DEFAULT_DAILY_POLL_LIMIT
+    if limit < 0:
+        raise ValueError("MERCURY_DAILY_POLL_LIMIT must be 0 or more")
+    return limit
+
+
+def _start_of_day(now: datetime) -> datetime:
+    """Midnight today in Mercury's time zone (``MERCURY_RECEIVED_DATE_TIMEZONE``,
+    default America/Vancouver), as an aware datetime -- when the daily
+    limit resets."""
+    zone = ZoneInfo(
+        os.environ.get("MERCURY_RECEIVED_DATE_TIMEZONE", "").strip()
+        or "America/Vancouver"
+    )
+    return datetime.combine(now.astimezone(zone).date(), time.min, tzinfo=zone)
 
 
 async def _run_sync(fn, *args: Any, **kwargs: Any) -> Any:
@@ -315,16 +342,41 @@ async def _run_poll(engine: AsyncEngine, mercury: MercuryClient | None = None) -
     the next records. Another page is read only while the last one came back
     full (Mercury sends no ``nextLink``). The cap bounds how much one run
     pushes into extraction.
+
+    **Daily limit** (``MERCURY_DAILY_POLL_LIMIT``, default 1000): the records
+    first stored since midnight (Mercury's time zone) count against it, and
+    each GET asks for no more than what is left, so the day never goes over.
+    Once it is reached, nothing is read from Mercury until the next day --
+    the records stay in Mercury, unclaimed.
     """
     mercury = mercury or MercuryClient()
     page_size = int(os.environ.get("MERCURY_PAGE_SIZE", "50"))
     max_pages = max(1, int(os.environ.get("MERCURY_MAX_PAGES_PER_POLL", "1")))
+    daily_limit = _daily_poll_limit()
+    taken_today = await DmerDocumentRepository(engine).count_first_seen_since(
+        _start_of_day(datetime.now(UTC))
+    )
+    remaining = daily_limit - taken_today
+    if remaining <= 0:
+        _log.info(
+            "dmer_poll: daily limit reached; nothing read from Mercury",
+            extra={"daily_limit": daily_limit, "taken_today": taken_today},
+        )
+        return
     for page_number in range(1, max_pages + 1):
-        page = await _run_sync(functools.partial(mercury.get_page, page_size=page_size))
+        size = min(page_size, remaining)
+        page = await _run_sync(functools.partial(mercury.get_page, page_size=size))
         claimed = await _poll_page(engine, mercury, page, page_number=page_number)
-        # Stop on a short page; and if nothing could be claimed, the next read
-        # would return the same records.
+        remaining -= claimed
+        # Stop on a short page; if nothing could be claimed, the next read
+        # would return the same records; and at the daily limit.
         if not page.has_more or not claimed:
+            break
+        if remaining <= 0:
+            _log.info(
+                "dmer_poll: daily limit reached",
+                extra={"daily_limit": daily_limit},
+            )
             break
 
 

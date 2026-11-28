@@ -875,6 +875,7 @@ The code is right; these stage docs are behind it:
 | `MERCURY_WRITE_API_BASE_URL` | reliability | `https://<host>` | W1–W3 and the case check |
 | `MERCURY_PAGE_SIZE` | intake, reliability | 50 | Page size |
 | `MERCURY_MAX_PAGES_PER_POLL` | intake | 1 | Pages one poll may read while each comes back full (raise to drain the backlog faster) |
+| `MERCURY_DAILY_POLL_LIMIT` | intake | 1000 | Most records taken from Mercury per day (midnight to midnight, Mercury's time zone); `0` pauses polling |
 | `MERCURY_RECEIVED_DATE_TIMEZONE` | intake | America/Vancouver | Zone for `receivedDate` without offset |
 | `MERCURY_COUNTED_DOCUMENT_TYPES` | orchestrators | DMER | Types counted as a driver's DMERs |
 | `MERCURY_WAITING_DOCUMENT_STATUSES` | orchestrators | Uploaded | Statuses that mean "still waiting" |

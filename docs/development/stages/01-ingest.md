@@ -34,6 +34,14 @@ isolation from the others.
    `count` echoes the page size asked for; it is only logged. By default **one page per run**;
    `MERCURY_MAX_PAGES_PER_POLL` (default 1) lets one run read further full pages, each stored,
    queued and claimed before the next is read (see step 8).
+   **Daily limit**: at most `MERCURY_DAILY_POLL_LIMIT` records (default 1000; DMERs and
+   non-DMERs alike) are taken per day, the day starting at midnight in
+   `MERCURY_RECEIVED_DATE_TIMEZONE`. A run first counts the `dmer_document` rows first stored
+   since midnight (`first_seen_at`); each `GET dmers` then asks for no more than what is left
+   (`count` = the smaller of the page size and the rest of the day's limit), so the day never
+   goes over. At the limit the run reads nothing: the records stay in Mercury, unclaimed, until
+   the next day. A record re-listed by Mercury that we already have doesn't count again (it isn't
+   stored again). `0` pauses polling.
    Do not loop over pages inside the invocation — a long-running poller is harder to retry, harder
    to reason about on timeout, and holds the advisory lock while it works.
    `MercuryClient` translates Mercury's camelCase `items` into the snake_case records below
@@ -174,6 +182,7 @@ than Mercury itself.
 |---|---|
 | `MERCURY_API_BASE_URL` | Mercury `GET dmers` endpoint (`https://<host>/Dmers`); the AI Processed call is `<it>/BatchSetDmerAIProccessedStatus` and the file download `<it>/{documentRecordId}/files`. |
 | `MERCURY_PAGE_SIZE` | Records per `GET dmers` call (default 50). |
+| `MERCURY_DAILY_POLL_LIMIT` | Most records taken from Mercury per day (default 1000), from midnight in `MERCURY_RECEIVED_DATE_TIMEZONE`; `0` pauses polling. See step 1. |
 | `MERCURY_RECEIVED_DATE_TIMEZONE` | IANA zone `receivedDate` is read in when it has no offset (default `America/Vancouver`). |
 | `MERCURY_AUTH_TOKEN_URL` | Mercury's token endpoint (`https://<host>/Authentication/token`). Every Mercury call carries `Authorization: Bearer <token>`; the token comes from `GET <this>?secret=<MERCURY_API_KEY>`, is shared by the process, reused until it expires (`expiresIn`/`expiresAt` in the response, else the JWT `exp`, else `MERCURY_TOKEN_TTL_SECONDS`, default 1800) and fetched again early, or at once when an API answers 401. |
 | `MERCURY_API_KEY` | The secret exchanged for the token, from Key Vault (see `../services/azure-key-vault.md`). Never logged, nor the token URL that carries it. Network path is ExpressRoute (question M-4, confirmed). |

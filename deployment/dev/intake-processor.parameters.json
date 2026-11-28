@@ -34,6 +34,7 @@
       "value": "https://rsbc-dfp-icbc-adapter-dev.apps.silver.devops.gov.bc.ca/Dmers"
     },
     "mercuryPageSize": { "value": "50" },
+    "mercuryDailyPollLimit": { "value": 1000 },
     "serviceBusNamespaceFqdn": {
       "value": "sb-rsbc-dmer-shared-dev-001.servicebus.windows.net"
     },

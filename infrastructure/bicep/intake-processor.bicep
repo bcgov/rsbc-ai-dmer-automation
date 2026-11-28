@@ -146,6 +146,10 @@ param mercuryReceivedDateTimezone string = 'America/Vancouver'
 @description('Mercury API page size.')
 param mercuryPageSize string = '50'
 
+@description('Most records (DMERs and non-DMERs) the Page Poller takes from Mercury per day, counted from midnight in mercuryReceivedDateTimezone (MERCURY_DAILY_POLL_LIMIT). Once reached, nothing more is read until the next day. 0 pauses polling.')
+@minValue(0)
+param mercuryDailyPollLimit int = 1000
+
 @description('Fully-qualified Service Bus namespace hostname (e.g. sb-rsbc-dmer-shared-dev-001.servicebus.windows.net) the Page Poller, Webhook Listener, and Ingest Function authenticate against via DefaultAzureCredential. This template grants its own managed identity queue-scoped Service Bus roles on dmer-ingest and dmer-raw -- see the role assignment modules below.')
 @minLength(1)
 param serviceBusNamespaceFqdn string
@@ -204,6 +208,7 @@ var appSettings = {
   MERCURY_AUTH_TOKEN_URL: mercuryAuthTokenUrl
   MERCURY_API_KEY: mercuryApiKey
   MERCURY_PAGE_SIZE: mercuryPageSize
+  MERCURY_DAILY_POLL_LIMIT: string(mercuryDailyPollLimit)
   MERCURY_RECEIVED_DATE_TIMEZONE: mercuryReceivedDateTimezone
   SERVICE_BUS_NAMESPACE_FQDN: serviceBusNamespaceFqdn
   // Identity-based connection for the dmer_ingest function's Service Bus

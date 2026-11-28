@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import function_app as fa
@@ -71,14 +71,21 @@ class _FakeDriverRepo:
 
 
 class _FakeDocRepo:
-    """Records every upsert_received() call; returns a fixed document_id."""
+    """Records every upsert_received() call; returns a fixed document_id.
+    *taken_today* records were already stored today (the daily limit)."""
 
-    def __init__(self):
+    def __init__(self, taken_today=0):
         self.calls: list[dict] = []
+        self.taken_today = taken_today
+        self.counted_since: list[datetime] = []
 
     async def upsert_received(self, **kwargs):
         self.calls.append(kwargs)
         return "document-id-1"
+
+    async def count_first_seen_since(self, since):
+        self.counted_since.append(since)
+        return self.taken_today
 
 
 def test_upsert_document_and_driver_uses_null_driver_key_when_no_driver():
@@ -279,9 +286,9 @@ class _FakeCheckpointRepo:
         self.events.append(("checkpoint", source, kwargs["last_cursor"]))
 
 
-def _poll(monkeypatch, records, *, mark_fails=False):
+def _poll(monkeypatch, records, *, mark_fails=False, taken_today=0):
     events: list = []
-    doc_repo = _FakeDocRepo()
+    doc_repo = _FakeDocRepo(taken_today)
     monkeypatch.setattr(fa, "DmerDocumentRepository", lambda engine: doc_repo)
     monkeypatch.setattr(fa, "DriverRepository", lambda engine: _FakeDriverRepo())
     monkeypatch.setattr(
@@ -365,9 +372,11 @@ class _PagedMercury(_FakeMercury):
         return MercuryPage(records=records, has_more=full)
 
 
-def _paged_poll(monkeypatch, pages, max_pages):
-    events: list = []
-    monkeypatch.setattr(fa, "DmerDocumentRepository", lambda engine: _FakeDocRepo())
+def _paged_poll(monkeypatch, pages, max_pages, *, taken_today=0, events=None):
+    events = [] if events is None else events
+    monkeypatch.setattr(
+        fa, "DmerDocumentRepository", lambda engine: _FakeDocRepo(taken_today)
+    )
     monkeypatch.setattr(fa, "DriverRepository", lambda engine: _FakeDriverRepo())
     monkeypatch.setattr(
         fa, "PollCheckpointRepository", lambda engine: _FakeCheckpointRepo(events)
@@ -411,6 +420,89 @@ def test_a_failed_mark_fails_the_poll_so_the_next_tick_gets_the_page_again(
     events, _, error = _poll(monkeypatch, [_DMER], mark_fails=True)
     assert error is not None
     assert [e[0] for e in events] == ["get_page", "publish", "set_ai_processed"]
+
+
+# ---------------------------------------------------------------------------
+# Daily limit (MERCURY_DAILY_POLL_LIMIT)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def daily_limit(monkeypatch):
+    def set_limit(value):
+        if value is None:
+            monkeypatch.delenv("MERCURY_DAILY_POLL_LIMIT", raising=False)
+        else:
+            monkeypatch.setenv("MERCURY_DAILY_POLL_LIMIT", str(value))
+
+    return set_limit
+
+
+def test_the_daily_limit_defaults_to_1000(daily_limit):
+    daily_limit(None)
+    assert fa._daily_poll_limit() == 1000
+
+
+def test_the_daily_limit_is_configurable(daily_limit):
+    daily_limit(250)
+    assert fa._daily_poll_limit() == 250
+
+
+def test_a_negative_daily_limit_is_a_configuration_error(daily_limit):
+    daily_limit(-1)
+    with pytest.raises(ValueError):
+        fa._daily_poll_limit()
+
+
+def test_nothing_is_read_from_mercury_once_the_daily_limit_is_reached(
+    monkeypatch, daily_limit
+):
+    daily_limit(1000)
+    events, doc_repo, error = _poll(monkeypatch, [_DMER], taken_today=1000)
+    assert error is None
+    assert events == []  # no GET, so nothing claimed: the records stay in Mercury
+    assert doc_repo.calls == []
+
+
+def test_a_zero_daily_limit_pauses_polling(monkeypatch, daily_limit):
+    daily_limit(0)
+    events, _, _ = _poll(monkeypatch, [_DMER])
+    assert events == []
+
+
+def test_near_the_limit_the_page_asks_only_for_what_is_left(monkeypatch, daily_limit):
+    daily_limit(1000)
+    events, _, _ = _poll(monkeypatch, [_DMER], taken_today=993)
+    assert ("get_page", 7) in events  # not MERCURY_PAGE_SIZE (50)
+
+
+def test_the_limit_stops_a_run_between_pages(monkeypatch, daily_limit):
+    # page size 1, 5 pages allowed, 2 left today: two pages, then stop.
+    daily_limit(10)
+    pages = [([_dmer(g)], True) for g in "ABCDE"]
+    events: list = []
+    claimed = _paged_poll(monkeypatch, pages, max_pages=5, taken_today=8, events=events)
+    assert claimed == [["A"], ["B"]]
+    assert [e for e in events if e[0] == "get_page"] == [("get_page", 1)] * 2
+
+
+def test_the_day_starts_at_midnight_in_mercurys_time_zone(monkeypatch):
+    monkeypatch.delenv("MERCURY_RECEIVED_DATE_TIMEZONE", raising=False)
+    # 05:00 UTC on Nov 27 is still Nov 26 in Vancouver (UTC-7 or -8, whichever
+    # the installed tz database says): the day is Vancouver's, not UTC's.
+    start = fa._start_of_day(datetime(2026, 11, 27, 5, 0, tzinfo=UTC))
+    assert str(start.tzinfo) == "America/Vancouver"
+    assert (start.year, start.month, start.day) == (2026, 11, 26)
+    assert (start.hour, start.minute, start.second) == (0, 0, 0)
+
+
+def test_the_poll_counts_the_records_stored_since_the_start_of_the_day(
+    monkeypatch, daily_limit
+):
+    daily_limit(None)
+    _, doc_repo, _ = _poll(monkeypatch, [_DMER])
+    (since,) = doc_repo.counted_since
+    assert since == fa._start_of_day(datetime.now(UTC))
 
 
 def test_an_empty_page_stores_nothing_and_marks_nothing(monkeypatch):

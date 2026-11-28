@@ -240,6 +240,52 @@ async def _ingest_handoff():
         await engine.dispose()
 
 
+def test_records_first_seen_since_a_time_are_counted():
+    _run(_count_first_seen_since())
+
+
+async def _count_first_seen_since():
+    """The Page Poller's daily limit: rows first stored at or after a time,
+    not re-polls of rows stored before it."""
+    from datetime import timedelta
+
+    from dmer_common.db import DmerDocumentRepository
+
+    engine = _engine()
+    # A moment of its own, far ahead, so other tests' rows don't count.
+    since = datetime(2100, 1, 1, tzinfo=UTC) + timedelta(
+        seconds=uuid.uuid4().int % 10_000_000
+    )
+    try:
+        repo = DmerDocumentRepository(engine)
+
+        async def store(guid, now):
+            return await repo.upsert_received(
+                document_guid=guid,
+                document_name="dmer.pdf",
+                mercury_document_status="Uploaded",
+                document_priority=None,
+                received_date=None,
+                dps_date=None,
+                queue=None,
+                business_area=None,
+                mercury_case_id=None,
+                driver_key=None,
+                document_url=None,
+                now=now,
+            )
+
+        before = str(uuid.uuid4())
+        await store(before, since - timedelta(seconds=1))
+        await store(str(uuid.uuid4()), since)
+        await store(str(uuid.uuid4()), since + timedelta(hours=1))
+        # re-polled after *since*: still first seen before it
+        await store(before, since + timedelta(hours=2))
+        assert await repo.count_first_seen_since(since) == 2
+    finally:
+        await engine.dispose()
+
+
 def test_driver_upsert_uses_the_canonical_bc_licence():
     _run(_driver_bc_licence())
 

@@ -288,6 +288,17 @@ class DmerDocumentRepository:
         async with self._engine.begin() as conn:
             await conn.execute(stmt)
 
+    async def count_first_seen_since(self, since: datetime) -> int:
+        """How many records (DMERs and non-DMERs) were first stored at or
+        after *since* -- the Page Poller's daily limit counts these."""
+        async with self._engine.connect() as conn:
+            result = await conn.execute(
+                select(func.count())
+                .select_from(dmer_document)
+                .where(dmer_document.c.first_seen_at >= since)
+            )
+            return int(result.scalar_one())
+
     async def get_status(self, document_id: str) -> PipelineStatus | None:
         """Return the current ``pipeline_status``, or None if the row is absent."""
         async with self._engine.connect() as conn:
