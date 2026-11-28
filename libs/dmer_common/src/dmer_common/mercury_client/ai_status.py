@@ -119,6 +119,7 @@ def ai_status_request(
     duplicate_of_document_guid: str | None = None,
     driver_link_error: str | None = None,
     case_error: str | None = None,
+    form_driver_note: str | None = None,
 ) -> dict[str, Any]:
     """The ``setDmerAIProccessedStatus`` body for one DMER (the DMER itself
     is in the path, :data:`AI_STATUS_PATH`).
@@ -127,7 +128,9 @@ def ai_status_request(
     goes to Intake as IN with status Error. *is_duplicate*: only the
     duplicate flag and note are sent. *driver_link_error*: linking the
     driver failed -- sent as a processing error whatever the outcome (or
-    duplicate), so Intake reviews it. *case_error*: creating the DMER's case
+    duplicate), so Intake reviews it; *form_driver_note* (the driver's
+    details as read from the form, :func:`dmer_common.form_driver.form_driver_note`)
+    follows the error in the notes. *case_error*: creating the DMER's case
     failed -- the outcome (or duplicate) goes as usual, the error added to the
     notes. Raises :class:`UnknownOutcomeError` for an outcome code
     :data:`OUTCOME_ROUTING` doesn't know.
@@ -144,6 +147,8 @@ def ai_status_request(
             f"{PROCESSING_ERROR_NOTE}: the driver could not be linked to the DMER "
             f"({driver_link_error.strip().rstrip('.')})."
         )
+        if form_driver_note and form_driver_note.strip():
+            detail = f"{detail} {form_driver_note.strip()}"
         notes = f"{detail} {notes}".strip() if notes else detail
     elif is_duplicate:
         note = DUPLICATE_NOTE

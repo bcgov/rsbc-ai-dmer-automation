@@ -257,6 +257,83 @@ def test_a_failed_driver_link_still_sends_the_outcome_as_an_error():
     asyncio.run(run())
 
 
+FORM_NOTE = "Driver details as read from the DMER form: first name Jo, surname Doe."
+
+
+def test_a_failed_driver_link_adds_the_forms_driver_details_to_the_outcome():
+    # The form's details are read once per document, when add_driver fails
+    # for good, and saved with the error so a retry sends the same notes.
+    async def run():
+        async with database() as engine:
+            await _decided_batch(engine, proposed_driver=True)
+            rejected = MercuryWriteError("rejected", status=400, retryable=False)
+            mercury = FakeMercury({"MAP_DRIVER": rejected})
+            read_for = []
+
+            def reader(document_id):
+                read_for.append(document_id)
+                return FORM_NOTE
+
+            await publish_due(
+                engine,
+                mercury,
+                settings=SETTINGS,
+                clock=Clock(),
+                form_driver_note=reader,
+            )
+            outcomes = [p for op, p in mercury.payloads if op == "UPDATE_OUTCOME"]
+            assert len(outcomes) == 2
+            assert {p["form_driver_note"] for p in outcomes} == {FORM_NOTE}
+            assert len(set(read_for)) == 2 and len(read_for) == 2
+            async with engine.connect() as conn:
+                saved = (
+                    (
+                        await conn.execute(
+                            text(
+                                "SELECT payload FROM mercury_outbox "
+                                "WHERE operation = 'UPDATE_OUTCOME'"
+                            )
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+            assert {p["form_driver_note"] for p in saved} == {FORM_NOTE}
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("note", ["", RuntimeError("storage down")])
+def test_the_outcome_still_goes_when_the_forms_driver_details_cant_be_read(note):
+    async def run():
+        async with database() as engine:
+            await _decided_batch(engine, proposed_driver=True)
+            rejected = MercuryWriteError("rejected", status=400, retryable=False)
+            mercury = FakeMercury({"MAP_DRIVER": rejected})
+
+            def reader(document_id):
+                if isinstance(note, Exception):
+                    raise note
+                return note
+
+            summary = await publish_due(
+                engine,
+                mercury,
+                settings=SETTINGS,
+                clock=Clock(),
+                form_driver_note=reader,
+            )
+            outcomes = [p for op, p in mercury.payloads if op == "UPDATE_OUTCOME"]
+            assert len(outcomes) == 2
+            assert all(
+                "driver_link_error" in p and "form_driver_note" not in p
+                for p in outcomes
+            )
+            assert summary.documents_manual_review == 2
+
+    asyncio.run(run())
+
+
 def test_an_error_outcome_retried_later_still_hands_the_document_to_intake():
     # The driver link fails for good, then the outcome itself hits an outage:
     # the document waits in POSTING; once the outcome goes (next run, from the
@@ -294,9 +371,16 @@ def test_a_failed_case_still_sends_the_outcome_as_usual_with_the_error():
                 "Mercury write POST returned HTTP 409", status=409, retryable=False
             )
             mercury = FakeMercury({"CREATE_CASE": conflict})
+            read_for = []
             summary = await publish_due(
-                engine, mercury, settings=SETTINGS, clock=Clock()
+                engine,
+                mercury,
+                settings=SETTINGS,
+                clock=Clock(),
+                # only a failed driver link adds the form's driver details
+                form_driver_note=lambda d: read_for.append(d) or "note",
             )
+            assert read_for == []
             assert [op for op, _ in mercury.calls] == [
                 "CREATE_CASE",
                 "UPDATE_OUTCOME",
@@ -305,6 +389,7 @@ def test_a_failed_case_still_sends_the_outcome_as_usual_with_the_error():
             assert all(
                 p["case_error"] == "Mercury write POST returned HTTP 409"
                 and "driver_link_error" not in p
+                and "form_driver_note" not in p
                 for p in outcomes
             )
             assert (summary.sent, summary.failed) == (2, 2)

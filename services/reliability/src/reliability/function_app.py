@@ -4,7 +4,10 @@
   4.6.1): Post-Processing writes ``mercury_outbox`` rows in the same
   transaction as each decision; this drains them to Mercury about once a
   minute (``OUTBOX_PUBLISHER_SCHEDULE``). Logic:
-  :func:`dmer_common.db.outbox_publisher.publish_due`.
+  :func:`dmer_common.db.outbox_publisher.publish_due`. When ``add_driver``
+  fails for good, the outcome's note carries the driver's details as read
+  from the form, from ``combined.json`` in ``extracted-dmer`` on
+  ``BLOB_ACCOUNT_URL`` (read-only, container-scoped).
 - **DlqDrain** (stages/10-dlq-drain.md, 4.6.3): every pipeline queue's
   dead-letter sub-queue, every few minutes (``DLQ_DRAIN_SCHEDULE``): a
   failure a retry could fix is re-sent (bounded); a permanent one gets the
@@ -42,6 +45,7 @@ from dmer_common.db.outbox_publisher import (
 from dmer_common.db.processing_error import FailureCategory
 from dmer_common.db.status import PipelineStage
 from dmer_common.db.sweeper import SweeperSettings, SweepQueue
+from dmer_common.form_driver import form_driver_note, read_form_driver
 from dmer_common.mercury_client import MercuryClient
 from dmer_common.telemetry import get_logger
 
@@ -81,8 +85,31 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
+def form_driver_note_reader():
+    """document id -> the driver's details as read from the form's
+    ``combined.json`` (for the note when ``add_driver`` fails), or None
+    without ``BLOB_ACCOUNT_URL`` -- the note then goes without them."""
+    account_url = os.environ.get("BLOB_ACCOUNT_URL", "").strip()
+    if not account_url:
+        return None
+    from dmer_common.storage import BlobClient
+
+    try:
+        blob = BlobClient(account_url)
+    except Exception as exc:  # noqa: BLE001 - publishing must not stop over it
+        _log.warning(
+            "outbox: no blob client for the form's driver details",
+            extra={"error": type(exc).__name__},
+        )
+        return None
+    return lambda document_id: form_driver_note(read_form_driver(blob, document_id))
+
+
 async def run_publisher(
-    *, engine_factory=get_async_engine, client: MercuryClient | None = None
+    *,
+    engine_factory=get_async_engine,
+    client: MercuryClient | None = None,
+    form_driver_note_reader=form_driver_note_reader,
 ) -> PublishSummary:
     """One publisher run with a fresh engine (disposed afterwards)."""
     engine = await engine_factory()
@@ -92,6 +119,7 @@ async def run_publisher(
             client or MercuryClient(),
             settings=publisher_settings(),
             clock=_now,
+            form_driver_note=form_driver_note_reader(),
         )
     finally:
         await engine.dispose()
@@ -147,9 +175,12 @@ async def run_drain(
     try:
         with client_factory() as client:
             for source in drain_sources():
-                with client.get_queue_receiver(
-                    source.queue, sub_queue=ServiceBusSubQueue.DEAD_LETTER
-                ) as receiver, client.get_queue_sender(source.queue) as sender:
+                with (
+                    client.get_queue_receiver(
+                        source.queue, sub_queue=ServiceBusSubQueue.DEAD_LETTER
+                    ) as receiver,
+                    client.get_queue_sender(source.queue) as sender,
+                ):
                     await drain_source(
                         engine,
                         source,

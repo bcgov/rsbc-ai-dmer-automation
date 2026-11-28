@@ -19,8 +19,10 @@ See docs/development/stages/09-reliability-components.md (architecture v2.1
    a person resolves the document. **Except the outcome after a failed
    driver link**: when ``MAP_DRIVER`` (Mercury's ``add_driver``) fails for
    good, the outcome still goes, as a processing error sent to Intake with the
-   error in its notes (``driver_link_error`` on its payload); only the case
-   write is blocked. Likewise when ``CREATE_CASE`` (``add_case``) fails for
+   error in its notes (``driver_link_error`` on its payload), followed by the
+   driver's licence, first name and surname as read from the form
+   (``form_driver_note``, read once from ``combined.json`` when the link
+   fails -- best effort); only the case write is blocked. Likewise when ``CREATE_CASE`` (``add_case``) fails for
    good: the outcome goes as usual, the error added to its notes
    (``case_error``), and the document stays ``POSTING`` with the ``FAILED``
    row for a person. While either is being retried, the outcome waits.
@@ -234,11 +236,35 @@ async def _record_failure(
 
 
 async def _with_failure(
-    engine: AsyncEngine, row: ClaimedRow, key: str, error: MercuryWriteError
+    engine: AsyncEngine,
+    row: ClaimedRow,
+    key: str,
+    error: MercuryWriteError,
+    extra: dict[str, Any] | None = None,
 ) -> ClaimedRow:
-    """*row* (an outcome) marked with an earlier write's error under *key*,
-    saved on the row so a retry sends it the same way."""
-    return await _with_payload(engine, row, {key: str(error)[:300]})
+    """*row* (an outcome) marked with an earlier write's error under *key*
+    (and *extra*), saved on the row so a retry sends it the same way."""
+    return await _with_payload(engine, row, {key: str(error)[:300], **(extra or {})})
+
+
+async def _form_driver_extra(
+    reader: Callable[[str], str] | None, document_id: str
+) -> dict[str, Any]:
+    """``{"form_driver_note": ...}`` for an outcome after a failed driver
+    link -- the driver's details as read from the form -- or ``{}`` when
+    there is no reader or nothing could be read. Never raises: the outcome
+    goes without the details rather than not at all."""
+    if reader is None:
+        return {}
+    try:
+        note = await asyncio.to_thread(reader, document_id)
+    except Exception as exc:  # noqa: BLE001 - the outcome must still go
+        _log.warning(
+            "outbox: unable to read the form's driver details",
+            extra={"document_id": document_id, "error": type(exc).__name__},
+        )
+        return {}
+    return {"form_driver_note": note} if note else {}
 
 
 async def _with_payload(
@@ -364,8 +390,14 @@ async def publish_due(
     *,
     settings: PublisherSettings | None = None,
     clock: Callable[[], datetime],
+    form_driver_note: Callable[[str], str] | None = None,
 ) -> PublishSummary:
-    """One publisher run: claim, send in order, record, roll up."""
+    """One publisher run: claim, send in order, record, roll up.
+
+    *form_driver_note*: document id -> the driver's details as read from the
+    form (:func:`dmer_common.form_driver.form_driver_note`), added to the
+    outcome's notes when ``add_driver`` fails for good. Without it the
+    outcome goes with the error alone."""
     settings = settings or PublisherSettings()
     summary = PublishSummary()
     claimed = await claim_due(engine, now=clock(), settings=settings)
@@ -415,8 +447,13 @@ async def publish_due(
                     # Send what still goes (the outcome, as an error for
                     # Intake); the rest of the document is blocked.
                     key = _FAILURE_PAYLOAD_KEY[row.operation]
+                    extra = (
+                        await _form_driver_extra(form_driver_note, document_id)
+                        if row.operation == OutboxOperation.MAP_DRIVER.value
+                        else {}
+                    )
                     queue = [
-                        await _with_failure(engine, r, key, exc)
+                        await _with_failure(engine, r, key, exc, extra)
                         for r in queue
                         if r.operation in released
                     ]

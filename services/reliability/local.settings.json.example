@@ -43,6 +43,8 @@
     "POSTGRES_SSLMODE": "require",
     "MERCURY_WRITE_API_BASE_URL": "https://func-mock-mercury-api-dev.azurewebsites.net/api/mercury",
     "MERCURY_AUTH_TOKEN_URL": "",
-    "MERCURY_API_KEY": ""
+    "MERCURY_API_KEY": "",
+    "BLOB_ACCOUNT_URL": "",
+    "EXTRACTED_DMER_CONTAINER": "extracted-dmer"
   }
 }

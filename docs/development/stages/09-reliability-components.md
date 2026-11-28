@@ -214,6 +214,7 @@ different triggers — a sweeper-detected stall vs. a drained dead-letter messag
 | `STAGE_SLA_INGEST_MINUTES` / `_EXTRACT_` / `_NORMALIZE_` / `_DRIVER_` | Per-stage SLA thresholds that define "stalled" (default 30) — set once question I-14 (target time to AI-processed queue) is answered precisely. |
 | `SWEEPER_MAX_REPUBLISH` | Re-publishes per document and stage before `MANUAL_REVIEW` (default 3). |
 | `OUTBOX_BACKLOG_SLA_MINUTES` / `OUTBOX_ATTEMPT_ALERT` | Outbox backlog alert thresholds (defaults 60, 5). |
+| `BLOB_ACCOUNT_URL` / `EXTRACTED_DMER_CONTAINER` | The pipeline data storage account and `extracted-dmer`: when `add_driver` fails for good, the publisher reads the form's driver details (licence, first name, surname) from `combined.json` for the outcome's note. Read-only, container-scoped. Unset: the note goes without them. |
 
 ## Authentication / identity
 

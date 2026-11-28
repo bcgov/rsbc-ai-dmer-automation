@@ -122,7 +122,10 @@ create:
 All four timers deploy **disabled** (`outboxPublisherEnabled` / `dlqDrainEnabled` /
 `sweeperEnabled` / `reconciliationEnabled = false`): outbox rows wait as `PENDING`, dead letters
 stay in their DLQs and nothing is swept or reported until they are switched on. The template
-grants the app's identity receive and send on the four pipeline queues.
+grants the app's identity receive and send on the four pipeline queues, and Storage Blob Data
+Reader on the `extracted-dmer` container of the pipeline data storage account
+(`dataStorageAccountName`, `BLOB_ACCOUNT_URL`): when `add_driver` fails for good, the publisher
+reads the form's driver details from `combined.json` for the outcome's note.
 
 ```bash
 az deployment group create -g rg-rsbc-dmer-dev   -f infrastructure/bicep/reliability.bicep   -p @deployment/dev/reliability.parameters.json   -p mercuryApiKey="$(az functionapp config appsettings list -g rg-rsbc-dmer-dev -n func-rsbc-dmer-workflow-orchestrator-dev --query "[?name=='MERCURY_API_KEY'].value" -o tsv)"

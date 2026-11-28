@@ -20,6 +20,11 @@
 //   queue against the pipeline's tables and writes the report to the
 //   reconciliation-reports container on the runtime storage account.
 //
+// The OutboxPublisher also reads the extraction's combined.json from the
+// extracted-dmer container on the pipeline data storage account (read-only,
+// container-scoped below): when add_driver fails for good, the outcome's
+// note carries the driver's licence and names as read from the form.
+//
 // Not created here, referenced as already existing:
 // - The VNet integration subnet (delegated to Microsoft.App/environments) --
 //   shared with the two orchestrator apps. Timers run as a singleton, so this
@@ -196,6 +201,10 @@ param postgresPort string = '5432'
 @description('Postgres database name.')
 param postgresDatabase string = 'dmer'
 
+@description('Name of the existing pipeline data storage account (in this resource group) holding extracted-dmer. The OutboxPublisher reads combined.json from it (read-only) for the driver details in the note when add_driver fails.')
+@minLength(1)
+param dataStorageAccountName string
+
 @description('Mercury token endpoint, e.g. https://<mercury-host>/Authentication/token (MERCURY_AUTH_TOKEN_URL). Called with ?secret=<mercuryApiKey>; the bearer token it returns is reused until it expires.')
 param mercuryAuthTokenUrl string = ''
 
@@ -217,6 +226,7 @@ var serviceTags = buildTags(environment, 'reliability', costCenter, owner, dataC
 var serviceBusNamespaceName = split(serviceBusNamespaceFqdn, '.')[0]
 var serviceBusDataReceiverRoleId = '4f6d3b9b-027b-4f4c-9142-0e5a2a2247e0'
 var serviceBusDataSenderRoleId = '69a216fc-b8fb-44d8-bc22-1f3c2cd27a39'
+var storageBlobDataReaderRoleId = '2a2b9908-6ea1-4ae2-8e65-a410df84e7d1'
 var pipelineQueueNames = [
   dmerIngestQueueName
   dmerRawQueueName
@@ -281,6 +291,8 @@ var appSettings = {
   MERCURY_WRITE_API_BASE_URL: mercuryWriteApiBaseUrl
   MERCURY_AUTH_TOKEN_URL: mercuryAuthTokenUrl
   MERCURY_API_KEY: mercuryApiKey
+  BLOB_ACCOUNT_URL: 'https://${dataStorageAccountName}.blob.${az.environment().suffixes.storage}/'
+  EXTRACTED_DMER_CONTAINER: 'extracted-dmer'
 }
 
 module functionApp 'modules/compute/function-app.bicep' = {
@@ -352,6 +364,25 @@ module queueSenderRoleAssignments 'modules/servicebus/data-plane-role-assignment
     }
   }
 ]
+
+// ---------------------------------------------------------------------------
+// 5. Blob RBAC (container-scoped, least privilege): the OutboxPublisher reads
+//    combined.json from extracted-dmer for the form's driver details. Nothing
+//    else on the data storage account.
+// ---------------------------------------------------------------------------
+resource extractedContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' existing = {
+  name: '${dataStorageAccountName}/default/extracted-dmer'
+}
+
+resource extractedBlobDataReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(extractedContainer.id, functionAppName, storageBlobDataReaderRoleId)
+  scope: extractedContainer
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', storageBlobDataReaderRoleId)
+    principalId: functionApp.outputs.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Outputs

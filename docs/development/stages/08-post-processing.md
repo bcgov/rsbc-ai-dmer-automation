@@ -171,8 +171,13 @@ row permanently, with the reply message on `last_error`.
 **If `add_driver` fails for good** (rejected, or out of retries), the outcome is still sent, as a
 processing error for manual review: `aiProcessedStatus` Error, IN routing (Regular, Team - Intake,
 Adjudicate), `notes` = "Unable to AI process due to error: the driver could not be linked to the
-DMER (‹error›). ‹the AI's comment›". The DMER's `CREATE_CASE` is blocked; the failed rows stay
-`FAILED` for a person to resolve.
+DMER (‹error›). Driver details as read from the DMER form: licence ‹licence›, first name ‹first name›, surname ‹surname›. ‹the AI's comment›". The DMER's `CREATE_CASE` is blocked; the failed rows
+stay `FAILED` for a person to resolve. The driver details are what the form shows, read from the
+extraction's `combined.json` (`dl_number`, `first_name`, `last_name`; `dmer_common.form_driver`)
+once, when `add_driver` fails, and saved on the outcome row as `form_driver_note`. Parts the form
+doesn't give are left out; if `combined.json` can't be read, the note goes without them. The
+reliability app reads `extracted-dmer` with a container-scoped Storage Blob Data Reader role
+(`BLOB_ACCOUNT_URL`).
 
 ### Case — `add_case` (confirmed 2026-11-20)
 

@@ -278,7 +278,7 @@ The DMER is in the path; the body (`aiProcessedStatus` required):
 | CR | Proccessed | Critical Review | Team - Adjudicators | Adjudicate | AI comment |
 | Duplicate | Proccessed | — | — | — | `aiIsDuplicate: true`, "Duplicate of DMER ‹guid›." |
 | Processing error (any fallback) | **Error** | Regular | Team - Intake | Adjudicate | "Unable to AI process due to error. ‹details›" |
-| Driver link failed | **Error** | Regular | Team - Intake | Adjudicate | "Unable to AI process due to error: the driver could not be linked to the DMER (‹error›). ‹AI comment›" |
+| Driver link failed | **Error** | Regular | Team - Intake | Adjudicate | "Unable to AI process due to error: the driver could not be linked to the DMER (‹error›). Driver details as read from the DMER form: licence ‹licence›, first name ‹first name›, surname ‹surname›. ‹AI comment›" |
 | Case creation failed | (normal for the outcome) | | | | AI comment + "The case could not be created for this DMER (‹error›)." |
 
 Option-set values: `aiProcessedStatus` NA 100000000, InProgress 100000001, Proccessed 100000002,
@@ -692,7 +692,11 @@ no driver) or **`DRIVER_AMBIGUOUS`** (several). One transaction:
 - `processing_error` (`DRIVER_LOOKUP`, PERMANENT_BUSINESS, the reason);
 - **`mercury_outbox` `UPDATE_OUTCOME`**: `outcome_code IN, decided_by FALLBACK`, comment
   "Unable to AI process due to error. The driver's file could not be found or mapped in Mercury.
-  ‹reason› Licence read from the DMER: ‹licence›." (key `<document_id>:FALLBACK:UPDATE_OUTCOME`).
+  ‹reason› Driver details as read from the DMER form: licence ‹licence›, first name ‹first name›, surname ‹surname›." (key `<document_id>:FALLBACK:UPDATE_OUTCOME`). The licence and names are
+  read from the extraction's `combined.json` (`dl_number`, `first_name`, `last_name`) when the
+  note is written; a part the form doesn't give is left out, and a valid BC licence is shown in
+  its 8-digit form. If `combined.json` can't be read, the note keeps the licence read from the
+  page (`licence_number_read`) alone.
 
 No `dmer_decision`, no driver created, no batch. Publisher → W1 as **Error**, Team - Intake.
 
@@ -746,7 +750,10 @@ document stays POSTING; reconciliation shows `POST_FAILED`. A person resolves it
 **S14c — `add_driver` fails for good.** `MAP_DRIVER` FAILED; `CREATE_CASE` FAILED "blocked";
 `UPDATE_OUTCOME` gets `driver_link_error` on its payload and is sent as **Error**, Team - Intake,
 notes "Unable to AI process due to error: the driver could not be linked to the DMER (‹error›).
-‹AI comment›". Document → **MANUAL_REVIEW**; the batch can still reach POSTED.
+Driver details as read from the DMER form: licence ‹licence›, first name ‹first name›, surname ‹surname›. ‹AI comment›". The driver details are read once from the extraction's `combined.json`
+when the link fails and saved on the outcome row (`form_driver_note`), so a retry sends the same
+notes; if `combined.json` can't be read, the note goes without them. Document → **MANUAL_REVIEW**;
+the batch can still reach POSTED.
 
 **S14d — `add_case` fails for good** (404 driver not found, 409). `CREATE_CASE` FAILED;
 `UPDATE_OUTCOME` gets `case_error` and is sent **normally**, notes + "The case could not be

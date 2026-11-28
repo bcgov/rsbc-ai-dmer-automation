@@ -270,7 +270,9 @@ for the recommended folder).
   driver row from the page's licence and leaves I-12 to the Decision Gateway). I-12 still requires
   the licence information and reason in a Mercury comment. **Resolved** (I-22, confirmed by
   email): Driver Lookup's manual-review route queues an `UPDATE_OUTCOME` IN to `mercury_outbox`
-  in the same transaction, with the reason and the licence read; no driver file is created. See
+  in the same transaction, with the reason and the driver's details as read from the form
+  (licence, first name and surname, from the extraction's `combined.json`; the page's licence
+  read when that can't be read); no driver file is created. See
   [Post-Processing](08-post-processing.md#implementation).
 - Whether Normalize and Rule Engine activity code lives as Python functions directly inside
   `services/workflow-orchestrator/`, or as importable modules in `libs/dmer_common` invoked from

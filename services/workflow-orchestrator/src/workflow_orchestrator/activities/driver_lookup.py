@@ -15,12 +15,18 @@ document toward the driver's evaluation, so both must exist before it runs.
 4. Create or attach the driver's open ``driver_evaluation`` and set
    ``expected_document_count`` from the same Mercury response.
 
+A document sent to ``MANUAL_REVIEW`` gets a fallback outcome whose note
+carries the driver's licence, first name and surname as read from the form
+(``combined.json``, :mod:`dmer_common.form_driver`), so Intake sees who the
+DMER is about.
+
 The licence number is never logged or returned (§9.2): the activity returns
 ``{"driver_key": ...}`` or ``{"manual_review": true, "reason": ...}``.
 """
 
 from __future__ import annotations
 
+import os
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
@@ -38,8 +44,10 @@ from dmer_common.db.driver_lookup import (
     MercuryDriver,
     driver_lookup_session,
 )
+from dmer_common.form_driver import FormDriver, read_form_driver
 from dmer_common.licence import normalize_licence
 from dmer_common.mercury_client import MercuryClient
+from dmer_common.storage import BlobClient
 from dmer_common.telemetry import document_id_context, get_logger
 
 from ._runtime import get_async_engine as _get_async_engine
@@ -138,18 +146,18 @@ async def driver_lookup_activity(payload: dict) -> dict:
                         )
                     else:
                         return await _route_to_review(
-                            repository, run.run_id, LICENCE_UNREADABLE
+                            repository, run.run_id, LICENCE_UNREADABLE, document_id
                         )
 
                     client = MercuryClient()
                     drivers = await _run_sync(client.get_driver_by_licence, licence)
                     if not drivers:
                         return await _route_to_review(
-                            repository, run.run_id, DRIVER_NOT_FOUND
+                            repository, run.run_id, DRIVER_NOT_FOUND, document_id
                         )
                     if len(drivers) > 1:
                         return await _route_to_review(
-                            repository, run.run_id, DRIVER_AMBIGUOUS
+                            repository, run.run_id, DRIVER_AMBIGUOUS, document_id
                         )
 
                     settings = client.driver_settings
@@ -216,8 +224,31 @@ async def driver_lookup_activity(payload: dict) -> dict:
                     _log.error("driver lookup: unable to dispose database engine")
 
 
-async def _route_to_review(repository, run_id: int, reason: str) -> dict:
-    await repository.manual_review(run_id, reason=reason, now=datetime.now(UTC))
+def _form_driver(document_id: str) -> FormDriver:
+    """The driver's details as read from the form (``combined.json``), for the
+    fallback note. Best effort: empty without ``BLOB_ACCOUNT_URL`` or when the
+    file can't be read -- the note then goes without them."""
+    account_url = os.environ.get("BLOB_ACCOUNT_URL", "").strip()
+    if not account_url:
+        return FormDriver()
+    try:
+        blob = BlobClient(account_url)
+    except Exception as exc:  # noqa: BLE001 - the note goes without the details
+        _log.warning(
+            "driver lookup: no blob client for the form's driver details",
+            extra={"error": type(exc).__name__},
+        )
+        return FormDriver()
+    return read_form_driver(blob, document_id)
+
+
+async def _route_to_review(
+    repository, run_id: int, reason: str, document_id: str
+) -> dict:
+    form_driver = await _run_sync(_form_driver, document_id)
+    await repository.manual_review(
+        run_id, reason=reason, now=datetime.now(UTC), form_driver=form_driver
+    )
     _log.warning("driver lookup: routed to manual review", extra={"reason": reason})
     return _manual(reason)
 

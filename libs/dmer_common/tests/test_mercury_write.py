@@ -181,6 +181,42 @@ def test_an_outcome_whose_driver_link_failed_goes_to_intake_as_an_error(duplicat
     }
 
 
+def test_the_forms_driver_details_follow_the_driver_link_error():
+    body = _sent_body(
+        "UPDATE_OUTCOME",
+        {
+            **PAYLOAD,
+            "outcome_code": "PU",
+            "comment": "AI outcome: PU. Reason: r.",
+            "driver_link_error": "Mercury write POST rejected: Driver not found.",
+            "form_driver_note": (
+                "Driver details as read from the DMER form: "
+                "licence 01234567, first name Jo, surname Doe."
+            ),
+        },
+    )
+    assert body["notes"] == (
+        "Unable to AI process due to error: the driver could not be linked "
+        "to the DMER (Mercury write POST rejected: Driver not found). "
+        "Driver details as read from the DMER form: "
+        "licence 01234567, first name Jo, surname Doe. "
+        "AI outcome: PU. Reason: r."
+    )
+
+
+def test_the_forms_driver_details_go_only_with_a_driver_link_error():
+    body = _sent_body(
+        "UPDATE_OUTCOME",
+        {
+            **PAYLOAD,
+            "outcome_code": "PU",
+            "comment": "AI outcome: PU.",
+            "form_driver_note": "Driver details as read from the DMER form: surname Doe.",
+        },
+    )
+    assert body["notes"] == "AI outcome: PU."
+
+
 def test_a_mark_duplicate_row_queued_before_is_sent_as_a_duplicate():
     body = _sent_body(
         "MARK_DUPLICATE",

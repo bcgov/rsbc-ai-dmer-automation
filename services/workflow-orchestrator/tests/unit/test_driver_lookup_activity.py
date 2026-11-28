@@ -80,6 +80,8 @@ def dependencies(monkeypatch):
     monkeypatch.setattr(activity, "driver_lookup_session", session)
     monkeypatch.setattr(activity, "_get_async_engine", AsyncMock(return_value=engine))
     monkeypatch.setattr(activity, "MercuryClient", lambda: client)
+    # No storage by default: the fallback note goes without the form's details.
+    monkeypatch.delenv("BLOB_ACCOUNT_URL", raising=False)
     return SimpleNamespace(repo=repository, engine=engine, client=client)
 
 
@@ -176,6 +178,81 @@ def test_unresolvable_documents_go_to_manual_review(dependencies, run, drivers, 
     d.repo.attach_driver.assert_not_awaited()
     if reason == LICENCE_UNREADABLE:
         d.client.get_driver_by_licence.assert_not_called()
+
+
+class _FormBlob:
+    """BlobClient stand-in serving one document's combined.json."""
+
+    def __init__(self, account_url, combined=None, error=None):
+        self.account_url = account_url
+        self.combined = combined
+        self.error = error
+        self.urls = []
+
+    def blob_url(self, container, path):
+        return f"{self.account_url}/{container}/{path}"
+
+    def download_if_exists(self, url):
+        self.urls.append(url)
+        if self.error:
+            raise self.error
+        return None if self.combined is None else json.dumps(self.combined).encode()
+
+
+def _form_blob(monkeypatch, **kwargs):
+    monkeypatch.setenv("BLOB_ACCOUNT_URL", "https://data.blob")
+    made = []
+
+    def factory(account_url):
+        made.append(_FormBlob(account_url, **kwargs))
+        return made[-1]
+
+    monkeypatch.setattr(activity, "BlobClient", factory)
+    return made
+
+
+def test_manual_review_gets_the_driver_details_from_the_forms_combined_json(
+    dependencies, monkeypatch
+):
+    d = dependencies
+    made = _form_blob(
+        monkeypatch,
+        combined={
+            "fields": {"dl_number": "1234567", "first_name": "Jo", "last_name": "Doe"}
+        },
+    )
+    d.client.get_driver_by_licence.return_value = []
+    assert _run() == {"manual_review": True, "reason": DRIVER_NOT_FOUND}
+    form = d.repo.manual_review.call_args.kwargs["form_driver"]
+    assert (form.licence, form.first_name, form.last_name) == ("1234567", "Jo", "Doe")
+    assert made[0].urls == [f"https://data.blob/extracted-dmer/{DOC_ID}/combined.json"]
+
+
+@pytest.mark.parametrize(
+    "blob_kwargs",
+    [{"combined": None}, {"error": RuntimeError("storage down")}],
+    ids=["missing", "unreadable"],
+)
+def test_manual_review_still_happens_without_the_forms_driver_details(
+    dependencies, monkeypatch, blob_kwargs
+):
+    d = dependencies
+    _form_blob(monkeypatch, **blob_kwargs)
+    d.client.get_driver_by_licence.return_value = []
+    assert _run() == {"manual_review": True, "reason": DRIVER_NOT_FOUND}
+    form = d.repo.manual_review.call_args.kwargs["form_driver"]
+    assert (form.licence, form.first_name, form.last_name) == (None, None, None)
+
+
+def test_without_a_blob_account_the_note_goes_without_the_forms_details(
+    dependencies, monkeypatch
+):
+    d = dependencies
+    monkeypatch.delenv("BLOB_ACCOUNT_URL", raising=False)
+    d.client.get_driver_by_licence.return_value = []
+    _run()
+    form = d.repo.manual_review.call_args.kwargs["form_driver"]
+    assert form.licence is None and form.first_name is None
 
 
 @pytest.mark.parametrize(

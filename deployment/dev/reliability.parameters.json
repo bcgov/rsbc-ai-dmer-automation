@@ -62,6 +62,9 @@
     "postgresDatabase": {
       "value": "dmer"
     },
+    "dataStorageAccountName": {
+      "value": "stdmerdevcac001"
+    },
     "dlqDrainEnabled": {
       "value": true
     },

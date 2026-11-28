@@ -578,6 +578,7 @@ class MercuryClient:
                     ),
                     driver_link_error=payload.get("driver_link_error"),
                     case_error=payload.get("case_error"),
+                    form_driver_note=payload.get("form_driver_note"),
                 )
             except UnknownOutcomeError as exc:
                 raise MercuryWriteError(str(exc), status=None, retryable=False) from exc
