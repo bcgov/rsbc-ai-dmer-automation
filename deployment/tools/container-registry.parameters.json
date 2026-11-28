@@ -16,7 +16,7 @@
     },
     "privateEndpointName": { "value": "pe-cr-rsbc-dmer-shared-tools-001" },
     "privateEndpointSubnetId": {
-      "value": "/subscriptions/6f1fec8e-0993-4872-a599-1c5901b24777/resourceGroups/f11861-tools-networking/providers/Microsoft.Network/virtualNetworks/f11861-tools-vwan-spoke/subnets/snet-rsbc-dmer-pe-tools-001"
+      "value": "/subscriptions/6f1fec8e-0993-4872-a599-1c5901b24777/resourceGroups/<namespace>-tools-networking/providers/Microsoft.Network/virtualNetworks/<namespace>-tools-vwan-spoke/subnets/snet-rsbc-dmer-pe-tools-001"
     },
     "pullPrincipalIds": {
       "value": [

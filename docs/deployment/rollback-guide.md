@@ -33,7 +33,7 @@ and the rollback script has to know about both:
 | 3 RBAC role assignments (Cognitive Services User on the DI account; Storage Blob Data Reader on `raw`; Storage Blob Data Contributor on `extracted-dmer`) | `main.bicep` | Scoped to the DI account / the two containers, all in the Application RG |
 | di-processor Container App (only if `containerAppsEnvironmentId` was set) | `main.bicep` → `modules/compute/container-app.bicep` | Application RG (its Container Apps Environment is shared and **not** deleted) |
 | Application resource group itself | `subscription.bicep` → `modules/shared/resource-group.bicep` | — |
-| Private-endpoint subnet | `subscription.bicep` → `modules/networking/subnet.bicep` | **Platform VNet's resource group** (e.g. `f11861-dev-networking`) — scoped there deliberately, since the subnet has to live inside the platform-owned VNet |
+| Private-endpoint subnet | `subscription.bicep` → `modules/networking/subnet.bicep` | **Platform VNet's resource group** (e.g. `<namespace>-dev-networking`) — scoped there deliberately, since the subnet has to live inside the platform-owned VNet |
 | NSG for that subnet | `subscription.bicep` → `modules/networking/network-security-group.bicep` (only if `createNetworkSecurityGroup: true`) | **Platform VNet's resource group** |
 
 Everything in the first seven rows is inside one resource group, so deleting
@@ -73,7 +73,7 @@ from `docs/standards/naming-conventions.md` (or a name you pass explicitly
 via `-r`/`-s`/`-k`) — there is no wildcard or pattern-based deletion
 anywhere in it. Concretely, it never touches:
 
-- The platform VNet itself (`f11861-<env>-vwan-spoke`), its peering, flow
+- The platform VNet itself (`<namespace>-<env>-vwan-spoke`), its peering, flow
   logs, or Network Watcher.
 - Any other subnet in that VNet — e.g. `AzureBastionSubnet`. (DEV's old
   manually-created `snet-rsbc-dmer-ai-optimization-private-endpoints` no
@@ -97,16 +97,16 @@ az account set --subscription "<the environment's subscription>"
 # See the plan without deleting anything:
 scripts/ci/rollback_infrastructure.sh \
   -e dev \
-  -g f11861-dev-networking \
-  -n f11861-dev-vwan-spoke \
+  -g <namespace>-dev-networking \
+  -n <namespace>-dev-vwan-spoke \
   -d
 
 # Actually delete (interactive — asks you to re-type the resource group
 # name to confirm):
 scripts/ci/rollback_infrastructure.sh \
   -e dev \
-  -g f11861-dev-networking \
-  -n f11861-dev-vwan-spoke
+  -g <namespace>-dev-networking \
+  -n <namespace>-dev-vwan-spoke
 ```
 
 Full flag reference is in the script's own header comment

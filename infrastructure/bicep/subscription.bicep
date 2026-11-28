@@ -12,7 +12,7 @@
 // instead — see docs/deployment/deployment-guide.md.
 //
 // Still platform-team-owned, not created here: the VNet itself
-// (f11861-<env>-vwan-spoke), its peering to the hub, flow logs, and
+// (<namespace>-<env>-vwan-spoke), its peering to the hub, flow logs, and
 // Network Watcher. See docs/deployment/environment-setup.md for how to
 // confirm you have the rights (subnet-join + write) to create a subnet
 // inside their VNet before running this template.
@@ -46,7 +46,7 @@ param resourceGroupName string
 @description('Name of the resource group that contains the existing platform-provided VNet. Confirm with the platform team — see docs/deployment/environment-setup.md.')
 param vnetResourceGroupName string
 
-@description('Name of the existing platform-provided VNet, e.g. f11861-dev-vwan-spoke.')
+@description('Name of the existing platform-provided VNet, e.g. <namespace>-dev-vwan-spoke.')
 param vnetName string
 
 @description('Address prefix for the new private-endpoint subnet, e.g. 10.x.x.x/27. Must not overlap an existing subnet in the VNet — verify with `az network vnet subnet list` first (see docs/deployment/environment-setup.md). No safe default exists; this is deliberately required with no fallback.')

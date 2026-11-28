@@ -45,7 +45,7 @@
 # references resource names it computed itself or that you passed
 # explicitly — it never lists/deletes "everything in a resource group
 # matching a pattern"):
-#   - The VNet itself (e.g. f11861-dev-vwan-spoke), its peering, flow logs
+#   - The VNet itself (e.g. <namespace>-dev-vwan-spoke), its peering, flow logs
 #   - Any OTHER subnet in that VNet (AzureBastionSubnet, or a
 #     manually-created one such as
 #     snet-rsbc-dmer-ai-optimization-private-endpoints)
@@ -62,7 +62,7 @@
 #   scripts/ci/rollback_infrastructure.sh \
 #     -e dev \
 #     -g <vnet-resource-group> \
-#     -n f11861-dev-vwan-spoke \
+#     -n <namespace>-dev-vwan-spoke \
 #     [-r rg-rsbc-dmer-dev] [-i 001] [-s <subnet-name>] [-k <nsg-name>] \
 #     [-d] [-y] [-R] [-S] [-N]
 #

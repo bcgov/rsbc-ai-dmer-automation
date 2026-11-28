@@ -13,7 +13,7 @@ Because the Document Intelligence account has public network access
 disabled (see infrastructure/bicep/modules/ai/document-intelligence.bicep),
 this script must run somewhere with network line-of-sight to the account's
 private endpoint: inside the VNet (e.g. a self-hosted CI runner or an
-Azure Automation/Container App job deployed into f11861-dev-vwan-spoke or
+Azure Automation/Container App job deployed into <namespace>-dev-vwan-spoke or
 its test/prod equivalent), over the platform team's VPN/ExpressRoute, or
 via a jump box + Bastion. It does NOT need — and should not use — the ad
 hoc Firefox tunnelling workaround; that was only a workaround for a

@@ -7,7 +7,7 @@
   subnet (+ NSG) inside the platform VNet — see `infrastructure/bicep/subscription.bicep` and
   `docs/deployment/deployment-guide.md`.
 - **Platform-team-owned, not created here:** the landing zone VNet itself
-  (`f11861-<env>-vwan-spoke`), its peering to the hub, flow logs, and Network Watcher — see
+  (`<namespace>-<env>-vwan-spoke`), its peering to the hub, flow logs, and Network Watcher — see
   "Platform-team networking prerequisites" below for what this repository still needs
   confirmed/from them before its first deployment to a given environment.
 - Azure subscription + RBAC role assignments for the deploying identity: Contributor at
@@ -23,12 +23,12 @@
 ## Platform-team networking prerequisites
 
 `infrastructure/bicep/subscription.bicep` reuses the existing platform VNet
-(`f11861-dev-vwan-spoke` in DEV) — it does not create a VNet, and it must not. It does create
+(`<namespace>-dev-vwan-spoke` in DEV) — it does not create a VNet, and it must not. It does create
 a subnet inside that VNet (see `infrastructure/bicep/modules/networking/subnet.bicep`) and an
 NSG for it (optional — `createNetworkSecurityGroup` parameter). Before the first deployment to
 a given environment, confirm with the platform team:
 
-1. **TEST/PROD VNet names.** Only DEV's (`f11861-dev-vwan-spoke`) is confirmed;
+1. **TEST/PROD VNet names.** Only DEV's (`<namespace>-dev-vwan-spoke`) is confirmed;
    `deployment/test/parameters.json` and `deployment/prod/parameters.json` currently hold an
    unconfirmed guess following the same naming pattern.
 2. ~~Whether `privatelink.cognitiveservices.azure.com` and `privatelink.blob.core.windows.net`

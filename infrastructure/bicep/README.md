@@ -36,7 +36,7 @@ PostgreSQL, Key Vault, App Configuration, Container Apps, Function Apps, Monitor
 wired into `main.bicep` yet.
 
 Still platform-team-owned, not created here: the landing zone VNet itself
-(`f11861-<env>-vwan-spoke`), its peering to the hub, flow logs, and Network Watcher. The
+(`<namespace>-<env>-vwan-spoke`), its peering to the hub, flow logs, and Network Watcher. The
 **Document Intelligence Studio project, labeling configuration, and custom model
 training/publishing are also not Bicep resources** — they are data-plane operations against
 the account this template creates. See `docs/deployment/deployment-guide.md` for what they
@@ -49,7 +49,7 @@ convention, and dependency diagram.
 ## Networking prerequisites
 
 `subscription.bicep` requires `vnetResourceGroupName` and `vnetName` — the existing
-platform-provided VNet (`f11861-dev-vwan-spoke` in DEV; TEST/PROD unconfirmed) — and
+platform-provided VNet (`<namespace>-dev-vwan-spoke` in DEV; TEST/PROD unconfirmed) — and
 `privateEndpointSubnetAddressPrefix`, a CIDR that doesn't overlap any existing subnet in that
 VNet. None of these are created by this template; run
 `scripts/ci/check_platform_prerequisites.sh` first to check what's already known/confirmed

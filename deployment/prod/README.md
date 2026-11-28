@@ -9,7 +9,7 @@ references). Deployed against `infrastructure/bicep/subscription.bicep` — see
 
 - `vnetResourceGroupName` and `vnetName` — PROD's landing zone VNet has not been confirmed with
   the platform team yet. `vnetName` currently holds an *unconfirmed guess*
-  (`f11861-prod-vwan-spoke`, following DEV's naming) — verify it, don't deploy against it as-is.
+  (`<namespace>-prod-vwan-spoke`, following DEV's naming) — verify it, don't deploy against it as-is.
 - `privateEndpointSubnetAddressPrefix` — same guidance as `deployment/dev/README.md`.
 
 Run `scripts/ci/check_platform_prerequisites.sh -e prod -g <vnetResourceGroupName> -n <vnetName>`

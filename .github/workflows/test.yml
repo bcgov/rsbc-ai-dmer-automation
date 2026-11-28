@@ -75,7 +75,9 @@ jobs:
       postgres:
         image: postgres:16
         env:
-          POSTGRES_PASSWORD: postgres # pragma: allowlist secret -- disposable CI database
+          # Disposable CI database, reachable only from this job: passwordless
+          # (trust) login, so no password is kept in this workflow.
+          POSTGRES_HOST_AUTH_METHOD: trust
         ports:
           - 5432:5432
         options: >-
@@ -97,7 +99,7 @@ jobs:
       - name: Test shared source and activity
         env:
           PYTHONPATH: ../../libs/dmer_common/src:src
-          NORMALIZATION_TEST_DSN: postgresql+asyncpg://postgres:postgres@localhost:5432/postgres # pragma: allowlist secret
+          NORMALIZATION_TEST_DSN: postgresql+asyncpg://postgres@localhost:5432/postgres
         run: pytest ../../libs/dmer_common/tests tests/unit --cov=dmer_common --cov=workflow_orchestrator --cov-report=term-missing -v
       - name: Verify packaged normalization behavior
         env:
@@ -113,7 +115,9 @@ jobs:
       postgres:
         image: postgres:16
         env:
-          POSTGRES_PASSWORD: postgres # pragma: allowlist secret -- disposable CI database
+          # Disposable CI database, reachable only from this job: passwordless
+          # (trust) login, so no password is kept in this workflow.
+          POSTGRES_HOST_AUTH_METHOD: trust
         ports:
           - 5432:5432
         options: >-
@@ -135,7 +139,7 @@ jobs:
       - name: Unit and integration tests (integration against the CI database)
         env:
           PYTHONPATH: src
-          NORMALIZATION_TEST_DSN: postgresql+asyncpg://postgres:postgres@localhost:5432/postgres # pragma: allowlist secret
+          NORMALIZATION_TEST_DSN: postgresql+asyncpg://postgres@localhost:5432/postgres
         run: pytest tests --cov=driver_orchestrator --cov-report=term-missing -v
 
   reliability:

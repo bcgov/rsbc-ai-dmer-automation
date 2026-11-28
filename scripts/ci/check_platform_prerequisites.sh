@@ -27,7 +27,7 @@
 #   scripts/ci/check_platform_prerequisites.sh \
 #     -e dev \
 #     -g <vnet-resource-group> \
-#     -n f11861-dev-vwan-spoke \
+#     -n <namespace>-dev-vwan-spoke \
 #     [-r rg-rsbc-dmer-dev] \
 #     [-d <dns-resource-group>] [-s <dns-subscription-id>]
 #

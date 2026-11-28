@@ -62,7 +62,7 @@ param location string = 'canadacentral'
 @description('Zero-padded instance counter, e.g. "001". See docs/standards/naming-conventions.md.')
 param instance string = '001'
 
-@description('Resource ID of the existing platform-provided subnet in f11861-dev-vwan-spoke (or the test/prod equivalent) that private endpoints are placed in. Must be supplied by the platform team — see docs/deployment/environment-setup.md. Deployment fails fast (empty subnet ID) if not supplied.')
+@description('Resource ID of the existing platform-provided subnet in <namespace>-dev-vwan-spoke (or the test/prod equivalent) that private endpoints are placed in. Must be supplied by the platform team — see docs/deployment/environment-setup.md. Deployment fails fast (empty subnet ID) if not supplied.')
 @minLength(1)
 param privateEndpointSubnetId string
 

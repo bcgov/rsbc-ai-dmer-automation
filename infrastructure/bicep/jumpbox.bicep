@@ -55,11 +55,11 @@ param vmSize string = 'Standard_DC2s_v3'
 @minLength(1)
 param vmSubnetId string
 
-@description('Name of the resource group containing the existing platform VNet, e.g. f11861-dev-networking.')
+@description('Name of the resource group containing the existing platform VNet, e.g. <namespace>-dev-networking.')
 @minLength(1)
 param vnetResourceGroupName string
 
-@description('Name of the existing platform-provided VNet, e.g. f11861-dev-vwan-spoke.')
+@description('Name of the existing platform-provided VNet, e.g. <namespace>-dev-vwan-spoke.')
 @minLength(1)
 param vnetName string
 

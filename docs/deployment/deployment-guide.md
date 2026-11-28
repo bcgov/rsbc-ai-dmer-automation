@@ -39,7 +39,7 @@ Everything this creates, by resource group:
 
 ```
 <vnetResourceGroupName>              (platform-owned, pre-existing — never created by this repo)
-  └─ <VNet, e.g. f11861-dev-vwan-spoke>   (platform-owned, pre-existing)
+  └─ <VNet, e.g. <namespace>-dev-vwan-spoke>   (platform-owned, pre-existing)
        └─ subnet: snet-rsbc-dmer-pe-<env>-<instance>        ← created by subscription.bicep
   └─ nsg: nsg-rsbc-dmer-pe-<env>-<instance>                 ← created by subscription.bicep (optional)
 
@@ -94,8 +94,8 @@ first deployment to a given environment.
 | `location` | `canadacentral` | `canadacentral` | `canadacentral` | BC Gov landing zones are Canada-only; only `canadacentral`/`canadaeast` are allowed |
 | `instance` | `001` | `001` | `001` | Only changes if you ever deploy a second parallel instance in the same environment |
 | `resourceGroupName` | `rg-rsbc-dmer-dev` | `rg-rsbc-dmer-test` | `rg-rsbc-dmer-prod` | Computed from the naming convention — free to choose, but keep this pattern |
-| `vnetResourceGroupName` | `f11861-dev-networking` (confirmed) | **ask the platform team** | **ask the platform team** | Platform team |
-| `vnetName` | `f11861-dev-vwan-spoke` (confirmed) | **ask the platform team** — placeholder guesses `f11861-test-vwan-spoke` | **ask the platform team** — placeholder guesses `f11861-prod-vwan-spoke` | Platform team |
+| `vnetResourceGroupName` | `<namespace>-dev-networking` (confirmed) | **ask the platform team** | **ask the platform team** | Platform team |
+| `vnetName` | `<namespace>-dev-vwan-spoke` (confirmed) | **ask the platform team** — placeholder guesses `<namespace>-test-vwan-spoke` | **ask the platform team** — placeholder guesses `<namespace>-prod-vwan-spoke` | Platform team |
 | `privateEndpointSubnetAddressPrefix` | `10.46.156.64/27` (confirmed against the live VNet) | **verify against that environment's VNet address space** | **verify against that environment's VNet address space** | Computed by you, from the platform-provided VNet's free address space — see "Choosing a subnet CIDR" below |
 | `createNetworkSecurityGroup` | `true` | `true` | `true` | Set `false` + supply `existingNetworkSecurityGroupId` only if the platform team mandates their own NSG |
 | `existingNetworkSecurityGroupId` | `""` | `""` | `""` | Only used when the above is `false` |
@@ -402,7 +402,7 @@ creates, for one environment at a time.
 | Resource group (`rg-rsbc-dmer-<env>`) | **This repo**, via `infrastructure/bicep/subscription.bicep` (`modules/shared/resource-group.bicep`). |
 | Private-endpoint subnet inside the existing VNet | **This repo**, via `subscription.bicep` (`modules/networking/subnet.bicep`), deployed scoped to the VNet's own resource group. |
 | NSG for that subnet | **This repo**, via `subscription.bicep` (`modules/networking/network-security-group.bicep`), unless you set `createNetworkSecurityGroup: false` and point at a platform-managed one instead. |
-| The landing zone VNet itself (`f11861-<env>-vwan-spoke`) | **Platform team.** Never created or modified by this repository. |
+| The landing zone VNet itself (`<namespace>-<env>-vwan-spoke`) | **Platform team.** Never created or modified by this repository. |
 | VNet peering to the hub, flow logs, Network Watcher | **Platform team.** |
 | Private DNS zones (`privatelink.cognitiveservices.azure.com`, `privatelink.blob.core.windows.net`) and their link to the VNet | **Confirmed platform-owned.** Both zones already exist centrally in the landing zone hub; the platform team's Deploy-If-Not-Exists (DINE) policy creates the DNS A-record automatically after a private endpoint is deployed (observed within ~10 minutes) — see [BC Gov TechDocs, Azure best practices — Be Mindful, "Private Endpoints and DNS"](https://developer.gov.bc.ca/docs/default/component/public-cloud-techdocs/azure/best-practices/be-mindful/#private-endpoints-and-dns). `privateDnsZoneIdCognitiveServices`/`privateDnsZoneIdBlob` stay empty — do not set them (that would fight with the policy, not complement it). See "Private DNS: confirmed behavior" below. |
 | Document Intelligence account, Storage account, Managed Identity, RBAC, private endpoints | **This repo**, via `main.bicep` (invoked as a nested module by `subscription.bicep`, or standalone once the RG/subnet exist). |

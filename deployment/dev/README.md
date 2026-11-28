@@ -2,7 +2,7 @@
 # dev deployment parameters
 
 **Status: deployed.** `subscription.bicep` has been successfully deployed to DEV with the
-values below — `rg-rsbc-dmer-dev`, its subnet/NSG in `f11861-dev-networking`, and the full
+values below — `rg-rsbc-dmer-dev`, its subnet/NSG in `<namespace>-dev-networking`, and the full
 Document Intelligence + Storage workload all exist and were verified in the Portal. This file
 documents the values that were actually used, not open placeholders — treat it as the reference
 for redeploying (`az deployment sub create`, safe/idempotent) or for tearing down
@@ -18,7 +18,7 @@ deployment guide.
 
 ## Confirmed values
 
-- `vnetResourceGroupName: "f11861-dev-networking"` — confirmed via the platform team/Portal.
+- `vnetResourceGroupName: "<namespace>-dev-networking"` — confirmed via the platform team/Portal.
 - `privateEndpointSubnetAddressPrefix: "10.46.156.64/27"` — confirmed non-overlapping against
   the live VNet (`AzureBastionSubnet` at `10.46.156.0/26`). It is DEV's only private-endpoint
   subnet: the pre-existing manually created `snet-rsbc-dmer-ai-optimization-private-endpoints`
