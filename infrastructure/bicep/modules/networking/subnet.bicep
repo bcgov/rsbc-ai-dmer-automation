@@ -1,7 +1,7 @@
 // subnet.bicep
 //
 // Purpose: Creates the private-endpoint subnet inside the EXISTING
-// platform-provided VNet (e.g. f11861-dev-vwan-spoke). Deployed scoped to
+// platform-provided VNet (e.g. <namespace>-dev-vwan-spoke). Deployed scoped to
 // the VNet's own resource group (which belongs to the platform team, not
 // this repository's application resource group) — see subscription.bicep.
 //
@@ -23,7 +23,7 @@
 // values — run `what-if` first, and never change delegation/NSG on a subnet
 // that is in use.
 
-@description('Name of the existing platform-provided VNet, e.g. f11861-dev-vwan-spoke.')
+@description('Name of the existing platform-provided VNet, e.g. <namespace>-dev-vwan-spoke.')
 param vnetName string
 
 @description('Name of the subnet to create, e.g. snet-rsbc-dmer-pe-dev-001.')

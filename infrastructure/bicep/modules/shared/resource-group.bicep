@@ -5,7 +5,7 @@
 // Subscription-scoped — only deployable via subscription.bicep (or another
 // subscription-scope template), never via main.bicep (resourceGroup scope).
 //
-// The landing zone VNet itself (f11861-<env>-vwan-spoke) remains
+// The landing zone VNet itself (<namespace>-<env>-vwan-spoke) remains
 // platform-team-owned and is only referenced, never created, here — see
 // modules/networking/subnet.bicep for the subnet this repository DOES
 // create inside that existing VNet.

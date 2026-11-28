@@ -237,7 +237,7 @@ module functionApp 'modules/compute/function-app.bicep' = {
 
 // ---------------------------------------------------------------------------
 // 3. Private endpoint -- inbound access to this Function App. Was live only
-//    because someone created it by hand (in f11861-dev-networking, not this
+//    because someone created it by hand (in <namespace>-dev-networking, not this
 //    resource group) before this template covered it -- deployed here into
 //    the same resource group as the Function App itself, matching
 //    main.bicep's convention for DI/Storage/Service Bus.
