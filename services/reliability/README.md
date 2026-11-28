@@ -128,11 +128,14 @@ Reader on the `extracted-dmer` container of the pipeline data storage account
 reads the form's driver details from `combined.json` for the outcome's note.
 
 ```bash
-az deployment group create -g rg-rsbc-dmer-dev   -f infrastructure/bicep/reliability.bicep   -p @deployment/dev/reliability.parameters.json   -p mercuryApiKey="$(az functionapp config appsettings list -g rg-rsbc-dmer-dev -n func-rsbc-dmer-workflow-orchestrator-dev --query "[?name=='MERCURY_API_KEY'].value" -o tsv)"
+az deployment group create -g rg-rsbc-dmer-dev   -f infrastructure/bicep/reliability.bicep   -p @deployment/dev/reliability.parameters.json
 ```
 
-`mercuryApiKey` must be supplied on every deploy (it defaults to empty, and an empty
-`MERCURY_API_KEY` (or `MERCURY_AUTH_TOKEN_URL`) fails every run with `ConfigError`).
+The Mercury API key is read from Key Vault: `MERCURY_API_KEY` is a Key Vault reference to the
+secret `mercury-api-key` (`mercuryApiKeySecretName`) in `keyVaultName`, and the template gives
+the app's identity Key Vault Secrets User on that one secret. The secret must exist before the
+deploy; rotate the key by adding a new version of it (the apps pick it up within 24 hours, or
+on restart). If the reference can't be resolved, every run fails with `ConfigError`.
 
 Then the Postgres role (once per environment): run `services/intake-processor/create-principal.sql`
 against `postgres` and `roles.sql` against `dmer` with `function_app_name` set to this app's name

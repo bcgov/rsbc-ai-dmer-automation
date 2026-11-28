@@ -5,8 +5,8 @@
 #
 # Requires the same repository configuration as bicep-validate.yml (see its
 # header) — this workflow does nothing (every job's condition is false)
-# until vars.AZURE_CLIENT_ID/AZURE_TENANT_ID/AZURE_SUBSCRIPTION_ID and
-# secrets.MERCURY_API_KEY exist.
+# until vars.AZURE_CLIENT_ID/AZURE_TENANT_ID/AZURE_SUBSCRIPTION_ID exist. The
+# Mercury API key comes from Key Vault, not from a secret or parameter here.
 #
 # Order matters: infra (the Function App resource, its app settings, its
 # hosting plan) deploys before the code, so new app settings or config a
@@ -68,8 +68,7 @@ jobs:
           az deployment group what-if \
             --resource-group rsbc-dmer-ai-optimization-rg \
             --template-file intake-processor.bicep \
-            --parameters @../../deployment/dev/intake-processor.parameters.json \
-            --parameters mercuryApiKey="${{ secrets.MERCURY_API_KEY }}"
+            --parameters @../../deployment/dev/intake-processor.parameters.json
 
       - name: Deploy
         working-directory: infrastructure/bicep
@@ -77,8 +76,7 @@ jobs:
           az deployment group create \
             --resource-group rsbc-dmer-ai-optimization-rg \
             --template-file intake-processor.bicep \
-            --parameters @../../deployment/dev/intake-processor.parameters.json \
-            --parameters mercuryApiKey="${{ secrets.MERCURY_API_KEY }}"
+            --parameters @../../deployment/dev/intake-processor.parameters.json
 
   deploy-code:
     runs-on: ubuntu-latest

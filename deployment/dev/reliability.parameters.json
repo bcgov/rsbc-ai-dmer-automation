@@ -62,6 +62,9 @@
     "postgresDatabase": {
       "value": "dmer"
     },
+    "keyVaultName": {
+      "value": "kv-rsbc-dmer-dev-001"
+    },
     "dataStorageAccountName": {
       "value": "stdmerdevcac001"
     },
